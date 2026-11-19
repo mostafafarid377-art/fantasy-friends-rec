@@ -1,0 +1,189 @@
+@import "tailwindcss";
+
+@theme {
+  /* Surface: the unlit part of a floodlit stadium */
+  --color-pitch-950: #070b09;
+  --color-pitch-900: #0a100d;
+  --color-pitch-850: #0d1411;
+  --color-pitch-800: #131c17;
+  --color-pitch-700: #1a251f;
+  --color-line: #1e2b24;
+  --color-line-soft: #17211c;
+
+  /* Lit grass under floodlights */
+  --color-green: #31e07d;
+  --color-green-deep: #0e5a34;
+  --color-green-glow: #8cffc0;
+  --color-green-dim: #1c8f52;
+
+  /* Tinted neutral — cool sage, never grey */
+  --color-sage: #8fa39a;
+  --color-sage-dim: #61726a;
+  --color-chalk: #e8f0ec;
+
+  /* Strictly rationed accents */
+  --color-card-y: #f5c518;
+  --color-card-r: #e8443a;
+
+  --font-display: var(--font-barlow-condensed), "Barlow Condensed", sans-serif;
+  --font-sans: var(--font-plex-sans), "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", monospace;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-pitch-950);
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-pitch-950);
+    color: var(--color-chalk);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+    line-height: 0.94;
+  }
+
+  ::selection {
+    background: var(--color-green);
+    color: #04120a;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-green);
+    outline-offset: 2px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-family: var(--font-sans);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-pitch-950);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-pitch-700);
+    border-radius: 99px;
+    border: 2px solid var(--color-pitch-950);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-green-deep);
+  }
+}
+
+@layer components {
+  /* Broadcast slate: tracked micro-caps above every data block */
+  .slate {
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-sage-dim);
+  }
+
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  .panel {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.024), rgba(255, 255, 255, 0)) ,
+      var(--color-pitch-850);
+    border: 1px solid var(--color-line);
+  }
+
+  .hairline {
+    border-color: var(--color-line);
+  }
+
+  /* floodlit haze behind hero blocks */
+  .floodlight {
+    background:
+      radial-gradient(120% 90% at 78% -10%, rgba(49, 224, 125, 0.16), transparent 62%),
+      radial-gradient(80% 60% at 8% 0%, rgba(140, 255, 192, 0.07), transparent 70%);
+  }
+
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.35;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  }
+}
+
+@layer utilities {
+  .animate-rise {
+    animation: rise 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .animate-fade {
+    animation: fade 0.5s ease both;
+  }
+  .animate-pulse-dot {
+    animation: pulseDot 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,3548 @@
+{
+  "id": "74e5f407-038d-48e4-98f2-5214c36452d2",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.audit_logs": {
+      "name": "audit_logs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity": {
+          "name": "entity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "audit_league_idx": {
+          "name": "audit_league_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "audit_logs_league_id_leagues_id_fk": {
+          "name": "audit_logs_league_id_leagues_id_fk",
+          "tableFrom": "audit_logs",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "audit_logs_actor_id_profiles_id_fk": {
+          "name": "audit_logs_actor_id_profiles_id_fk",
+          "tableFrom": "audit_logs",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.auth_tokens": {
+      "name": "auth_tokens",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "used_at": {
+          "name": "used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "auth_tokens_token_uq": {
+          "name": "auth_tokens_token_uq",
+          "columns": [
+            {
+              "expression": "token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "auth_tokens_profile_idx": {
+          "name": "auth_tokens_profile_idx",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "auth_tokens_profile_id_profiles_id_fk": {
+          "name": "auth_tokens_profile_id_profiles_id_fk",
+          "tableFrom": "auth_tokens",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "auth_tokens_kind_ck": {
+          "name": "auth_tokens_kind_ck",
+          "value": "kind in ('verify_email','reset_password')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.fantasy_fixtures": {
+      "name": "fantasy_fixtures",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gameweek": {
+          "name": "gameweek",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scheduled_at": {
+          "name": "scheduled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'scheduled'"
+        },
+        "real_match_id": {
+          "name": "real_match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fixtures_league_idx": {
+          "name": "fixtures_league_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fantasy_fixtures_league_id_leagues_id_fk": {
+          "name": "fantasy_fixtures_league_id_leagues_id_fk",
+          "tableFrom": "fantasy_fixtures",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fantasy_fixtures_created_by_profiles_id_fk": {
+          "name": "fantasy_fixtures_created_by_profiles_id_fk",
+          "tableFrom": "fantasy_fixtures",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "fixtures_status_ck": {
+          "name": "fixtures_status_ck",
+          "value": "status in ('scheduled','active','completed','cancelled')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.fantasy_points_history": {
+      "name": "fantasy_points_history",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gameweek": {
+          "name": "gameweek",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "points": {
+          "name": "points",
+          "type": "numeric(7, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fph_manager_match_uq": {
+          "name": "fph_manager_match_uq",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "fph_league_idx": {
+          "name": "fph_league_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fantasy_points_history_league_id_leagues_id_fk": {
+          "name": "fantasy_points_history_league_id_leagues_id_fk",
+          "tableFrom": "fantasy_points_history",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fantasy_points_history_profile_id_profiles_id_fk": {
+          "name": "fantasy_points_history_profile_id_profiles_id_fk",
+          "tableFrom": "fantasy_points_history",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fantasy_points_history_match_id_real_matches_id_fk": {
+          "name": "fantasy_points_history_match_id_real_matches_id_fk",
+          "tableFrom": "fantasy_points_history",
+          "tableTo": "real_matches",
+          "columnsFrom": [
+            "match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fantasy_squad_players": {
+      "name": "fantasy_squad_players",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "squad_id": {
+          "name": "squad_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "player_id": {
+          "name": "player_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order": {
+          "name": "order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fsp_squad_player_uq": {
+          "name": "fsp_squad_player_uq",
+          "columns": [
+            {
+              "expression": "squad_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "player_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "fsp_player_idx": {
+          "name": "fsp_player_idx",
+          "columns": [
+            {
+              "expression": "player_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fantasy_squad_players_squad_id_fantasy_squads_id_fk": {
+          "name": "fantasy_squad_players_squad_id_fantasy_squads_id_fk",
+          "tableFrom": "fantasy_squad_players",
+          "tableTo": "fantasy_squads",
+          "columnsFrom": [
+            "squad_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fantasy_squad_players_player_id_players_id_fk": {
+          "name": "fantasy_squad_players_player_id_players_id_fk",
+          "tableFrom": "fantasy_squad_players",
+          "tableTo": "players",
+          "columnsFrom": [
+            "player_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "fsp_slot_ck": {
+          "name": "fsp_slot_ck",
+          "value": "slot in ('starter','sub','reserve')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.fantasy_squads": {
+      "name": "fantasy_squads",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "formation": {
+          "name": "formation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "captain_id": {
+          "name": "captain_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vice_captain_id": {
+          "name": "vice_captain_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fantasy_squads_uq": {
+          "name": "fantasy_squads_uq",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "fantasy_squads_profile_idx": {
+          "name": "fantasy_squads_profile_idx",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fantasy_squads_league_id_leagues_id_fk": {
+          "name": "fantasy_squads_league_id_leagues_id_fk",
+          "tableFrom": "fantasy_squads",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fantasy_squads_profile_id_profiles_id_fk": {
+          "name": "fantasy_squads_profile_id_profiles_id_fk",
+          "tableFrom": "fantasy_squads",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.invitations": {
+      "name": "invitations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "accepted_by": {
+          "name": "accepted_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "invitations_code_uq": {
+          "name": "invitations_code_uq",
+          "columns": [
+            {
+              "expression": "code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invitations_league_idx": {
+          "name": "invitations_league_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "invitations_league_id_leagues_id_fk": {
+          "name": "invitations_league_id_leagues_id_fk",
+          "tableFrom": "invitations",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "invitations_created_by_profiles_id_fk": {
+          "name": "invitations_created_by_profiles_id_fk",
+          "tableFrom": "invitations",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "invitations_accepted_by_profiles_id_fk": {
+          "name": "invitations_accepted_by_profiles_id_fk",
+          "tableFrom": "invitations",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "accepted_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.league_activity": {
+      "name": "league_activity",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "activity_league_idx": {
+          "name": "activity_league_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "league_activity_league_id_leagues_id_fk": {
+          "name": "league_activity_league_id_leagues_id_fk",
+          "tableFrom": "league_activity",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "league_activity_profile_id_profiles_id_fk": {
+          "name": "league_activity_profile_id_profiles_id_fk",
+          "tableFrom": "league_activity",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.league_members": {
+      "name": "league_members",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'manager'"
+        },
+        "team_name": {
+          "name": "team_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "league_members_uq": {
+          "name": "league_members_uq",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "league_members_profile_idx": {
+          "name": "league_members_profile_idx",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "league_members_league_id_leagues_id_fk": {
+          "name": "league_members_league_id_leagues_id_fk",
+          "tableFrom": "league_members",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "league_members_profile_id_profiles_id_fk": {
+          "name": "league_members_profile_id_profiles_id_fk",
+          "tableFrom": "league_members",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "league_members_role_ck": {
+          "name": "league_members_role_ck",
+          "value": "role in ('leader','manager','organizer')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.league_standings": {
+      "name": "league_standings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rank": {
+          "name": "rank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "prev_rank": {
+          "name": "prev_rank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_points": {
+          "name": "total_points",
+          "type": "numeric(8, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "matches_played": {
+          "name": "matches_played",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "form": {
+          "name": "form",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "standings_league_manager_uq": {
+          "name": "standings_league_manager_uq",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "standings_league_rank_idx": {
+          "name": "standings_league_rank_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "rank",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "league_standings_league_id_leagues_id_fk": {
+          "name": "league_standings_league_id_leagues_id_fk",
+          "tableFrom": "league_standings",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "league_standings_profile_id_profiles_id_fk": {
+          "name": "league_standings_profile_id_profiles_id_fk",
+          "tableFrom": "league_standings",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.leagues": {
+      "name": "leagues",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "format": {
+          "name": "format",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'5v5'"
+        },
+        "squad_size": {
+          "name": "squad_size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 15
+        },
+        "starters": {
+          "name": "starters",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 5
+        },
+        "subs_count": {
+          "name": "subs_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 5
+        },
+        "invite_code": {
+          "name": "invite_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vice_policy": {
+          "name": "vice_policy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'auto_captain'"
+        },
+        "allow_self_approval": {
+          "name": "allow_self_approval",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "leagues_invite_uq": {
+          "name": "leagues_invite_uq",
+          "columns": [
+            {
+              "expression": "invite_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "leagues_created_by_profiles_id_fk": {
+          "name": "leagues_created_by_profiles_id_fk",
+          "tableFrom": "leagues",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "leagues_format_ck": {
+          "name": "leagues_format_ck",
+          "value": "format in ('5v5','7v7')"
+        },
+        "leagues_starters_ck": {
+          "name": "leagues_starters_ck",
+          "value": "starters in (5,7)"
+        },
+        "leagues_squad_ck": {
+          "name": "leagues_squad_ck",
+          "value": "squad_size = 15"
+        },
+        "leagues_subs_ck": {
+          "name": "leagues_subs_ck",
+          "value": "subs_count >= 1 and subs_count <= 10"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.mail_outbox": {
+      "name": "mail_outbox",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "to_email": {
+          "name": "to_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "link": {
+          "name": "link",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_at": {
+          "name": "read_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "mail_outbox_email_idx": {
+          "name": "mail_outbox_email_idx",
+          "columns": [
+            {
+              "expression": "to_email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.manager_points": {
+      "name": "manager_points",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_version": {
+          "name": "match_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "points": {
+          "name": "points",
+          "type": "numeric(7, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "breakdown": {
+          "name": "breakdown",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "computed_at": {
+          "name": "computed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "mp_match_manager_uq": {
+          "name": "mp_match_manager_uq",
+          "columns": [
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mp_league_manager_idx": {
+          "name": "mp_league_manager_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "manager_points_league_id_leagues_id_fk": {
+          "name": "manager_points_league_id_leagues_id_fk",
+          "tableFrom": "manager_points",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "manager_points_match_id_real_matches_id_fk": {
+          "name": "manager_points_match_id_real_matches_id_fk",
+          "tableFrom": "manager_points",
+          "tableTo": "real_matches",
+          "columnsFrom": [
+            "match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "manager_points_profile_id_profiles_id_fk": {
+          "name": "manager_points_profile_id_profiles_id_fk",
+          "tableFrom": "manager_points",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.match_approvals": {
+      "name": "match_approvals",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "approvals_match_idx": {
+          "name": "approvals_match_idx",
+          "columns": [
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "match_approvals_match_id_real_matches_id_fk": {
+          "name": "match_approvals_match_id_real_matches_id_fk",
+          "tableFrom": "match_approvals",
+          "tableTo": "real_matches",
+          "columnsFrom": [
+            "match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_approvals_actor_id_profiles_id_fk": {
+          "name": "match_approvals_actor_id_profiles_id_fk",
+          "tableFrom": "match_approvals",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "approvals_action_ck": {
+          "name": "approvals_action_ck",
+          "value": "action in ('submitted','approved','rejected','reopened')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.match_events": {
+      "name": "match_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "player_id": {
+          "name": "player_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assist_player_id": {
+          "name": "assist_player_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "minute": {
+          "name": "minute",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "events_match_idx": {
+          "name": "events_match_idx",
+          "columns": [
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "events_player_idx": {
+          "name": "events_player_idx",
+          "columns": [
+            {
+              "expression": "player_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "match_events_match_id_real_matches_id_fk": {
+          "name": "match_events_match_id_real_matches_id_fk",
+          "tableFrom": "match_events",
+          "tableTo": "real_matches",
+          "columnsFrom": [
+            "match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_events_league_id_leagues_id_fk": {
+          "name": "match_events_league_id_leagues_id_fk",
+          "tableFrom": "match_events",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_events_team_id_teams_id_fk": {
+          "name": "match_events_team_id_teams_id_fk",
+          "tableFrom": "match_events",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_events_player_id_players_id_fk": {
+          "name": "match_events_player_id_players_id_fk",
+          "tableFrom": "match_events",
+          "tableTo": "players",
+          "columnsFrom": [
+            "player_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "match_events_assist_player_id_players_id_fk": {
+          "name": "match_events_assist_player_id_players_id_fk",
+          "tableFrom": "match_events",
+          "tableTo": "players",
+          "columnsFrom": [
+            "assist_player_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "match_events_created_by_profiles_id_fk": {
+          "name": "match_events_created_by_profiles_id_fk",
+          "tableFrom": "match_events",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "events_type_ck": {
+          "name": "events_type_ck",
+          "value": "event_type in ('goal','own_goal','assist','yellow_card','red_card','penalty_saved','penalty_missed')"
+        },
+        "events_minute_ck": {
+          "name": "events_minute_ck",
+          "value": "minute between 0 and 200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.match_lineups": {
+      "name": "match_lineups",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "player_id": {
+          "name": "player_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order": {
+          "name": "order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "lineup_match_player_uq": {
+          "name": "lineup_match_player_uq",
+          "columns": [
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "player_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "lineup_match_team_idx": {
+          "name": "lineup_match_team_idx",
+          "columns": [
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "team_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "match_lineups_match_id_real_matches_id_fk": {
+          "name": "match_lineups_match_id_real_matches_id_fk",
+          "tableFrom": "match_lineups",
+          "tableTo": "real_matches",
+          "columnsFrom": [
+            "match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_lineups_league_id_leagues_id_fk": {
+          "name": "match_lineups_league_id_leagues_id_fk",
+          "tableFrom": "match_lineups",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_lineups_team_id_teams_id_fk": {
+          "name": "match_lineups_team_id_teams_id_fk",
+          "tableFrom": "match_lineups",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_lineups_player_id_players_id_fk": {
+          "name": "match_lineups_player_id_players_id_fk",
+          "tableFrom": "match_lineups",
+          "tableTo": "players",
+          "columnsFrom": [
+            "player_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "lineup_slot_ck": {
+          "name": "lineup_slot_ck",
+          "value": "slot in ('starter','sub')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.match_substitutions": {
+      "name": "match_substitutions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "player_on_id": {
+          "name": "player_on_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "player_off_id": {
+          "name": "player_off_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "minute": {
+          "name": "minute",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "subs_match_idx": {
+          "name": "subs_match_idx",
+          "columns": [
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "match_substitutions_match_id_real_matches_id_fk": {
+          "name": "match_substitutions_match_id_real_matches_id_fk",
+          "tableFrom": "match_substitutions",
+          "tableTo": "real_matches",
+          "columnsFrom": [
+            "match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_substitutions_league_id_leagues_id_fk": {
+          "name": "match_substitutions_league_id_leagues_id_fk",
+          "tableFrom": "match_substitutions",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_substitutions_team_id_teams_id_fk": {
+          "name": "match_substitutions_team_id_teams_id_fk",
+          "tableFrom": "match_substitutions",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "match_substitutions_player_on_id_players_id_fk": {
+          "name": "match_substitutions_player_on_id_players_id_fk",
+          "tableFrom": "match_substitutions",
+          "tableTo": "players",
+          "columnsFrom": [
+            "player_on_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "match_substitutions_player_off_id_players_id_fk": {
+          "name": "match_substitutions_player_off_id_players_id_fk",
+          "tableFrom": "match_substitutions",
+          "tableTo": "players",
+          "columnsFrom": [
+            "player_off_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "match_substitutions_created_by_profiles_id_fk": {
+          "name": "match_substitutions_created_by_profiles_id_fk",
+          "tableFrom": "match_substitutions",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "subs_minute_ck": {
+          "name": "subs_minute_ck",
+          "value": "minute between 0 and 200"
+        },
+        "subs_players_ck": {
+          "name": "subs_players_ck",
+          "value": "player_on_id <> player_off_id"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.mutation_ops": {
+      "name": "mutation_ops",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "route": {
+          "name": "route",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "mutation_ops_profile_idx": {
+          "name": "mutation_ops_profile_idx",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "mutation_ops_profile_id_profiles_id_fk": {
+          "name": "mutation_ops_profile_id_profiles_id_fk",
+          "tableFrom": "mutation_ops",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mutation_ops_status_ck": {
+          "name": "mutation_ops_status_ck",
+          "value": "status in ('pending','applied','failed')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.notifications": {
+      "name": "notifications",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "link": {
+          "name": "link",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_at": {
+          "name": "read_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "notifications_profile_idx": {
+          "name": "notifications_profile_idx",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "notifications_unread_idx": {
+          "name": "notifications_unread_idx",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "read_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "notifications_profile_id_profiles_id_fk": {
+          "name": "notifications_profile_id_profiles_id_fk",
+          "tableFrom": "notifications",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "notifications_league_id_leagues_id_fk": {
+          "name": "notifications_league_id_leagues_id_fk",
+          "tableFrom": "notifications",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.player_match_points": {
+      "name": "player_match_points",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "player_id": {
+          "name": "player_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_version": {
+          "name": "match_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "points": {
+          "name": "points",
+          "type": "numeric(7, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "breakdown": {
+          "name": "breakdown",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "computed_at": {
+          "name": "computed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "pmp_match_player_uq": {
+          "name": "pmp_match_player_uq",
+          "columns": [
+            {
+              "expression": "match_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "player_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "pmp_league_player_idx": {
+          "name": "pmp_league_player_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "player_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "player_match_points_league_id_leagues_id_fk": {
+          "name": "player_match_points_league_id_leagues_id_fk",
+          "tableFrom": "player_match_points",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "player_match_points_match_id_real_matches_id_fk": {
+          "name": "player_match_points_match_id_real_matches_id_fk",
+          "tableFrom": "player_match_points",
+          "tableTo": "real_matches",
+          "columnsFrom": [
+            "match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "player_match_points_player_id_players_id_fk": {
+          "name": "player_match_points_player_id_players_id_fk",
+          "tableFrom": "player_match_points",
+          "tableTo": "players",
+          "columnsFrom": [
+            "player_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.players": {
+      "name": "players",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "photo_url": {
+          "name": "photo_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "position": {
+          "name": "position",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "shirt_number": {
+          "name": "shirt_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "availability": {
+          "name": "availability",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'available'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "players_league_idx": {
+          "name": "players_league_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "players_team_idx": {
+          "name": "players_team_idx",
+          "columns": [
+            {
+              "expression": "team_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "players_league_id_leagues_id_fk": {
+          "name": "players_league_id_leagues_id_fk",
+          "tableFrom": "players",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "players_team_id_teams_id_fk": {
+          "name": "players_team_id_teams_id_fk",
+          "tableFrom": "players",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "players_created_by_profiles_id_fk": {
+          "name": "players_created_by_profiles_id_fk",
+          "tableFrom": "players",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "players_position_ck": {
+          "name": "players_position_ck",
+          "value": "position in ('GK','DEF','MID','FWD')"
+        },
+        "players_availability_ck": {
+          "name": "players_availability_ck",
+          "value": "availability in ('available','doubt','injured','suspended')"
+        },
+        "players_status_ck": {
+          "name": "players_status_ck",
+          "value": "status in ('active','archived')"
+        },
+        "players_shirt_ck": {
+          "name": "players_shirt_ck",
+          "value": "shirt_number is null or (shirt_number between 1 and 99)"
+        },
+        "players_name_ck": {
+          "name": "players_name_ck",
+          "value": "length(trim(full_name)) between 2 and 80"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.profiles": {
+      "name": "profiles",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_lower": {
+          "name": "email_lower",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "avatar_url": {
+          "name": "avatar_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bio": {
+          "name": "bio",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email_verified_at": {
+          "name": "email_verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "profiles_email_uq": {
+          "name": "profiles_email_uq",
+          "columns": [
+            {
+              "expression": "email_lower",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "profiles_username_uq": {
+          "name": "profiles_username_uq",
+          "columns": [
+            {
+              "expression": "username",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "profiles_username_len": {
+          "name": "profiles_username_len",
+          "value": "length(username) between 3 and 24"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.real_matches": {
+      "name": "real_matches",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fixture_id": {
+          "name": "fixture_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "team_a_id": {
+          "name": "team_a_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_b_id": {
+          "name": "team_b_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kick_off": {
+          "name": "kick_off",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "organizer_id": {
+          "name": "organizer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "submitted_by": {
+          "name": "submitted_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_by": {
+          "name": "decided_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rejection_reason": {
+          "name": "rejection_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "matches_league_idx": {
+          "name": "matches_league_idx",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "matches_status_idx": {
+          "name": "matches_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "real_matches_league_id_leagues_id_fk": {
+          "name": "real_matches_league_id_leagues_id_fk",
+          "tableFrom": "real_matches",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "real_matches_fixture_id_fantasy_fixtures_id_fk": {
+          "name": "real_matches_fixture_id_fantasy_fixtures_id_fk",
+          "tableFrom": "real_matches",
+          "tableTo": "fantasy_fixtures",
+          "columnsFrom": [
+            "fixture_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "real_matches_team_a_id_teams_id_fk": {
+          "name": "real_matches_team_a_id_teams_id_fk",
+          "tableFrom": "real_matches",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_a_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "real_matches_team_b_id_teams_id_fk": {
+          "name": "real_matches_team_b_id_teams_id_fk",
+          "tableFrom": "real_matches",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_b_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "real_matches_organizer_id_profiles_id_fk": {
+          "name": "real_matches_organizer_id_profiles_id_fk",
+          "tableFrom": "real_matches",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "organizer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "real_matches_submitted_by_profiles_id_fk": {
+          "name": "real_matches_submitted_by_profiles_id_fk",
+          "tableFrom": "real_matches",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "submitted_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "real_matches_decided_by_profiles_id_fk": {
+          "name": "real_matches_decided_by_profiles_id_fk",
+          "tableFrom": "real_matches",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "decided_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "matches_status_ck": {
+          "name": "matches_status_ck",
+          "value": "status in ('draft','pending','approved','rejected')"
+        },
+        "matches_teams_ck": {
+          "name": "matches_teams_ck",
+          "value": "team_a_id <> team_b_id"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.scoring_rules": {
+      "name": "scoring_rules",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "points": {
+          "name": "points",
+          "type": "numeric(6, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "approved_by": {
+          "name": "approved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "rules_league_pos_event_uq": {
+          "name": "rules_league_pos_event_uq",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "scoring_rules_league_id_leagues_id_fk": {
+          "name": "scoring_rules_league_id_leagues_id_fk",
+          "tableFrom": "scoring_rules",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "scoring_rules_approved_by_profiles_id_fk": {
+          "name": "scoring_rules_approved_by_profiles_id_fk",
+          "tableFrom": "scoring_rules",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "approved_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "rules_position_ck": {
+          "name": "rules_position_ck",
+          "value": "position in ('GK','DEF','MID','FWD')"
+        },
+        "rules_status_ck": {
+          "name": "rules_status_ck",
+          "value": "status in ('draft','approved')"
+        },
+        "rules_points_ck": {
+          "name": "rules_points_ck",
+          "value": "points >= -20 and points <= 50"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.sessions": {
+      "name": "sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sessions_token_uq": {
+          "name": "sessions_token_uq",
+          "columns": [
+            {
+              "expression": "token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_profile_idx": {
+          "name": "sessions_profile_idx",
+          "columns": [
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_expiry_idx": {
+          "name": "sessions_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sessions_profile_id_profiles_id_fk": {
+          "name": "sessions_profile_id_profiles_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.teams": {
+      "name": "teams",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "league_id": {
+          "name": "league_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "short_name": {
+          "name": "short_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "crest_url": {
+          "name": "crest_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "teams_league_name_uq": {
+          "name": "teams_league_name_uq",
+          "columns": [
+            {
+              "expression": "league_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "teams_league_id_leagues_id_fk": {
+          "name": "teams_league_id_leagues_id_fk",
+          "tableFrom": "teams",
+          "tableTo": "leagues",
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
