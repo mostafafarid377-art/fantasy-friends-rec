@@ -1,13 +1,13 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import { ApiError, handler, requireUser } from "@/lib/server";
+import { ApiError, checkDb, handler, requireIdentity } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
 
 export const GET = handler(async (req: NextRequest) => {
-  const user = await requireUser();
   const supabase = await getSupabase();
+  const user = await requireIdentity(supabase);
   const url = new URL(req.url);
   const filter = url.searchParams.get("filter");
 
@@ -17,15 +17,14 @@ export const GET = handler(async (req: NextRequest) => {
     query = query.is("read_at", null);
   }
 
-  const { data: rows } = await query.order("created_at", { ascending: false }).limit(100);
-
-  const { count: unread } = await supabase
-    .from("notifications")
-    .select("*", { count: "exact", head: true })
-    .eq("profile_id", user.id)
-    .is("read_at", null);
-
-  return Response.json({ notifications: rows ?? [], unread: unread ?? 0 });
+  const [rows, count] = await Promise.all([
+    query.order("created_at", { ascending: false }).limit(100),
+    supabase.from("notifications").select("id", { count: "exact", head: true }).eq("profile_id", user.id).is("read_at", null),
+  ]);
+  checkDb(rows.error, "Could not load notifications");
+  checkDb(count.error, "Could not count unread notifications");
+  return Response.json({ notifications: (rows.data ?? []).map((r) => ({ id: r.id, type: r.type, title: r.title,
+    body: r.body, link: r.link, readAt: r.read_at, createdAt: r.created_at })), unread: count.count ?? 0 });
 });
 
 const patchSchema = z.object({
@@ -34,58 +33,32 @@ const patchSchema = z.object({
 });
 
 export const PATCH = handler(async (req: NextRequest) => {
-  const user = await requireUser();
+  const supabase = await getSupabase();
+  const user = await requireIdentity(supabase);
   const body = await req.json().catch(() => ({}));
   const parsed = patchSchema.safeParse(body ?? {});
   if (!parsed.success) throw new ApiError("Invalid notification update", 422);
   const { ids, all } = parsed.data;
-
-  const supabase = await getSupabase();
-
-  if (all) {
-    await supabase
-      .from("notifications")
-      .update({ read_at: new Date().toISOString() })
-      .eq("profile_id", user.id)
-      .is("read_at", null);
-  } else if (ids?.length) {
-    await supabase
-      .from("notifications")
-      .update({ read_at: new Date().toISOString() })
-      .eq("profile_id", user.id)
-      .in("id", ids)
-      .is("read_at", null);
-  }
-
-  const { count: unread } = await supabase
-    .from("notifications")
-    .select("*", { count: "exact", head: true })
-    .eq("profile_id", user.id)
-    .is("read_at", null);
-
-  return Response.json({ ok: true, unread: unread ?? 0 });
+  if (!all && !ids?.length) throw new ApiError("Choose notifications to update", 422);
+  const readAt = new Date().toISOString();
+  let query = supabase.from("notifications").update({ read_at: readAt }).eq("profile_id", user.id).is("read_at", null);
+  if (!all && ids) query = query.in("id", ids);
+  const { error } = await query;
+  checkDb(error, "Could not mark notifications read");
+  const count = await supabase.from("notifications").select("id", { count: "exact", head: true })
+    .eq("profile_id", user.id).is("read_at", null);
+  checkDb(count.error, "Could not confirm unread notifications");
+  return Response.json({ ok: true, unread: count.count ?? 0, readAt });
 });
 
 export const DELETE = handler(async (req: NextRequest) => {
-  const user = await requireUser();
+  const supabase = await getSupabase();
+  const user = await requireIdentity(supabase);
   const id = new URL(req.url).searchParams.get("id");
 
-  const supabase = await getSupabase();
-
-  if (id) {
-    const { data: rows } = await supabase
-      .from("notifications")
-      .delete()
-      .eq("profile_id", user.id)
-      .eq("id", id)
-      .select();
-    return Response.json({ ok: true, deleted: rows?.length ?? 0 });
-  }
-
-  const { data: rows } = await supabase
-    .from("notifications")
-    .delete()
-    .eq("profile_id", user.id)
-    .select();
-  return Response.json({ ok: true, deleted: rows?.length ?? 0 });
+  let query = supabase.from("notifications").delete().eq("profile_id", user.id);
+  if (id) query = query.eq("id", id);
+  const { data, error } = await query.select("id");
+  checkDb(error, "Could not delete notifications");
+  return Response.json({ ok: true, deleted: data?.length ?? 0 });
 });

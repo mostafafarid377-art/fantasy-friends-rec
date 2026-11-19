@@ -5,9 +5,8 @@ import {
   ApiError,
   assertRole,
   handler,
-  logActivity,
+  checkDb,
   memberProfiles,
-  notifyUser,
   requireMember,
 } from "@/lib/server";
 
@@ -38,36 +37,24 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
   const supabase = await getSupabase();
 
   if (profileId === membership.profileId && role !== "leader") {
-    const { data: leaders } = await supabase
+    const { data: leaders, error } = await supabase
       .from("league_members")
       .select("*")
       .eq("league_id", id)
       .eq("role", "leader");
-    if (leaders?.length ?? 0 <= 1) {
+    checkDb(error, "Could not verify league leadership");
+    if ((leaders?.length ?? 0) <= 1) {
       throw new ApiError("A league must keep at least one League Leader", 409);
     }
   }
 
-  const { data: updated } = await supabase
-    .from("league_members")
-    .update({ role })
-    .eq("league_id", id)
-    .eq("profile_id", profileId)
-    .select()
-    .maybeSingle();
-  if (!updated) throw new ApiError("That manager is not in this league", 404);
+  const change = await supabase.rpc("set_member_role", { p_league: id, p_profile: profileId, p_role: role });
+  checkDb(change.error, "Could not change league role");
+  const { data: updated, error } = await supabase.from("league_members").select("id,league_id,profile_id,role")
+    .eq("league_id", id).eq("profile_id", profileId).maybeSingle();
+  checkDb(error, "Could not confirm the updated role");
+  if (!updated || updated.role !== role) throw new ApiError("That manager is not in this league", 404);
 
-  await logActivity(id, membership.profileId, "member.role", `Role updated to ${role}`, {
-    profileId,
-    role,
-  });
-  await notifyUser(profileId, {
-    leagueId: id,
-    type: "role_changed",
-    title: "Your league role changed",
-    body: `You are now a ${role} in ${membership.league.name}.`,
-    link: `/leagues/${id}`,
-  });
 
   return Response.json({ member: updated });
 });
@@ -84,47 +71,26 @@ export const DELETE = handler(async (req: NextRequest, ctx: Ctx) => {
 
   if (self && membership.role === "leader") {
     const supabase = await getSupabase();
-    const { data: leaders } = await supabase
+    const { data: leaders, error } = await supabase
       .from("league_members")
       .select("*")
       .eq("league_id", id)
       .eq("role", "leader");
-    if (leaders?.length ?? 0 <= 1) {
+    checkDb(error, "Could not verify league leadership");
+    if ((leaders?.length ?? 0) <= 1) {
       throw new ApiError("Promote another League Leader before leaving this league", 409);
     }
   }
 
   const supabase = await getSupabase();
-  const { data: removed } = await supabase
+  const { data: removed, error } = await supabase
     .from("league_members")
     .delete()
     .eq("league_id", id)
     .eq("profile_id", targetProfileId)
     .select();
+  checkDb(error, "Could not remove member");
   if (!removed?.length) throw new ApiError("That manager is not in this league", 404);
-
-  await supabase
-    .from("league_standings")
-    .delete()
-    .eq("league_id", id)
-    .eq("profile_id", targetProfileId);
-
-  await logActivity(
-    id,
-    membership.profileId,
-    self ? "member.left" : "member.removed",
-    self ? "A manager left the league" : "A manager was removed",
-    { targetProfileId },
-  );
-
-  if (!self) {
-    await notifyUser(targetProfileId, {
-      leagueId: id,
-      type: "member_removed",
-      title: "Removed from league",
-      body: `Your access to ${membership.league.name} was revoked by a League Leader.`,
-    });
-  }
 
   return Response.json({ ok: true, left: self });
 });

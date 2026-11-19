@@ -17,7 +17,7 @@ import {
   Toast,
 } from "@/components/ui";
 import { useLeague } from "@/components/LeagueContext";
-import { api } from "@/lib/client/api";
+import { api, assertConfirmed } from "@/lib/client/api";
 
 const FORMAT_COPY = {
   "5v5": {
@@ -66,8 +66,10 @@ export default function LeaguesPage() {
         },
         idempotent: true,
       });
-      await refresh();
-      selectLeague(res.league.id);
+      const saved = assertConfirmed(res?.league, "League membership could not be confirmed");
+      const session = await refresh();
+      if (!session.leagues.some((l) => l.id === saved.id)) throw new Error("Membership was saved, but could not be loaded. Reopen Leagues to check it.");
+      selectLeague(saved.id);
       setToast({ message: "League created", tone: "ok" });
       router.push("/dashboard");
     } catch (err) {
@@ -86,8 +88,10 @@ export default function LeaguesPage() {
         body: { code: code.trim().toUpperCase(), teamName: teamName.trim() || undefined },
         idempotent: true,
       });
-      await refresh();
-      selectLeague(res.league.id);
+      const saved = assertConfirmed(res?.league, "League membership could not be confirmed");
+      const session = await refresh();
+      if (!session.leagues.some((l) => l.id === saved.id)) throw new Error("Membership was saved, but could not be loaded. Reopen Leagues to check it.");
+      selectLeague(saved.id);
       setToast({ message: "Joined the league", tone: "ok" });
       router.push("/dashboard");
     } catch (err) {

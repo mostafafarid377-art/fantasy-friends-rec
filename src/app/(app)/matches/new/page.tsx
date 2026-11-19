@@ -6,7 +6,7 @@ import { ArrowRight, Swords } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Button, ErrorNote, Field, Panel, Select, Skeleton, Slate, TextInput, Toast } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
-import { api, useApi } from "@/lib/client/api";
+import { api, assertConfirmed, useApi } from "@/lib/client/api";
 
 type Team = { id: string; name: string };
 type Fixture = { id: string; title: string; gameweek: number };
@@ -48,8 +48,9 @@ export default function NewMatchPage() {
         },
         idempotent: true,
       });
+      const match = assertConfirmed(res?.match, "The saved match could not be confirmed");
       setToast({ message: "Match created — set the line-ups", tone: "ok" });
-      router.push(`/matches/${res.match.id}`);
+      router.push(`/matches/${match.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the match");
     } finally {

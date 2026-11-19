@@ -148,11 +148,11 @@ export default function TeamPage() {
     setSaving(true);
     try {
       const entries = players.map((p) => ({ playerId: p.id, slot: p.slot, order: p.order }));
-      await api(`/api/leagues/${league.id}/squad`, {
+      const saved = await api<{ state: string; squadId: string; valid: boolean }>(`/api/leagues/${league.id}/squad`, {
         method: "PUT",
         body: { formation, captainId, viceCaptainId: viceId, entries },
-        idempotent: true,
       });
+      if (saved?.state !== "applied" || !saved.squadId || !saved.valid) throw new Error("The saved squad could not be confirmed");
       setDirty(false);
       setToast({ message: "Squad saved", tone: "ok" });
       reload();

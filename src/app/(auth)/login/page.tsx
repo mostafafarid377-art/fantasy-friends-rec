@@ -33,7 +33,7 @@ function LoginForm() {
     setServerError(null);
     setDevLink(null);
     try {
-      await api("/api/auth/login", { method: "POST", body: values, idempotent: true });
+      await api("/api/auth/login", { method: "POST", body: values });
       router.push(params.get("next") ?? "/dashboard");
       router.refresh();
     } catch (err) {

@@ -17,7 +17,7 @@ import {
   Toast,
 } from "@/components/ui";
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
-import { api, useApi } from "@/lib/client/api";
+import { api, assertConfirmed, useApi } from "@/lib/client/api";
 
 type Fixture = {
   id: string;
@@ -56,7 +56,7 @@ export default function FixturesPage() {
     if (!league) return;
     setSaving(true);
     try {
-      await api(`/api/leagues/${league.id}/fixtures`, {
+      const saved = await api<{ fixture: { id: string } }>(`/api/leagues/${league.id}/fixtures`, {
         method: "POST",
         body: {
           title,
@@ -65,6 +65,7 @@ export default function FixturesPage() {
         },
         idempotent: true,
       });
+      assertConfirmed(saved?.fixture, "The saved fixture could not be confirmed");
       setToast({ message: "Fixture scheduled", tone: "ok" });
       setOpen(false);
       setTitle("");

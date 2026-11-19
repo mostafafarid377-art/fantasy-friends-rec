@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 
 import { useState } from "react";
 import { Check, Copy, LogOut, ShieldCheck, Trash2, UserCog, Users } from "lucide-react";
@@ -40,6 +41,7 @@ type Data = {
 };
 
 export default function MembersPage() {
+  const router = useRouter();
   const { league, loading: leagueLoading } = useActiveLeague();
   const { user, refresh } = useLeague();
   const { data, loading, error, reload } = useApi<Data>(
@@ -78,7 +80,7 @@ export default function MembersPage() {
       setToast({ message: "Role updated", tone: "ok" });
       setRoleTarget(null);
       reload();
-      void refresh();
+      void refresh().catch((error) => console.warn("[session refresh]", error));
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Role change failed", tone: "error" });
     } finally {
@@ -94,8 +96,8 @@ export default function MembersPage() {
         await api(`/api/leagues/${league.id}/members`, { method: "DELETE" });
         setConfirm(null);
         setToast({ message: "You left the league", tone: "ok" });
-        void refresh();
-        setTimeout(() => window.location.assign("/dashboard"), 600);
+        await refresh();
+        router.replace("/dashboard");
       } else if (confirm.member) {
         await api(`/api/leagues/${league.id}/members?profileId=${confirm.member.profileId}`, {
           method: "DELETE",
@@ -118,7 +120,7 @@ export default function MembersPage() {
       await api(`/api/leagues/${league.id}`, { method: "PATCH", body: patch });
       setToast({ message: "League settings saved", tone: "ok" });
       reload();
-      void refresh();
+      void refresh().catch((error) => console.warn("[session refresh]", error));
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Could not save settings", tone: "error" });
     }

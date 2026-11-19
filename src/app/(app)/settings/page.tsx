@@ -42,7 +42,7 @@ export default function SettingsPage() {
     if (!league) return;
     setBusy(true);
     try {
-      await api(`/api/leagues/${league.id}`, {
+      const saved = await api<{ league: LeagueData["league"] }>(`/api/leagues/${league.id}`, {
         method: "PATCH",
         body: {
           name: value.name.trim(),
@@ -50,8 +50,11 @@ export default function SettingsPage() {
           subsCount: Number(value.subs) || 5,
         },
       });
+      if (saved?.league?.id !== league.id) throw new Error("League settings update could not be confirmed");
+      setData((old) => old ? { ...old, league: saved.league } : old);
+      setName(null); setDescription(null); setSubs(null);
       setToast({ message: "League settings saved", tone: "ok" });
-      void refresh();
+      void refresh().catch((error) => console.warn("[session refresh]", error));
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Could not save", tone: "error" });
     } finally {
@@ -60,12 +63,13 @@ export default function SettingsPage() {
   };
 
   const recover = async () => {
-    const n = await recoverPendingOperations();
-    setQueue(pendingCount());
-    setToast({
-      message: n ? `Recovered ${n} pending change${n > 1 ? "s" : ""}` : "Nothing pending",
-      tone: "ok",
-    });
+    try {
+      const n = await recoverPendingOperations();
+      if (n) await refresh();
+      setToast({ message: n ? `Recovered ${n} pending change${n > 1 ? "s" : ""}` : "Nothing pending", tone: "ok" });
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : "Recovery could not be confirmed", tone: "error" });
+    } finally { setQueue(pendingCount()); }
   };
 
   if (leagueLoading || (loading && !data))
@@ -140,10 +144,8 @@ export default function SettingsPage() {
         </div>
         <div className="space-y-3 text-[13.5px] leading-relaxed text-sage">
           <p>
-            Every write carries a stable operation ID. If the network drops, your change is stored
-            on this device and replayed with the same ID and payload, so a retry can never create a
-            duplicate — and a failed verification after a successful write never resends the
-            request.
+            Supported creation requests are saved on this device for your account if the connection drops.
+            Recovery reuses the original request ID. Passwords and edits to existing records are never replayed.
           </p>
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-pitch-900 px-4 py-3">
             <span className="slate">Pending operations</span>

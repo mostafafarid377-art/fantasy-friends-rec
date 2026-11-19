@@ -1,139 +1,66 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import {
-  ApiError,
-  handler,
-  leagueRules,
-  logActivity,
-  notifyMembers,
-  operationId,
-  requireMember,
-  withIdempotency,
-} from "@/lib/server";
+import { ApiError, checkDb, confirmedRow, creationId, handler, requireMember } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
-
+const PAGE_SIZE = 30;
 const createSchema = z.object({
-  leagueId: z.string().min(1),
-  teamAId: z.string().min(1),
-  teamBId: z.string().min(1),
-  title: z.string().trim().min(3).max(80),
-  kickOff: z.string().datetime(),
-  fixtureId: z.string().nullable().optional(),
+  leagueId: z.string().min(1), teamAId: z.string().min(1), teamBId: z.string().min(1),
+  title: z.string().trim().min(3).max(80), kickOff: z.string().datetime(), fixtureId: z.string().nullable().optional(),
 });
 
 export const GET = handler(async (req: NextRequest) => {
-  const url = new URL(req.url);
-  const leagueId = url.searchParams.get("leagueId");
-  if (!leagueId) throw new ApiError("leagueId is required", 400);
-  const membership = await requireMember(leagueId);
-
+  const params = new URL(req.url).searchParams;
+  const leagueId = params.get("leagueId");
+  const page = Number(params.get("page") ?? 1);
+  const approved = params.get("status") === "approved";
+  if (!leagueId || !Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new ApiError("Invalid league or page", 400);
   const supabase = await getSupabase();
-
-  const { data: rows } = await supabase
-    .from("real_matches")
-    .select("*, teams(team_a_id, team_b_id)")
-    .eq("league_id", leagueId)
-    .order("kick_off", { ascending: false });
-
-  const { data: teamB } = await supabase.from("teams").select("*").eq("league_id", leagueId);
-  const teamName = new Map((teamB ?? []).map((t: any) => [t.id, t.name]));
-
-  const ids = (rows ?? []).map((r: any) => r.id);
-
-  const { data: events } = ids.length
-    ? await supabase
-        .from("match_events")
-        .select("*")
-        .in("match_id", ids)
-        .order("minute", { ascending: false })
-    : { data: [] };
-
+  const membership = await requireMember(leagueId, supabase);
+  const canApprove = membership.role === "leader";
+  let query = supabase.from("real_matches").select(
+    "id,title,status,kick_off,organizer_id,rejection_reason,teamA:teams!real_matches_team_a_id_teams_id_fk(name),teamB:teams!real_matches_team_b_id_teams_id_fk(name),match_events(count)",
+    approved ? { count: "exact" } : {},
+  ).eq("league_id", leagueId);
+  if (approved) query = query.eq("status", "approved");
+  const [matches, pending] = await Promise.all([
+    query.order("kick_off", { ascending: false }).order("id", { ascending: false })
+      .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    canApprove && !approved
+      ? supabase.from("real_matches").select("id", { count: "exact" })
+          .eq("league_id", leagueId).eq("status", "pending").order("kick_off").limit(1)
+      : null,
+  ]);
+  checkDb(matches.error, "Could not load matches");
+  checkDb(pending?.error ?? null, "Could not load pending reviews");
   return Response.json({
-    matches: (rows ?? [])
-      .map((r: any) => ({
-        ...r,
-        teamAName: teamName.get(r.team_a_id) ?? "Team A",
-        teamBName: teamName.get(r.team_b_id) ?? "Team B",
-        events: (events ?? []).filter((e: any) => e.match_id === r.id),
-      }))
-      .reverse(),
-    role: membership.role,
-    rules: leagueRules(membership.league),
-    canOrganize: membership.role === "leader" || membership.role === "organizer",
-    canApprove: membership.role === "leader",
+    matches: (matches.data ?? []).slice(0, PAGE_SIZE).map((r: any) => ({
+      id: r.id, title: r.title, status: r.status, kickOff: r.kick_off,
+      organizerId: r.organizer_id, rejectionReason: r.rejection_reason,
+      teamAName: r.teamA?.name ?? "Team A", teamBName: r.teamB?.name ?? "Team B",
+      eventCount: r.match_events?.[0]?.count ?? 0,
+    })),
+    canApprove, total: matches.count, hasMore: (matches.data?.length ?? 0) > PAGE_SIZE,
+    pendingCount: pending?.count ?? 0, pendingId: pending?.data?.[0]?.id ?? null,
   });
 });
 
 export const POST = handler(async (req: NextRequest) => {
-  const body = await req.json().catch(() => null);
-  const parsed = createSchema.safeParse(body);
+  const parsed = createSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) throw new ApiError("Check the match details", 422, parsed.error.flatten().fieldErrors);
   const input = parsed.data;
-
-  const membership = await requireMember(input.leagueId);
+  const supabase = await getSupabase();
+  const membership = await requireMember(input.leagueId, supabase);
   if (membership.role !== "leader" && membership.role !== "organizer") {
     throw new ApiError("Only a Match Organizer or League Leader can create matches", 403);
   }
-
-  const supabase = await getSupabase();
-
-  const { data: leagueTeams } = await supabase
-    .from("teams")
-    .select("id")
-    .eq("league_id", input.leagueId);
-  const ids = new Set((leagueTeams ?? []).map((t: any) => t.id));
-  if (!ids.has(input.teamAId) || !ids.has(input.teamBId)) {
-    throw new ApiError("Both teams must belong to this league", 422);
-  }
-  if (input.teamAId === input.teamBId) throw new ApiError("A team cannot play itself", 422);
-
-  const outcome = await withIdempotency(
-    {
-      route: "POST /api/matches",
-      profileId: membership.profileId,
-      operationId: operationId(req),
-      payload: input,
-    },
-    async () => {
-      const { data: created, error } = await supabase
-        .from("real_matches")
-        .insert({
-          league_id: input.leagueId,
-          team_a_id: input.teamAId,
-          team_b_id: input.teamBId,
-          title: input.title,
-          kick_off: new Date(input.kickOff).toISOString(),
-          organizer_id: membership.profileId,
-          fixture_id: input.fixtureId ?? null,
-        })
-        .select()
-        .maybeSingle();
-
-      if (error || !created) throw new ApiError("Could not create match", 500);
-
-      if (input.fixtureId) {
-        await supabase
-          .from("fantasy_fixtures")
-          .update({ real_match_id: created.id, updated_at: new Date().toISOString() })
-          .eq("id", input.fixtureId);
-      }
-
-      return { match: created };
-    },
-  );
-
-  if (outcome.state === "unknown") throw new ApiError("Match creation is still in progress", 409);
-  const match = (outcome.data as any)?.match;
-  await logActivity(input.leagueId, membership.profileId, "match.created", `Match created: ${input.title}`);
-  await notifyMembers(input.leagueId, {
-    type: "match_created",
-    title: "New real match",
-    body: input.title,
-    link: `/matches/${match.id}`,
-    exceptProfileId: membership.profileId,
+  const id = creationId(req, membership.profileId, "create-match", input);
+  const { data, error } = await supabase.rpc("create_real_match", {
+    p_id: id, p_league: input.leagueId, p_team_a: input.teamAId, p_team_b: input.teamBId,
+    p_title: input.title, p_kickoff: input.kickOff, p_fixture: input.fixtureId ?? null,
   });
-
-  return Response.json(outcome.data, { status: outcome.state === "duplicate" ? 200 : 201 });
+  const match = confirmedRow(data, error, "Could not create match", input.leagueId);
+  if (match.id !== id) throw new ApiError("Match ID could not be confirmed", 409);
+  return Response.json({ match }, { status: 201 });
 });

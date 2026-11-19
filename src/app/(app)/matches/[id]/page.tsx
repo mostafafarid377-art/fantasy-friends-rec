@@ -25,7 +25,7 @@ import {
   Toast,
 } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
-import { api, useApi } from "@/lib/client/api";
+import { api, assertConfirmed, useApi } from "@/lib/client/api";
 import { EVENT_TYPES, type LeagueRules, type Position } from "@/lib/domain";
 
 type Player = {
@@ -181,10 +181,11 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
     setFormError(null);
     try {
       const state = sel[teamId];
-      await api(`/api/matches/${matchId}/lineup`, {
+      const saved = await api<{ lineups: { id: string }[] }>(`/api/matches/${matchId}/lineup`, {
         method: "PUT",
         body: { teamId, starters: state.starters, subs: state.subs },
       });
+      if (!saved?.lineups?.length || saved.lineups.some((line) => !line.id)) throw new Error("The saved lineup could not be confirmed");
       notify("Line-up saved");
       reload();
     } catch (err) {
@@ -223,7 +224,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
     }
     setBusy(true);
     try {
-      await api(`/api/matches/${matchId}/events`, {
+      const saved = await api<{ event?: { id: string }; substitution?: { id: string } }>(`/api/matches/${matchId}/events`, {
         method: "POST",
         body: {
           teamId: evTeam,
@@ -238,6 +239,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
       setEvPlayer("");
       setEvAssist("");
       setEvNote("");
+      assertConfirmed(saved?.event, "The event could not be confirmed");
       notify("Event recorded");
       reload();
     } catch (err) {
@@ -255,7 +257,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
     }
     setBusy(true);
     try {
-      await api(`/api/matches/${matchId}/events`, {
+      const saved = await api<{ event?: { id: string }; substitution?: { id: string } }>(`/api/matches/${matchId}/events`, {
         method: "POST",
         body: {
           kind: "substitution",
@@ -269,6 +271,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
       setSubOn("");
       setSubOff("");
       setSubMinute("");
+      assertConfirmed(saved?.substitution, "The substitution could not be confirmed");
       notify("Substitution recorded");
       reload();
     } catch (err) {
@@ -301,6 +304,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
           body: { action, reason: action === "reject" ? rejectReason : undefined, version: data.match.version },
         },
       );
+      if (res?.status !== (action === "submit" ? "pending" : action === "approve" ? "approved" : "rejected")) throw new Error("The result could not be confirmed");
       if (action === "approve" && res.pointsError) {
         notify(`Approved, but points failed: ${res.pointsError}`, "error");
       } else {

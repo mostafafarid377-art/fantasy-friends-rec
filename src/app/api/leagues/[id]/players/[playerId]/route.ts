@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import { ApiError, assertRole, handler, logActivity, requireMember } from "@/lib/server";
+import { ApiError, assertRole, checkDb, confirmedRow, handler, requireMember } from "@/lib/server";
 import { POSITIONS } from "@/lib/domain";
+
+import { PLAYER_FIELDS, playerDto } from "@/lib/roster";
 
 type Ctx = { params: Promise<{ id: string; playerId: string }> };
 
@@ -17,25 +19,23 @@ const patchSchema = z.object({
   description: z.string().max(400).nullable().optional(),
 });
 
-async function loadScoped(supabase: any, leagueId: string, playerId: string) {
-  const { data: player } = await supabase.from("players").select("*").eq("id", playerId).maybeSingle();
-  if (!player) throw new ApiError("Player not found", 404);
-  if (player.league_id !== leagueId) throw new ApiError("Player belongs to another league", 403);
-  return player;
-}
-
 export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
   const { id, playerId } = await ctx.params;
   const membership = await requireMember(id);
   assertRole(membership, "leader");
   const supabase = await getSupabase();
-  const player = await loadScoped(supabase, id, playerId);
 
   const body = await req.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) throw new ApiError("Check the player details", 422, parsed.error.flatten().fieldErrors);
 
-  const { data: updated } = await supabase
+  if (parsed.data.teamId) {
+    const team = await supabase.from("teams").select("id").eq("league_id", id).eq("id", parsed.data.teamId).maybeSingle();
+    checkDb(team.error, "Could not verify the team");
+    if (!team.data) throw new ApiError("That team does not exist in this league", 422);
+  }
+
+  const { data, error } = await supabase
     .from("players")
     .update({
       ...(parsed.data.fullName !== undefined ? { full_name: parsed.data.fullName } : {}),
@@ -49,12 +49,13 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
       updated_at: new Date().toISOString(),
     })
     .eq("id", playerId)
-    .select()
+    .eq("league_id", id)
+    .select(PLAYER_FIELDS)
     .maybeSingle();
 
-  await logActivity(id, membership.profileId, "player.updated", `Updated ${player.full_name}`);
+  const updated = confirmedRow(data, error, "Could not update player", id);
 
-  return Response.json({ player: updated });
+  return Response.json({ player: playerDto(updated) });
 });
 
 export const DELETE = handler(async (_req: NextRequest, ctx: Ctx) => {
@@ -62,16 +63,16 @@ export const DELETE = handler(async (_req: NextRequest, ctx: Ctx) => {
   const membership = await requireMember(id);
   assertRole(membership, "leader");
   const supabase = await getSupabase();
-  const player = await loadScoped(supabase, id, playerId);
 
-  const { data: updated } = await supabase
+  const { data, error } = await supabase
     .from("players")
     .update({ status: "archived", updated_at: new Date().toISOString() })
     .eq("id", playerId)
-    .select()
+    .eq("league_id", id)
+    .select(PLAYER_FIELDS)
     .maybeSingle();
 
-  await logActivity(id, membership.profileId, "player.archived", `Archived ${player.full_name}`);
+  const updated = confirmedRow(data, error, "Could not archive player", id);
 
-  return Response.json({ player: updated, archived: true });
+  return Response.json({ player: playerDto(updated), archived: true });
 });

@@ -76,7 +76,7 @@ export default function ProfilePage() {
       });
       setData({ ...data!, profile: res.profile });
       setToast({ message: "Profile saved", tone: "ok" });
-      void refresh();
+      void refresh().catch((error) => console.warn("[session refresh]", error));
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Could not save", tone: "error" });
     }

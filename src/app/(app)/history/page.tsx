@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { History as HistoryIcon } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
@@ -30,12 +31,15 @@ type Data = {
 
 export default function HistoryPage() {
   const { league, loading: leagueLoading } = useActiveLeague();
+  const [paging, setPaging] = useState<{ leagueId: string; page: number } | null>(null);
+  const page = paging && paging.leagueId === league?.id ? paging.page : 1;
+  const setPage = (next: number) => { if (league) setPaging({ leagueId: league.id, page: next }); };
   const { data, loading, error, reload } = useApi<Data>(
     league ? `/api/leagues/${league.id}/standings` : null,
     [league?.id],
   );
-  const matches = useApi<{ matches: { id: string; title: string; status: string; kickOff: string; teamAName: string; teamBName: string }[] }>(
-    league ? `/api/matches?leagueId=${league.id}` : null,
+  const matches = useApi<{ total: number; hasMore: boolean; matches: { id: string; title: string; status: string; kickOff: string; teamAName: string; teamBName: string }[] }>(
+    league ? `/api/matches?leagueId=${league.id}&status=approved&page=${page}` : null,
     [league?.id],
   );
 
@@ -62,7 +66,7 @@ export default function HistoryPage() {
     byMatch.set(h.matchId, list);
   });
 
-  const approvedMatches = (matches.data?.matches ?? []).filter((m) => m.status === "approved");
+  const approvedMatches = matches.data?.matches ?? [];
 
   const me = data.standings.find((s) => s.profileId === data.you);
 
@@ -78,7 +82,7 @@ export default function HistoryPage() {
         <Box label="Matches played" value={String(me?.matchesPlayed ?? 0)} />
         <Box label="Total points" value={String(Math.round(Number(me?.totalPoints ?? 0)))} />
         <Box label="Current rank" value={me ? `#${me.rank}` : "—"} />
-        <Box label="Approved matches" value={String(approvedMatches.length)} />
+        <Box label="Approved matches" value={String(matches.data?.total ?? 0)} />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -119,7 +123,9 @@ export default function HistoryPage() {
               Open
             </Link>
           </div>
-          {!approvedMatches.length ? (
+          {matches.loading ? <Skeleton className="h-28" /> : matches.error ? (
+            <ErrorNote message={matches.error} onRetry={matches.reload} />
+          ) : !approvedMatches.length ? (
             <p className="text-[13.5px] text-sage-dim">Nothing approved yet.</p>
           ) : (
             <ul className="divide-y divide-line-soft">
@@ -137,6 +143,13 @@ export default function HistoryPage() {
                 </li>
               ))}
             </ul>
+          )}
+          {(page > 1 || matches.data?.hasMore) && !matches.loading && (
+            <div className="mt-4 flex justify-between text-[13px] text-sage">
+              <button disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button>
+              <span>Page {page}</span>
+              <button disabled={!matches.data?.hasMore} onClick={() => setPage(page + 1)}>Next</button>
+            </div>
           )}
         </Panel>
       </div>

@@ -178,7 +178,7 @@ function Token({
         >
           {player.photoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={player.photoUrl} alt="" className="h-full w-full object-cover" />
+            <img loading="lazy" decoding="async" src={player.photoUrl} alt="" className="h-full w-full object-cover" />
           ) : (
             <span className="num text-[15px] font-semibold text-green-glow">
               {player.shirtNumber ?? player.position}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 
 export type SessionUser = {
@@ -59,206 +59,192 @@ type QueueItem = {
   createdAt: string;
 };
 
-const QUEUE_KEY = "ff.pending.ops";
+const LEGACY_QUEUE = "ff.pending.ops";
+let actorId: string | null = null;
+const reads = new Map<string, Promise<unknown>>();
+const recovery = new Map<string, Promise<number>>();
+export const RECOVERED_EVENT = "ff:operations-recovered";
 
-function readQueue(): QueueItem[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(QUEUE_KEY);
-    return raw ? (JSON.parse(raw) as QueueItem[]) : [];
-  } catch {
-    return [];
-  }
+export function setOperationActor(id: string | null) {
+  if (actorId !== id) reads.clear();
+  actorId = id;
+  try { window.localStorage.removeItem(LEGACY_QUEUE); } catch { /* storage disabled */ }
 }
 
-function writeQueue(items: QueueItem[]) {
+function readQueue(actor: string): QueueItem[] {
   try {
-    window.localStorage.setItem(QUEUE_KEY, JSON.stringify(items.slice(-25)));
-  } catch {
-    /* storage unavailable — retries simply won't persist */
-  }
+    const raw = window.localStorage.getItem(`ff.pending.ops.v2.${actor}`);
+    const items = raw ? JSON.parse(raw) : [];
+    return Array.isArray(items) ? items.filter((item) => item?.method === "POST" && isReplayable(item.route)) : [];
+  } catch { return []; }
 }
 
-/**
- * Fetch wrapper with idempotent mutation support.
- *
- * `mutate()` sends a stable operation id, queues the request locally until
- * the server confirms, and on retry reuses the SAME id and payload. A
- * "read verification" failure after a confirmed write never re-sends the
- * request — the queue only drops an item once the server has acknowledged.
- */
-export async function api<T = unknown>(
-  route: string,
-  options: {
-    method?: HttpMethod;
-    body?: unknown;
-    signal?: AbortSignal;
-    idempotent?: boolean;
-    operationId?: string;
-  } = {},
-): Promise<T> {
+function writeQueue(actor: string, items: QueueItem[]) {
+  try { window.localStorage.setItem(`ff.pending.ops.v2.${actor}`, JSON.stringify(items.slice(-25))); }
+  catch { /* storage disabled */ }
+}
+
+function isReplayable(route: unknown): route is string {
+  return typeof route === "string" && /^\/api\/(?:leagues(?:\/join|\/[^/?#]+\/(?:players|teams|fixtures))?|matches(?:\/[^/?#]+\/events)?)$/.test(route);
+}
+
+type RequestOptions = {
+  method?: HttpMethod;
+  body?: unknown;
+  signal?: AbortSignal;
+  idempotent?: boolean;
+  operationId?: string;
+  recoveryActor?: string;
+};
+
+export async function api<T = unknown>(route: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
-  const operationId = options.idempotent ? (options.operationId ?? newOperationId()) : undefined;
+  if (method === "GET" && !options.signal) {
+    // Share only in-flight reads (no TTL or persistent cache of private data).
+    const previous = reads.get(route);
+    if (previous) return previous as Promise<T>;
+    const request = requestJson<T>(route, options);
+    reads.set(route, request);
+    try { return await request; }
+    finally { if (reads.get(route) === request) reads.delete(route); }
+  }
+  return requestJson<T>(route, options);
+}
 
-  if (operationId && options.body !== undefined) {
-    const queue = readQueue();
-    queue.push({
-      operationId,
-      route,
-      method,
-      payload: options.body,
-      createdAt: new Date().toISOString(),
-    });
-    writeQueue(queue);
+async function requestJson<T>(route: string, options: RequestOptions): Promise<T> {
+  const method = options.method ?? "GET";
+  const actor = options.recoveryActor ?? actorId;
+  const operationId = options.idempotent && method === "POST" && isReplayable(route)
+    ? options.operationId ?? newOperationId() : undefined;
+  const queued = actor && operationId && options.body !== undefined;
+  if (queued) {
+    writeQueue(actor, [...readQueue(actor).filter((q) => q.operationId !== operationId), {
+      operationId, route, method, payload: options.body, createdAt: new Date().toISOString(),
+    }]);
   }
 
   let response: Response;
   try {
     response = await fetch(route, {
-      method,
+      method, cache: "no-store", credentials: "same-origin", signal: options.signal,
       headers: {
         "Content-Type": "application/json",
         ...(operationId ? { "x-operation-id": operationId } : {}),
+        ...(options.recoveryActor ? { "x-ff-recovery-actor": options.recoveryActor } : {}),
       },
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-      credentials: "same-origin",
-      signal: options.signal,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
   } catch (err) {
-    // Network failure: the operation stays queued for recovery.
-    if (operationId) {
-      // keep it queued
+    if (options.signal?.aborted) throw err;
+    throw new ApiRequestError(queued
+      ? "The server did not confirm the change. You can retry the pending request in Settings."
+      : "The server did not confirm the request. Check your connection and reload before retrying.", 0, err);
+  }
+
+  let data: any;
+  try { data = await response.json(); }
+  catch { throw new ApiRequestError("The server did not return a valid response", response.status); }
+  if (!response.ok || data?.state === "unknown") {
+    if (queued && response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429) {
+      writeQueue(actor, readQueue(actor).filter((q) => q.operationId !== operationId));
     }
-    throw new ApiRequestError(
-      navigator.onLine
-        ? "The server could not be reached. Your change is saved and will retry."
-        : "You are offline. Your change is saved and will retry when you reconnect.",
-      0,
-      err,
-    );
+    throw new ApiRequestError(typeof data?.error === "string" ? data.error : "The request was not confirmed",
+      response.ok ? 409 : response.status, data?.details);
   }
 
-  const text = await response.text();
-  const data: unknown = text ? JSON.parse(text) : {};
-
-  if (!response.ok) {
-    const message =
-      data && typeof data === "object" && "error" in data
-        ? String((data as { error: unknown }).error)
-        : "Request failed";
-    const error = new ApiRequestError(message, response.status, data);
-    if (operationId && response.status !== 409) {
-      // permanent failure — stop retrying this payload
-      writeQueue(readQueue().filter((q) => q.operationId !== operationId));
-    }
-    throw error;
-  }
-
-  if (operationId) {
-    writeQueue(readQueue().filter((q) => q.operationId !== operationId));
-  }
+  if (queued) writeQueue(actor, readQueue(actor).filter((q) => q.operationId !== operationId));
+  if (method !== "GET") reads.clear();
   return data as T;
 }
 
-/** Re-sends anything still queued from a previous session or a crash. */
-export async function recoverPendingOperations(): Promise<number> {
-  const queue = readQueue();
-  if (!queue.length) return 0;
-  let recovered = 0;
-  for (const item of queue) {
-    try {
-      await api(item.route, {
-        method: item.method,
-        body: item.payload,
-        idempotent: true,
-        operationId: item.operationId,
-      });
-      recovered++;
-      writeQueue(readQueue().filter((q) => q.operationId !== item.operationId));
-    } catch (err) {
-      if (err instanceof ApiRequestError && err.status === 409) {
-        // id already applied or in flight — drop it, never double-write
-        writeQueue(readQueue().filter((q) => q.operationId !== item.operationId));
-      }
-      break; // still failing: stop and keep the rest for the next attempt
-    }
+export function assertConfirmed<T extends { id: string; leagueId?: string }>(record: T | undefined | null, message: string, leagueId?: string): T {
+  if (typeof record?.id !== "string" || !record.id || (leagueId !== undefined && leagueId !== record.leagueId)) {
+    throw new ApiRequestError(message, 409);
   }
-  return recovered;
+  return record;
 }
 
-export function pendingCount(): number {
-  return readQueue().length;
-}
-
-/* ------------------------------------------------------------------ */
-/* Hooks                                                               */
-/* ------------------------------------------------------------------ */
-
-export function useSession() {
-  const [data, setData] = useState<SessionPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
-
-  const refresh = useCallback(async () => {
-    try {
-      const res = await api<SessionPayload>("/api/auth/session");
-      setData(res);
-      return res;
-    } catch {
-      setData({ user: null, leagues: [], unread: 0 });
-      return null;
-    } finally {
-      setLoading(false);
+export function recoverPendingOperations(actor: string | null = actorId): Promise<number> {
+  if (!actor) return Promise.resolve(0);
+  const ongoing = recovery.get(actor);
+  if (ongoing) return ongoing;
+  const task = (async () => {
+    let recovered = 0;
+    let firstError: unknown;
+    for (const item of readQueue(actor)) {
+      if (actor !== actorId) break;
+      try {
+        await api(item.route, { method: item.method, body: item.payload, idempotent: true,
+          operationId: item.operationId, recoveryActor: actor });
+        recovered++;
+      } catch (err) { firstError = err; break; }
     }
+    if (recovered) window.dispatchEvent(new Event(RECOVERED_EVENT));
+    if (firstError) throw firstError;
+    return recovered;
+  })();
+  recovery.set(actor, task);
+  return task.finally(() => recovery.delete(actor));
+}
+
+export function pendingCount(): number { return actorId ? readQueue(actorId).length : 0; }
+
+export function useSession(initial: SessionPayload) {
+  const [data, setData] = useState(initial);
+  const router = useRouter();
+  const generation = useRef(0);
+  const refresh = useCallback(async () => {
+    const seq = ++generation.current;
+    const result = await api<SessionPayload>("/api/auth/session");
+    if (seq === generation.current) setData(result);
+    return result;
   }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
   const logout = useCallback(async () => {
     await api("/api/auth/logout", { method: "POST" });
+    generation.current++;
+    setOperationActor(null);
     setData({ user: null, leagues: [], unread: 0 });
-    router.push("/login");
+    router.replace("/login");
   }, [router]);
-
-  return { ...data, loading, refresh, logout };
+  const setUnread = useCallback((count: number) => setData((old) => old.unread === count ? old : { ...old, unread: count }), []);
+  return { ...data, refresh, logout, setUnread };
 }
 
-export function useApi<T>(
-  route: string | null,
-  deps: unknown[] = [],
-  options: { refreshKey?: number } = {},
-) {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(Boolean(route));
-  const abortRef = useRef<AbortController | null>(null);
-
+export function useApi<T>(route: string | null, deps: unknown[] = [], options: { refreshKey?: number } = {}) {
+  const [state, setState] = useState<{ route: string; data: T | null; error: string | null; loading: boolean } | null>(null);
+  const generation = useRef(0);
+  const active = useRef(route);
+  useEffect(() => { active.current = route; }, [route]);
   const load = useCallback(async () => {
-    if (!route) return;
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setLoading(true);
-    setError(null);
+    if (!route || route !== active.current) return;
+    const seq = ++generation.current;
+    setState((previous) => ({ route, data: previous?.route === route ? previous.data : null, error: null, loading: true }));
     try {
-      const res = await api<T>(route, { signal: controller.signal });
-      setData(res);
+      const result = await api<T>(route);
+      if (seq === generation.current && active.current === route) setState({ route, data: result, error: null, loading: false });
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      setError(err instanceof Error ? err.message : "Could not load");
-    } finally {
-      setLoading(false);
+      if (seq === generation.current && active.current === route) {
+        setState((previous) => ({ route, data: previous?.route === route ? previous.data : null,
+          error: err instanceof Error ? err.message : "Could not load", loading: false }));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, ...deps, options.refreshKey]);
-
   useEffect(() => {
     void load();
-    return () => abortRef.current?.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const onRecovered = () => void load();
+    window.addEventListener(RECOVERED_EVENT, onRecovered);
+    return () => { generation.current++; window.removeEventListener(RECOVERED_EVENT, onRecovered); };
   }, [load]);
-
-  return { data, error, loading, reload: load, setData };
+  const setData = useCallback((next: SetStateAction<T | null>) => {
+    if (!route || route !== active.current) return;
+    generation.current++;
+    setState((previous) => ({ route,
+      data: typeof next === "function" ? (next as (old: T | null) => T | null)(previous?.route === route ? previous.data : null) : next,
+      error: null, loading: false,
+    }));
+  }, [route]);
+  const current = state?.route === route ? state : null;
+  return { data: current?.data ?? null, error: current?.error ?? null,
+    loading: Boolean(route) && (current?.loading ?? true), reload: load, setData };
 }

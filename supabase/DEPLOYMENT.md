@@ -1,70 +1,50 @@
-
 # Fantasy Friends Supabase deployment
 
-## Current status (2026-11-19)
+All application data APIs use the cookie-scoped Supabase client and native
+Supabase Auth. The app does not need `DATABASE_URL` or a service-role key.
 
-All application data APIs (leagues, players, squads, matches, points,
-standings, notifications) use Supabase exclusively via `@/db`
-(`getSupabase()` → `createServerClient`). No production route depends on
-`DATABASE_URL` or legacy Drizzle. The SQL migrations have been audited and
-applied successfully against a fresh PostgreSQL database.
+## Existing Hagz-fantasy deployment
 
-## Important status
+This release adds two forward-only migrations. Apply **only** the following
+new files, in order, through the project's reviewed migration process:
 
-**DO NOT RUN `supabase db push` against the Hagz-fantasy project.** The
-migrations are designed for fresh-database deployment only. Use
-`scripts/deploy-fresh-db.sh` against a local or disposable PostgreSQL instance.
+1. `0005_confirmed_writes.sql`
+2. `0006_write_side_effects.sql`
 
-## Migration order
+Then deploy the matching app build to Vercel. Confirm the production variables
+still point to Hagz-fantasy (`zkrfgdiujpagaddsxbcb`):
+`NEXT_PUBLIC_SUPABASE_URL` (project root, without `/rest/v1`) and
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Keep all credentials out of Git.
 
-For a brand-new, empty project only:
+Neither migration updates or backfills existing rows at deployment. The new
+functions and triggers run on subsequent authorized app actions only. RLS
+and table grants stay enabled and unchanged. Do not run the legacy destructive
+migration, reset the database, or run an unrestricted `supabase db push`
+against Hagz-fantasy; migrations `0001`–`0004` are the existing baseline.
 
-1. `0001_schema.sql`
-2. `0002_rls.sql`
-3. `0003_functions.sql`
-4. `0004_native_auth_profiles.sql`
+After deploying, League Leaders in leagues with an empty Scoring screen can
+choose **Initialize draft rules** and review them before approval. This is a
+normal, authenticated app action; it does not overwrite existing rules.
 
-Do not run `supabase/legacy/0000_destructive_removal.sql`.
-Do not use `supabase db reset` or any DROP/TRUNCATE operation.
+## Empty local database setup
 
-## Fresh-database deployment
+For a fresh Supabase-compatible instance only, migrations run in order from
+`0001_schema.sql` to `0006_write_side_effects.sql`. The
+`scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
+including Hagz-fantasy.
 
+For an empty disposable **plain PostgreSQL** database named `ff_test*` on
+localhost, the integration helper supplies minimal Supabase Auth scaffolding:
+
+```sh
+export DATABASE_URL=postgresql://YOUR_LOCAL_DB_USER@localhost:5432/ff_test
+node scripts/setup-local-integration.mjs
+npm run test:integration
 ```
-DATABASE_URL="postgres://user:pass@host:5432/dbname" \
-  CONFIRM_DEPLOY=yes \
-  ./scripts/deploy-fresh-db.sh
-```
 
-The script requires `CONFIRM_DEPLOY=yes` and refuses to run against denylisted
-Supabase project refs (including `zkrfgdiujpagaddsxbcb` / Hagz-fantasy).
+The integration suite truncates its fixture tables between runs. Only point
+it at a disposable test database. The local scaffolding verifies database
+constraints, RLS, grants and RPC transactions, not live Supabase Auth or REST.
 
-## Local environment
-
-Keep `.env.local` out of Git and ZIP archives. Set:
-
-- `NEXT_PUBLIC_SUPABASE_URL` to the project root URL (without `/rest/v1`)
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the publishable key
-
-No `DATABASE_URL` is needed by application routes.
-
-## Verification
-
-1. `npm.cmd install`
-2. `npm.cmd run typecheck` — must pass
-3. `npm.cmd run audit:sql` — must pass
-4. `npm.cmd run build` — must pass
-5. `npm.cmd test` — unit tests (46/46) must pass
-6. `npm.cmd run test:integration` — PostgreSQL integration tests (requires DATABASE_URL)
-
-## Integration tests
-
-`src/lib/__tests__/integration/postgres.test.ts` covers:
-- Schema deployment (all 4 migrations)
-- RLS policies with separate authenticated sessions
-- Atomic league creation via `create_league()` RPC
-- Join league via invite code
-- Squad creation
-- Match management (create, events, approve/reject)
-- Scoring and standings
-- RPC grants for `authenticated` role
-
+See [PRODUCTION_WRITE_AND_PERFORMANCE_AUDIT.md](../PRODUCTION_WRITE_AND_PERFORMANCE_AUDIT.md)
+for the verification results and live smoke checklist.

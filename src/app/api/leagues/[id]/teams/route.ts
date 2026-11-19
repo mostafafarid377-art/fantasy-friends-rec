@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import { ApiError, assertRole, handler, logActivity, requireMember } from "@/lib/server";
+import { ApiError, assertRole, checkDb, confirmedRow, creationId, handler, requireMember } from "@/lib/server";
+
+import { TEAM_FIELDS, teamDto } from "@/lib/roster";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -11,12 +13,13 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   await requireMember(id);
   const supabase = await getSupabase();
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("teams")
-    .select("*")
+    .select(TEAM_FIELDS)
     .eq("league_id", id)
     .order("name", { ascending: true });
-  return Response.json({ teams: rows ?? [] });
+  checkDb(error, "Could not load teams");
+  return Response.json({ teams: (rows ?? []).map(teamDto) });
 });
 
 const schema = z.object({
@@ -35,23 +38,18 @@ export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
   if (!parsed.success) throw new ApiError("Check the team details", 422, parsed.error.flatten().fieldErrors);
 
   const supabase = await getSupabase();
-  const { data: all } = await supabase.from("teams").select("name").eq("league_id", id);
-  if (all?.some((t: any) => t.name.toLowerCase() === parsed.data.name.toLowerCase())) {
+  const teamId = creationId(req, membership.profileId, `teams/${id}`, parsed.data);
+  const { data, error } = await supabase.from("teams").insert({
+    id: teamId, league_id: id, name: parsed.data.name,
+    short_name: parsed.data.shortName ?? null, crest_url: parsed.data.crestUrl ?? null,
+  }).select(TEAM_FIELDS).maybeSingle();
+  if (error?.code === "23505") {
+    const existing = await supabase.from("teams").select(TEAM_FIELDS).eq("league_id", id).eq("id", teamId).maybeSingle();
+    checkDb(existing.error, "Could not check the earlier team request");
+    if (existing.data?.id) return Response.json({ team: teamDto(existing.data) });
     throw new ApiError("A team with that name already exists in this league", 409);
   }
-
-  const { data: created } = await supabase
-    .from("teams")
-    .insert({
-      league_id: id,
-      name: parsed.data.name,
-      short_name: parsed.data.shortName ?? null,
-      crest_url: parsed.data.crestUrl ?? null,
-    })
-    .select()
-    .maybeSingle();
-
-  await logActivity(id, membership.profileId, "team.created", `Added team ${parsed.data.name}`);
-
-  return Response.json({ team: created }, { status: 201 });
+  const created = confirmedRow(data, error, "Could not create team", id);
+  if (created.id !== teamId) throw new ApiError("The saved team ID could not be confirmed", 409);
+  return Response.json({ team: teamDto(created) }, { status: 201 });
 });

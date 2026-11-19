@@ -80,6 +80,20 @@ export default function ScoringRulesPage() {
     }
   };
 
+  const initialize = async () => {
+    if (!league || !data) return;
+    setSaving(true);
+    try {
+      const res = await api<{ rules: Rule[]; approved: boolean }>(`/api/leagues/${league.id}/rules`,
+        { method: "PUT", body: { action: "initialize" } });
+      if (!res?.rules?.length) throw new Error("Draft rules could not be confirmed");
+      setData({ ...data, rules: res.rules, approved: res.approved });
+      setToast({ message: "Scoring rules initialized. Review the draft before approving it.", tone: "ok" });
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : "Could not initialize scoring rules", tone: "error" });
+    } finally { setSaving(false); }
+  };
+
   const approve = async () => {
     if (!league || !data) return;
     setSaving(true);
@@ -128,7 +142,10 @@ export default function ScoringRulesPage() {
             <Badge tone={data.approved ? "live" : "warn"}>
               {data.approved ? "Approved" : "Draft configuration"}
             </Badge>
-            {isLeader && (
+            {isLeader && !data.rules.length && (
+              <Button onClick={initialize} loading={saving}>Initialize draft rules</Button>
+            )}
+            {isLeader && data.rules.length > 0 && (
               <>
                 <Button variant="outline" onClick={save} loading={saving} disabled={!dirty}>
                   <Save className="h-4 w-4" /> Save draft

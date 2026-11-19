@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { Archive, Pencil, Plus, ShieldAlert, UserSquare2 } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import {
@@ -19,11 +19,12 @@ import {
   Toast,
 } from "@/components/ui";
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
-import { api, useApi } from "@/lib/client/api";
+import { api, assertConfirmed, useApi } from "@/lib/client/api";
 import { AVAILABILITY, POSITIONS, type Position } from "@/lib/domain";
 
 type Player = {
   id: string;
+  leagueId: string;
   fullName: string;
   position: Position;
   photoUrl: string | null;
@@ -34,7 +35,9 @@ type Player = {
   description: string | null;
 };
 
-type Data = { players: Player[]; teams: { id: string; name: string }[]; total: number };
+type Team = { id: string; leagueId: string; name: string };
+type Data = { players: Player[]; teams: Team[]; total: number };
+const PLAYER_BATCH = 50;
 
 type Draft = {
   fullName: string;
@@ -59,12 +62,15 @@ const EMPTY: Draft = {
 export default function PlayersPage() {
   const { league, loading: leagueLoading } = useActiveLeague();
   const { isLeader } = useLeague();
-  const { data, loading, error, reload } = useApi<Data>(
+  const { data, loading, error, reload, setData } = useApi<Data>(
     league ? `/api/leagues/${league.id}/players?archived=1` : null,
     [league?.id],
   );
 
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const [visible, setVisible] = useState(PLAYER_BATCH);
+  const [justCreated, setJustCreated] = useState<string | null>(null);
   const [position, setPosition] = useState<"ALL" | Position>("ALL");
   const [teamId, setTeamId] = useState("ALL");
   const [showArchived, setShowArchived] = useState(false);
@@ -78,7 +84,7 @@ export default function PlayersPage() {
 
   const filtered = useMemo(() => {
     const list = data?.players ?? [];
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     return list.filter((p) => {
       if (!showArchived && p.status === "archived") return false;
       if (position !== "ALL" && p.position !== position) return false;
@@ -86,7 +92,14 @@ export default function PlayersPage() {
       if (q && !p.fullName.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [data, query, position, teamId, showArchived]);
+  }, [data, deferredQuery, position, teamId, showArchived]);
+
+  const updatePlayer = (player: Player) => setData((old) => {
+    if (!old) return old;
+    const players = [...old.players.filter((p) => p.id !== player.id), player]
+      .sort((a, b) => a.fullName.localeCompare(b.fullName) || a.id.localeCompare(b.id));
+    return { ...old, players, total: players.length };
+  });
 
   const savePlayer = async () => {
     if (!league || !draft) return;
@@ -101,16 +114,17 @@ export default function PlayersPage() {
         availability: draft.availability,
         description: draft.description.trim() || null,
       };
-      if (editingId) {
-        await api(`/api/leagues/${league.id}/players/${editingId}`, { method: "PATCH", body });
-        setToast({ message: "Player updated", tone: "ok" });
-      } else {
-        await api(`/api/leagues/${league.id}/players`, { method: "POST", body, idempotent: true });
-        setToast({ message: "Player added", tone: "ok" });
+      const route = `/api/leagues/${league.id}/players${editingId ? `/${editingId}` : ""}`;
+      const res = await api<{ player: Player }>(route, { method: editingId ? "PATCH" : "POST", body, idempotent: !editingId });
+      const saved = assertConfirmed(res?.player, "The saved player could not be confirmed", league.id);
+      if (editingId && saved.id !== editingId) throw new Error("The saved player ID did not match");
+      updatePlayer(saved);
+      if (!editingId) {
+        setQuery(""); setPosition("ALL"); setTeamId("ALL"); setVisible(PLAYER_BATCH); setJustCreated(saved.id);
       }
+      setToast({ message: editingId ? "Player updated" : "Player added", tone: "ok" });
       setDraft(null);
       setEditingId(null);
-      reload();
     } catch (err) {
       const details = (err as { details?: unknown }).details;
       setToast({
@@ -133,17 +147,13 @@ export default function PlayersPage() {
   const archive = async (player: Player) => {
     if (!league) return;
     try {
-      if (player.status === "archived") {
-        await api(`/api/leagues/${league.id}/players/${player.id}`, {
-          method: "PATCH",
-          body: { status: "active" },
-        });
-        setToast({ message: "Player restored", tone: "ok" });
-      } else {
-        await api(`/api/leagues/${league.id}/players/${player.id}`, { method: "DELETE" });
-        setToast({ message: "Player archived — history preserved", tone: "ok" });
-      }
-      reload();
+      const restoring = player.status === "archived";
+      const res = await api<{ player: Player }>(`/api/leagues/${league.id}/players/${player.id}`, restoring
+        ? { method: "PATCH", body: { status: "active" } } : { method: "DELETE" });
+      const saved = assertConfirmed(res?.player, "The player change could not be confirmed", league.id);
+      if (saved.id !== player.id || saved.status !== (restoring ? "active" : "archived")) throw new Error("The player status did not change");
+      updatePlayer(saved);
+      setToast({ message: restoring ? "Player restored" : "Player archived — history preserved", tone: "ok" });
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Action failed", tone: "error" });
     }
@@ -153,15 +163,17 @@ export default function PlayersPage() {
     if (!league || teamName.trim().length < 2) return;
     setSaving(true);
     try {
-      await api(`/api/leagues/${league.id}/teams`, {
+      const res = await api<{ team: Team }>(`/api/leagues/${league.id}/teams`, {
         method: "POST",
         body: { name: teamName.trim() },
         idempotent: true,
       });
+      const saved = assertConfirmed(res?.team, "The saved team could not be confirmed", league.id);
+      setData((old) => old ? { ...old, teams: [...old.teams.filter((t) => t.id !== saved.id), saved]
+        .sort((a, b) => a.name.localeCompare(b.name)) } : old);
       setTeamName("");
       setTeamModal(false);
       setToast({ message: "Team added", tone: "ok" });
-      reload();
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Could not add team", tone: "error" });
     } finally {
@@ -187,7 +199,10 @@ export default function PlayersPage() {
       </div>
     );
 
-  const teamNameOf = (id: string | null) => data?.teams.find((t) => t.id === id)?.name ?? "Free agent";
+  const teamsById = new Map(data?.teams.map((t) => [t.id, t.name]));
+  const teamNameOf = (id: string | null) => (id && teamsById.get(id)) || "Free agent";
+  const newPlayer = filtered.find((p) => p.id === justCreated);
+  const shown = newPlayer ? [newPlayer, ...filtered.filter((p) => p.id !== newPlayer.id).slice(0, visible - 1)] : filtered.slice(0, visible);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
@@ -269,7 +284,7 @@ export default function PlayersPage() {
         </div>
       ) : (
         <ul className="space-y-1.5">
-          {filtered.map((p) => (
+          {shown.map((p) => (
             <li
               key={p.id}
               className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
@@ -279,7 +294,7 @@ export default function PlayersPage() {
               <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-pitch-900 font-display text-[15px] font-bold text-green">
                 {p.photoUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.photoUrl} alt="" className="h-full w-full object-cover" />
+                  <img loading="lazy" decoding="async" src={p.photoUrl} alt="" className="h-full w-full object-cover" />
                 ) : (
                   p.fullName.slice(0, 1)
                 )}
@@ -328,6 +343,12 @@ export default function PlayersPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {filtered.length > visible && (
+        <Button variant="outline" className="mt-4" onClick={() => setVisible((n) => n + PLAYER_BATCH)}>
+          Show more players ({visible}/{filtered.length})
+        </Button>
       )}
 
       {/* player editor */}
@@ -446,7 +467,7 @@ export default function PlayersPage() {
               <span className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-green-dim bg-pitch-900 font-display text-2xl font-bold text-green">
                 {detail.photoUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={detail.photoUrl} alt="" className="h-full w-full object-cover" />
+                  <img loading="lazy" decoding="async" src={detail.photoUrl} alt="" className="h-full w-full object-cover" />
                 ) : (
                   detail.fullName.slice(0, 1)
                 )}
