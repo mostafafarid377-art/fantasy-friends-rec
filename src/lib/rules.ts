@@ -7,7 +7,6 @@
  * can edit each figure before approving.
  */
 
-import { getSupabase } from "@/db";
 import { POSITIONS, SCORING_CATEGORIES, type Position } from "@/lib/domain";
 import type { ScoringRule } from "@/lib/scoring";
 
@@ -17,24 +16,6 @@ export function inviteCode(): string {
   let out = "";
   for (let i = 0; i < 8; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   return out;
-}
-
-/** Seeds a league with its own DRAFT scoring rule set (never official yet). */
-export async function seedLeagueRules(leagueId: string) {
-  const supabase = await getSupabase();
-
-  const rows = DEFAULT_DRAFT_RULES.map((r) => ({
-    league_id: leagueId,
-    position: r.position,
-    event_type: r.category,
-    points: String(r.points),
-    status: "draft" as const,
-  }));
-
-  // Insert in batches of 200 to stay under payload limits
-  for (let i = 0; i < rows.length; i += 200) {
-    await supabase.from("scoring_rules").insert(rows.slice(i, i + 200));
-  }
 }
 
 type DraftRow = { position: Position; category: string; points: number };

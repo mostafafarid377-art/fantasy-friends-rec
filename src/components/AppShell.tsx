@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Bell,
   ChevronDown,
@@ -57,13 +57,8 @@ const MOBILE: NavItem[] = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { league, leagues, selectLeague, user, unread, logout, refresh, recovered } = useLeague();
+  const { league, leagues, selectLeague, user, unread, logout, recovered } = useLeague();
   const [switcher, setSwitcher] = useState(false);
-
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 

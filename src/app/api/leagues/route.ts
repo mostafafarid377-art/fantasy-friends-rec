@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import { ApiError, handler, operationId, requireUser, withIdempotency } from "@/lib/server";
+import { ApiError, checkDb, creationId, handler, requireUser } from "@/lib/server";
+import { confirmLeagueMembership } from "@/lib/league-membership";
 import { FORMATS, STARTERS_BY_FORMAT } from "@/lib/domain";
-import { seedLeagueRules } from "@/lib/rules";
 
 export const dynamic = "force-dynamic";
 
@@ -19,11 +19,12 @@ export const GET = handler(async () => {
   const user = await requireUser();
   const supabase = await getSupabase();
 
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("league_members")
     .select("role, team_name, leagues(id, name, format, starters, subs_count, invite_code, created_at)")
     .eq("profile_id", user.id);
 
+  checkDb(error, "Could not load leagues");
   return Response.json({
     leagues: (rows ?? []).map((r: any) => ({
       id: r.leagues.id,
@@ -48,63 +49,17 @@ export const POST = handler(async (req: NextRequest) => {
   }
   const input = parsed.data;
 
-  const outcome = await withIdempotency(
-    {
-      route: "POST /api/leagues",
-      profileId: user.id,
-      operationId: operationId(req),
-      payload: input,
-    },
-    async () => {
-      const supabase = await getSupabase();
-
-      // Atomic league creation via SECURITY DEFINER RPC:
-      // league + leader membership + standings + activity in one transaction.
-      const { data: created, error: rpcError } = await supabase.rpc(
-        "create_league",
-        {
-          p_name: input.name,
-          p_description: input.description ?? null,
-          p_format: input.format,
-          p_starters: STARTERS_BY_FORMAT[input.format],
-          p_subs_count: input.subsCount,
-          p_team_name: input.teamName ?? null,
-        },
-      );
-
-    if (rpcError || !created) {
-  console.error("[CREATE_LEAGUE_RPC_ERROR]", {
-    code: rpcError?.code,
-    message: rpcError?.message,
-    details: rpcError?.details,
-    hint: rpcError?.hint,
-    created,
+  const supabase = await getSupabase();
+  const { data: leagueId, error } = await supabase.rpc("create_league_confirmed", {
+    p_operation: creationId(req, user.id, "create-league", input),
+    p_name: input.name,
+    p_description: input.description ?? null,
+    p_format: input.format,
+    p_starters: STARTERS_BY_FORMAT[input.format],
+    p_subs_count: input.subsCount,
+    p_team_name: input.teamName ?? null,
   });
-
-  throw new ApiError("Could not create the league", 500);
-}
-
-      const leagueId = created as string;
-
-      // Seed scoring rules (draft) — best-effort after atomic core creation.
-      await seedLeagueRules(leagueId);
-
-      return { id: leagueId };
-    },
-  );
-
-  if (outcome.state === "unknown") throw new ApiError("League creation is still in progress", 409);
-  const league = outcome.data as any;
-  if (outcome.state === "duplicate") {
-    // Fetch the existing league to return full data
-    const supabase = await getSupabase();
-    const { data: existing } = await supabase
-      .from("leagues")
-      .select("*")
-      .eq("created_by", user.id)
-      .eq("name", input.name)
-      .maybeSingle();
-    return Response.json(existing ?? league, { status: 200 });
-  }
-  return Response.json(league, { status: 201 });
+  checkDb(error, "Could not create league");
+  const league = await confirmLeagueMembership(supabase, leagueId, user.id);
+  return Response.json({ league }, { status: 201 });
 });

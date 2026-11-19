@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/AppShell";
 import { Button, EmptyState, ErrorNote, Panel, Skeleton, Slate, TableSkeleton, Toast } from "@/components/ui";
 import { useLeague } from "@/components/LeagueContext";
 import { api, useApi } from "@/lib/client/api";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Note = {
   id: string;
@@ -18,7 +18,7 @@ type Note = {
 };
 
 export default function NotificationsPage() {
-  const { refresh } = useLeague();
+  const { setUnread } = useLeague();
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const { data, loading, error, reload, setData } = useApi<{ notifications: Note[]; unread: number }>(
     `/api/notifications${filter === "unread" ? "?filter=unread" : ""}`,
@@ -27,14 +27,15 @@ export default function NotificationsPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => { if (data) setUnread(data.unread); }, [data, setUnread]);
+
   const markAll = async () => {
     setBusy(true);
     try {
-      await api("/api/notifications", { method: "PATCH", body: { all: true } });
-      setData({ notifications: (data?.notifications ?? []).map((n) => ({ ...n, readAt: n.readAt ?? new Date().toISOString() })), unread: 0 });
+      const result = await api<{ ok: boolean; unread: number; readAt: string }>("/api/notifications", { method: "PATCH", body: { all: true } });
+      if (!result.ok) throw new Error("Notification update could not be confirmed");
+      setData((old) => ({ notifications: filter === "unread" ? [] : (old?.notifications ?? []).map((n) => ({ ...n, readAt: n.readAt ?? result.readAt })), unread: result.unread }));
       setToast("All notifications marked read");
-      void refresh();
-      reload();
     } catch (err) {
       setToast(err instanceof Error ? err.message : "Could not update");
     } finally {
@@ -44,12 +45,10 @@ export default function NotificationsPage() {
 
   const markOne = async (id: string) => {
     try {
-      await api("/api/notifications", { method: "PATCH", body: { ids: [id] } });
-      setData({
-        notifications: (data?.notifications ?? []).map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n)),
-        unread: Math.max(0, (data?.unread ?? 1) - 1),
-      });
-      void refresh();
+      const result = await api<{ ok: boolean; unread: number; readAt: string }>("/api/notifications", { method: "PATCH", body: { ids: [id] } });
+      if (!result.ok) throw new Error("Notification update could not be confirmed");
+      setData((old) => ({ notifications: (old?.notifications ?? []).flatMap((n) => n.id !== id ? [n]
+        : filter === "unread" ? [] : [{ ...n, readAt: n.readAt ?? result.readAt }]), unread: result.unread }));
     } catch {
       setToast("Could not update that notification");
     }

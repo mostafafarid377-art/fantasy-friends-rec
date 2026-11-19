@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { CalendarClock, ChevronRight, Plus, Swords } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
@@ -16,7 +17,7 @@ type Match = {
   teamBName: string;
   organizerId: string;
   rejectionReason: string | null;
-  events: unknown[];
+  eventCount: number;
 };
 
 type Data = {
@@ -24,6 +25,9 @@ type Data = {
   role: string;
   canOrganize: boolean;
   canApprove: boolean;
+  hasMore: boolean;
+  pendingId: string | null;
+  pendingCount: number;
 };
 
 const TONE: Record<string, "neutral" | "live" | "warn" | "danger" | "info"> = {
@@ -35,9 +39,12 @@ const TONE: Record<string, "neutral" | "live" | "warn" | "danger" | "info"> = {
 
 export default function MatchesPage() {
   const { league, loading: leagueLoading } = useActiveLeague();
+  const [paging, setPaging] = useState<{ leagueId: string; page: number } | null>(null);
+  const page = paging && paging.leagueId === league?.id ? paging.page : 1;
+  const setPage = (next: number) => { if (league) setPaging({ leagueId: league.id, page: next }); };
   const { canOrganize, user } = useLeague();
   const { data, loading, error, reload } = useApi<Data>(
-    league ? `/api/matches?leagueId=${league.id}` : null,
+    league ? `/api/matches?leagueId=${league.id}&page=${page}` : null,
     [league?.id],
   );
 
@@ -60,7 +67,7 @@ export default function MatchesPage() {
     );
 
   const matches = data?.matches ?? [];
-  const pendingReview = matches.filter((m) => m.status === "pending").length;
+  const pendingReview = data?.pendingCount ?? 0;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 md:px-8 md:py-8">
@@ -83,7 +90,7 @@ export default function MatchesPage() {
           <span className="flex-1 text-[14px] text-chalk">
             {pendingReview} result{pendingReview > 1 ? "s" : ""} waiting for your review.
           </span>
-          <Link href={`/matches/${matches.find((m) => m.status === "pending")?.id ?? ""}`} className="slate text-card-y hover:text-chalk">
+          <Link href={`/matches/${data.pendingId ?? ""}`} className="slate text-card-y hover:text-chalk">
             Review now
           </Link>
         </div>
@@ -105,7 +112,7 @@ export default function MatchesPage() {
           {matches.map((m) => (
             <li key={m.id}>
               <Link
-                href={`/matches/${m.id}`}
+                href={`/matches/${m.id}`} prefetch={false}
                 className="group flex flex-col gap-3 rounded-xl border border-line bg-pitch-850 p-4 transition-all hover:border-green-dim sm:flex-row sm:items-center"
               >
                 <div className="min-w-0 flex-1">
@@ -131,7 +138,7 @@ export default function MatchesPage() {
 
                 <div className="flex items-center gap-4 sm:flex-col sm:items-end">
                   <span className="num text-[13px] text-sage">
-                    {m.events.length} event{m.events.length === 1 ? "" : "s"}
+                    {m.eventCount} event{m.eventCount === 1 ? "" : "s"}
                   </span>
                   <span className="flex items-center gap-1.5 text-[13px] text-sage-dim sm:hidden">
                     <CalendarClock className="h-3.5 w-3.5" /> Open
@@ -142,6 +149,14 @@ export default function MatchesPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {(page > 1 || data?.hasMore) && (
+        <div className="mt-4 flex items-center gap-3">
+          <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</Button>
+          <span className="text-sage">Page {page}</span>
+          <Button variant="outline" disabled={!data?.hasMore} onClick={() => setPage(page + 1)}>Next</Button>
+        </div>
       )}
 
       <Slate className="mt-6 block">

@@ -29,7 +29,6 @@ export default function ForgotPasswordPage() {
       const res = await api<{ devLink?: string | null }>("/api/auth/forgot", {
         method: "POST",
         body: values,
-        idempotent: true,
       });
       setSent(true);
       setDevLink(res?.devLink ?? null);

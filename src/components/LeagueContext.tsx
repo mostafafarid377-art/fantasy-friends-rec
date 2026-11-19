@@ -10,18 +10,18 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { recoverPendingOperations, useSession, type SessionLeague, type SessionUser } from "@/lib/client/api";
+import { recoverPendingOperations, setOperationActor, useSession, type SessionPayload, type SessionLeague, type SessionUser } from "@/lib/client/api";
 
 type LeagueContextValue = {
   user: SessionUser | null;
   leagues: SessionLeague[];
   league: SessionLeague | null;
   unread: number;
+  setUnread: (count: number) => void;
   loading: boolean;
   selectLeague: (id: string) => void;
-  refresh: () => Promise<unknown>;
+  refresh: () => Promise<SessionPayload>;
   logout: () => Promise<void>;
-  setUnread: (n: number | ((prev: number) => number)) => void;
   recovered: number;
   isLeader: boolean;
   canOrganize: boolean;
@@ -30,35 +30,42 @@ type LeagueContextValue = {
 const Ctx = createContext<LeagueContextValue | null>(null);
 const ACTIVE_KEY = "ff.active.league";
 
-export function AppProvider({ children }: { children: ReactNode }) {
-  const session = useSession();
+export function AppProvider({ children, initialSession }: { children: ReactNode; initialSession: SessionPayload }) {
+  const session = useSession(initialSession);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const [recovered, setRecovered] = useState(0);
+  const actor = session.user?.id ?? null;
+  const { refresh } = session;
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(ACTIVE_KEY);
-      if (stored) setActiveId(stored);
-    } catch {
-      /* storage unavailable */
-    }
-    // recover any mutation that never reported back (offline, crash, refresh)
-    void recoverPendingOperations().then((n) => n && setRecovered(n));
+    try { setActiveId(window.localStorage.getItem(ACTIVE_KEY)); } catch { /* storage unavailable */ }
+    setReady(true);
   }, []);
 
   useEffect(() => {
-    if (!session.leagues?.length) return;
-    const exists = activeId && session.leagues.some((l) => l.id === activeId);
-    if (!exists) {
-      const first = session.leagues[0];
-      setActiveId(first.id);
+    setOperationActor(actor);
+    if (!actor) return;
+    let cancelled = false;
+    const recover = async () => {
       try {
-        window.localStorage.setItem(ACTIVE_KEY, first.id);
-      } catch {
-        /* ignore */
+        const n = await recoverPendingOperations(actor);
+        if (!cancelled && n) { setRecovered(n); await refresh(); }
+      } catch (error) {
+        // Keep an ambiguous request in the account's queue for explicit retry.
+        console.warn("[recovery]", error);
       }
-    }
-  }, [session.leagues, activeId]);
+    };
+    void recover();
+    window.addEventListener("online", recover);
+    return () => { cancelled = true; window.removeEventListener("online", recover); };
+  }, [actor, refresh]);
+
+  useEffect(() => {
+    const onFocus = () => { void refresh().catch((error) => console.warn("[session refresh]", error)); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
 
   const selectLeague = useCallback((id: string) => {
     setActiveId(id);
@@ -69,25 +76,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const league = useMemo(
-    () => session.leagues?.find((l) => l.id === activeId) ?? null,
-    [session.leagues, activeId],
-  );
-
-  const value: LeagueContextValue = {
-    user: session.user ?? null,
-    leagues: session.leagues ?? [],
-    league,
-    unread: session.unread ?? 0,
-    loading: session.loading,
-    selectLeague,
-    refresh: session.refresh,
-    logout: session.logout,
-    setUnread: (n) => session.refresh(),
-    recovered,
+  const league = ready ? session.leagues.find((l) => l.id === activeId) ?? session.leagues[0] ?? null : null;
+  const value = useMemo<LeagueContextValue>(() => ({
+    user: session.user, leagues: session.leagues, league, unread: session.unread, setUnread: session.setUnread,
+    loading: !ready, selectLeague, refresh, logout: session.logout, recovered,
     isLeader: league?.role === "leader",
     canOrganize: league?.role === "leader" || league?.role === "organizer",
-  };
+  }), [session.user, session.leagues, session.unread, session.setUnread, league, ready, selectLeague, refresh, session.logout, recovered]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

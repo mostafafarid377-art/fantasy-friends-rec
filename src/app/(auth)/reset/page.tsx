@@ -35,7 +35,6 @@ function ResetForm() {
       await api("/api/auth/reset", {
         method: "POST",
         body: { password: values.password },
-        idempotent: true,
       });
       setDone(true);
       setTimeout(() => router.push("/login"), 1800);

@@ -44,7 +44,7 @@ export default function SignupPage() {
     setDevLink(null);
     setVerificationSent(false);
     try {
-      const res = await api<{ devLink?: string | null; requiresEmailVerification?: boolean }>(
+      const res = await api<{ devLink?: string | null; requiresEmailVerification?: boolean; user?: { id: string } }>(
         "/api/auth/signup",
         {
           method: "POST",
@@ -54,7 +54,6 @@ export default function SignupPage() {
             email: values.email,
             password: values.password,
           },
-          idempotent: true,
         },
       );
       if (res?.devLink) {
@@ -65,6 +64,7 @@ export default function SignupPage() {
         setVerificationSent(true);
         return;
       }
+      if (!res?.user?.id) throw new ApiRequestError("Account creation could not be confirmed", 409);
       router.push("/dashboard");
       router.refresh();
     } catch (err) {

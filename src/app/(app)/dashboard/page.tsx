@@ -395,7 +395,7 @@ function VerifyButton() {
           }).then((r) => r.json());
           setState("done");
           if (res?.devLink) window.open(res.devLink, "_self");
-          void refresh();
+          void refresh().catch((error) => console.warn("[session refresh]", error));
         } catch {
           setState("idle");
         }

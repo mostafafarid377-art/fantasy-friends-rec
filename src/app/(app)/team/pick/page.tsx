@@ -204,11 +204,11 @@ export default function PickPlayersPage() {
       const shape = suggestFormation(outfield, rules.format as "5v5" | "7v7", formation || null);
       const nextFormation = formation || shape.label;
 
-      await api(`/api/leagues/${league.id}/squad`, {
+      const saved = await api<{ state: string; squadId: string; valid: boolean }>(`/api/leagues/${league.id}/squad`, {
         method: "PUT",
         body: { formation: nextFormation, captainId, viceCaptainId: viceId, entries: selected },
-        idempotent: true,
       });
+      if (saved?.state !== "applied" || !saved.squadId || !saved.valid) throw new Error("The saved squad could not be confirmed");
       setToast({ message: "Squad saved — now set your line-up", tone: "ok" });
       setTimeout(() => router.push("/team"), 700);
     } catch (err) {
@@ -507,7 +507,7 @@ function PlayerThumb({ player, size = 40 }: { player: PlayerRow; size?: number }
     >
       {player.photoUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={player.photoUrl} alt="" className="h-full w-full object-cover" />
+        <img loading="lazy" decoding="async" src={player.photoUrl} alt="" className="h-full w-full object-cover" />
       ) : (
         player.fullName.slice(0, 1).toUpperCase()
       )}

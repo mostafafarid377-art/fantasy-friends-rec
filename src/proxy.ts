@@ -4,8 +4,8 @@ import { getSupabasePublicConfig } from "@/lib/supabase/config";
 
 /**
  * Refreshes Supabase Auth cookies for Next.js 16.
- * This proxy deliberately does not authorize app routes yet: the existing
- * Fantasy Friends API still uses its legacy session/Drizzle data layer.
+ * API handlers use writable request-scoped cookies directly. Page renders
+ * need the proxy to persist rotated tokens before Server Components run.
  */
 export async function proxy(request: NextRequest) {
   let config: ReturnType<typeof getSupabasePublicConfig>;
@@ -35,6 +35,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

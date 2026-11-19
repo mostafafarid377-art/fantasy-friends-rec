@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import { ApiError, assertRole, handler, logActivity, requireMember } from "@/lib/server";
+import { ApiError, assertRole, checkDb, confirmedRow, creationId, handler, requireMember } from "@/lib/server";
+import { PLAYER_FIELDS, playerDto, TEAM_FIELDS, teamDto } from "@/lib/roster";
 import { POSITIONS } from "@/lib/domain";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -17,23 +18,25 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
 
   const supabase = await getSupabase();
 
-  let query = supabase.from("players").select("*").eq("league_id", id);
-  if (!includeArchived) {
-    query = query.neq("status", "archived");
+  let query = supabase.from("players").select(PLAYER_FIELDS).eq("league_id", id);
+  if (!includeArchived) query = query.neq("status", "archived");
+  // The squad picker searches the complete league roster. Walk in bounded chunks
+  // instead of silently losing rows at the API server's default maximum.
+  const chunk = 500;
+  const first = query.order("full_name").order("id").range(0, chunk - 1);
+  const [page, teams] = await Promise.all([
+    first,
+    supabase.from("teams").select(TEAM_FIELDS).eq("league_id", id).order("name"),
+  ]);
+  checkDb(page.error, "Could not load players");
+  checkDb(teams.error, "Could not load teams");
+  const rows = [...(page.data ?? [])];
+  for (let offset = chunk; rows.length === offset; offset += chunk) {
+    const more = await query.range(offset, offset + chunk - 1);
+    checkDb(more.error, "Could not load the remaining players");
+    rows.push(...(more.data ?? []));
   }
-
-  const { data: rows } = await query.order("full_name", { ascending: true });
-  const { data: teamRows } = await supabase
-    .from("teams")
-    .select("*")
-    .eq("league_id", id)
-    .order("name", { ascending: true });
-
-  return Response.json({
-    players: rows ?? [],
-    teams: teamRows ?? [],
-    total: (rows ?? []).length,
-  });
+  return Response.json({ players: rows.map(playerDto), teams: (teams.data ?? []).map(teamDto), total: rows.length });
 });
 
 const createSchema = z.object({
@@ -60,18 +63,21 @@ export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
   const supabase = await getSupabase();
 
   if (input.teamId) {
-    const { data: team } = await supabase
+    const { data: team, error } = await supabase
       .from("teams")
       .select("id, league_id")
       .eq("id", input.teamId)
+      .eq("league_id", id)
       .maybeSingle();
+    checkDb(error, "Could not verify the team");
     if (!team) throw new ApiError("That team does not exist in this league", 422);
-    if (team.league_id !== id) throw new ApiError("Team belongs to another league", 403);
   }
 
-  const { data: created } = await supabase
+  const playerId = creationId(req, membership.profileId, `players/${id}`, input);
+  const { data, error } = await supabase
     .from("players")
     .insert({
+      id: playerId,
       league_id: id,
       full_name: input.fullName,
       position: input.position,
@@ -82,12 +88,15 @@ export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
       description: input.description ?? null,
       created_by: membership.profileId,
     })
-    .select()
+    .select(PLAYER_FIELDS)
     .maybeSingle();
 
-  await logActivity(id, membership.profileId, "player.created", `Added ${input.fullName} to the player database`, {
-    playerId: created?.id,
-  });
-
-  return Response.json({ player: created }, { status: 201 });
+  if (error?.code === "23505") {
+    const existing = await supabase.from("players").select(PLAYER_FIELDS).eq("id", playerId).eq("league_id", id).maybeSingle();
+    checkDb(existing.error, "Could not check the earlier player request");
+    if (existing.data?.id) return Response.json({ player: playerDto(existing.data) });
+  }
+  const created = confirmedRow(data, error, "Could not create player", id);
+  if (created.id !== playerId) throw new ApiError("The saved player ID could not be confirmed", 409);
+  return Response.json({ player: playerDto(created) }, { status: 201 });
 });

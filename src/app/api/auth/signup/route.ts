@@ -40,17 +40,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({
-    user: data.user ? {
-      id: data.user.id,
-      email: data.user.email,
-      username,
-      displayName,
-      avatarUrl: null,
-      bio: null,
-      emailVerified: Boolean(data.user.email_confirmed_at),
-      createdAt: data.user.created_at,
-    } : null,
-    requiresEmailVerification: !data.session,
-  }, { status: 201 });
+  // With confirmation enabled GoTrue may obfuscate an existing account.
+  // A verification request is not proof of a newly created account.
+  if (!data.session) {
+    if (!data.user?.id) return NextResponse.json({ error: "Account request could not be confirmed" }, { status: 502 });
+    return NextResponse.json({ requiresEmailVerification: true }, { status: 202 });
+  }
+  if (!data.user?.id || data.session.user.id !== data.user.id) {
+    return NextResponse.json({ error: "Account session could not be confirmed" }, { status: 502 });
+  }
+  return NextResponse.json({ user: { id: data.user.id }, requiresEmailVerification: false }, { status: 201 });
 }

@@ -5,11 +5,10 @@ import {
   ApiError,
   assertRole,
   handler,
-  logActivity,
-  notifyMembers,
-  operationId,
+  checkDb,
+  confirmedRow,
+  creationId,
   requireMember,
-  withIdempotency,
 } from "@/lib/server";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -21,16 +20,23 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   await requireMember(id);
   const supabase = await getSupabase();
 
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("fantasy_fixtures")
-    .select("*, real_matches(*)")
+    .select("id,title,gameweek,scheduled_at,status,notes,real_match_id")
     .eq("league_id", id)
     .order("gameweek", { ascending: true })
     .order("scheduled_at", { ascending: true });
 
-  return Response.json({
-    fixtures: (rows ?? []).map((r: any) => ({ ...r.fixture, match: r.real_matches })),
-  });
+  checkDb(error, "Could not load fixtures");
+  const matchIds = [...new Set((rows ?? []).flatMap((r) => r.real_match_id ? [r.real_match_id] : []))];
+  const matches = matchIds.length ? await supabase.from("real_matches").select("id,title,status")
+    .eq("league_id", id).in("id", matchIds) : null;
+  checkDb(matches?.error ?? null, "Could not load linked matches");
+  const byId = new Map(matches?.data?.map((m) => [m.id, m]));
+  return Response.json({ fixtures: (rows ?? []).map((r) => ({
+    id: r.id, title: r.title, gameweek: r.gameweek, scheduledAt: r.scheduled_at,
+    status: r.status, notes: r.notes, realMatchId: r.real_match_id, match: byId.get(r.real_match_id) ?? null,
+  })) });
 });
 
 const createSchema = z.object({
@@ -50,45 +56,19 @@ export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
   if (!parsed.success) throw new ApiError("Check the fixture details", 422, parsed.error.flatten().fieldErrors);
   const input = parsed.data;
 
-  const outcome = await withIdempotency(
-    {
-      route: "POST /api/leagues/[id]/fixtures",
-      profileId: membership.profileId,
-      operationId: operationId(req),
-      payload: { leagueId: id, ...input },
-    },
-    async () => {
-      const supabase = await getSupabase();
-      const { data: created, error } = await supabase
-        .from("fantasy_fixtures")
-        .insert({
-          league_id: id,
-          title: input.title,
-          gameweek: input.gameweek,
-          scheduled_at: input.scheduledAt ? new Date(input.scheduledAt).toISOString() : null,
-          notes: input.notes ?? null,
-          created_by: membership.profileId,
-        })
-        .select()
-        .maybeSingle();
-
-      if (error || !created) throw new ApiError("Could not create fixture", 500);
-
-      await logActivity(id, membership.profileId, "fixture.created", `Fixture scheduled: ${input.title}`);
-      await notifyMembers(id, {
-        type: "fixture_created",
-        title: "New fixture",
-        body: input.title,
-        link: `/leagues/${id}/fixtures`,
-        exceptProfileId: membership.profileId,
-      });
-
-      return { fixture: created };
-    },
-  );
-
-  if (outcome.state === "unknown") throw new ApiError("Fixture creation is still in progress", 409);
-  return Response.json(outcome.data, { status: outcome.state === "duplicate" ? 200 : 201 });
+  const supabase = await getSupabase();
+  const fixtureId = creationId(req, membership.profileId, `fixtures/${id}`, input);
+  const { data, error } = await supabase.from("fantasy_fixtures").insert({
+    id: fixtureId, league_id: id, title: input.title, gameweek: input.gameweek,
+    scheduled_at: input.scheduledAt ?? null, notes: input.notes ?? null, created_by: membership.profileId,
+  }).select().maybeSingle();
+  if (error?.code === "23505") {
+    const existing = await supabase.from("fantasy_fixtures").select("*").eq("id", fixtureId).eq("league_id", id).maybeSingle();
+    checkDb(existing.error, "Could not check the earlier fixture request");
+    if (existing.data?.id) return Response.json({ fixture: existing.data });
+  }
+  const fixture = confirmedRow(data, error, "Could not create fixture", id);
+  return Response.json({ fixture }, { status: 201 });
 });
 
 const patchSchema = z.object({
@@ -109,25 +89,31 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
   const body = await req.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) throw new ApiError("Invalid fixture update", 422, parsed.error.flatten().fieldErrors);
-  const { fixtureId, scheduledAt, ...rest } = parsed.data;
+  const { fixtureId, scheduledAt, realMatchId, ...rest } = parsed.data;
 
   const supabase = await getSupabase();
-  const { data: updated } = await supabase
+  if (realMatchId) {
+    const match = await supabase.from("real_matches").select("id").eq("league_id", id).eq("id", realMatchId).maybeSingle();
+    checkDb(match.error, "Could not verify the linked match");
+    if (!match.data) throw new ApiError("Match not found in this league", 422);
+  }
+  const { data, error } = await supabase
     .from("fantasy_fixtures")
     .update({
       ...rest,
+      ...(realMatchId !== undefined ? { real_match_id: realMatchId } : {}),
       ...(scheduledAt !== undefined
         ? { scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null }
         : {}),
       updated_at: new Date().toISOString(),
     })
     .eq("id", fixtureId)
+    .eq("league_id", id)
     .select()
     .maybeSingle();
 
-  if (!updated || updated.league_id !== id) throw new ApiError("Fixture not found", 404);
+  const updated = confirmedRow(data, error, "Could not update fixture", id);
 
-  await logActivity(id, membership.profileId, "fixture.updated", `Fixture updated: ${updated.title}`);
   return Response.json({ fixture: updated });
 });
 
@@ -140,13 +126,14 @@ export const DELETE = handler(async (req: NextRequest, ctx: Ctx) => {
   if (!fixtureId) throw new ApiError("fixtureId is required", 400);
 
   const supabase = await getSupabase();
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("fantasy_fixtures")
     .delete()
     .eq("id", fixtureId)
+    .eq("league_id", id)
     .select();
+  checkDb(error, "Could not delete fixture");
   if (!rows?.length || rows[0].league_id !== id) throw new ApiError("Fixture not found", 404);
 
-  await logActivity(id, membership.profileId, "fixture.deleted", `Fixture removed: ${rows[0].title}`);
   return Response.json({ ok: true });
 });

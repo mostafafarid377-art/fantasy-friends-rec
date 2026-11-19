@@ -21,7 +21,7 @@ function VerifyForm() {
     }
     let cancelled = false;
     setState("working");
-    api("/api/auth/verify", { method: "POST", body: { token }, idempotent: true })
+    api("/api/auth/verify", { method: "POST", body: { token } })
       .then(() => {
         if (!cancelled) setState("ok");
       })

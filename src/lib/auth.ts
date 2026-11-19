@@ -17,8 +17,8 @@ export type SessionUser = {
  * the verified Supabase Auth user. Profile metadata is never used for access
  * control; it is presentation data only.
  */
-export async function getSessionProfile(): Promise<SessionUser | null> {
-  const supabase = await createClient();
+export async function getSessionProfile(client?: Awaited<ReturnType<typeof createClient>>): Promise<SessionUser | null> {
+  const supabase = client ?? await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return null;
 

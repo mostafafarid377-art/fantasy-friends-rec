@@ -1,17 +1,10 @@
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase, SupabaseClient } from "@/db";
 import { loadMatch } from "@/lib/matches";
 
-export class ApiError extends Error {
-  status: number;
-  details?: unknown;
-  constructor(message: string, status = 400, details?: unknown) {
-    super(message);
-    this.status = status;
-    this.details = details;
-  }
-}
+import { ApiError, checkDb } from "@/lib/db-result";
+export { ApiError, checkDb, confirmedRow } from "@/lib/db-result";
 
 export function ok(data: unknown, init?: ResponseInit) {
   return NextResponse.json(data, init);
@@ -28,6 +21,10 @@ export function handler<F extends (req: NextRequest, ctx: any) => Promise<Respon
 ) {
   return async (req: NextRequest, ctx?: unknown): Promise<Response> => {
     try {
+      const recoveryActor = req?.headers.get("x-ff-recovery-actor");
+      if (recoveryActor && (await requireIdentity()).id !== recoveryActor) {
+        throw new ApiError("This pending request belongs to another session", 403);
+      }
       return await fn(req, ctx as Parameters<F>[1]);
     } catch (err) {
       if (err instanceof ApiError) return fail(err.message, err.status, err.details);
@@ -44,11 +41,17 @@ export async function withSupabase<T>(fn: (sb: SupabaseClient) => Promise<T>): P
   return fn(sb);
 }
 
-export async function requireUser() {
-  const supabase = await getSupabase();
+export async function requireIdentity(supabase?: SupabaseClient) {
+  supabase ??= await getSupabase();
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) throw new ApiError("Not authenticated", 401);
 
+  return user;
+}
+
+export async function requireUser() {
+  const supabase = await getSupabase();
+  const user = await requireIdentity(supabase);
   const { data: profile } = await supabase
     .from("profiles")
     .select("id,email,username,display_name,avatar_url,bio,email_verified_at,created_at")
@@ -78,26 +81,29 @@ export async function requireUser() {
 export type Membership = {
   leagueId: string;
   profileId: string;
+  emailVerified: boolean;
   role: "leader" | "manager" | "organizer";
   league: any;
 };
 
-export async function requireMember(leagueId: string): Promise<Membership> {
-  const user = await requireUser();
-  const supabase = await getSupabase();
+export async function requireMember(leagueId: string, supabase?: SupabaseClient): Promise<Membership> {
+  supabase ??= await getSupabase();
+  const user = await requireIdentity(supabase);
 
-  const { data: members } = await supabase
+  const { data: members, error } = await supabase
     .from("league_members")
-    .select("*, leagues(*)")
+    .select("role, leagues(*)")
     .eq("league_id", leagueId)
     .eq("profile_id", user.id)
     .maybeSingle();
 
-  if (!members) throw new ApiError("You are not a member of this league", 403);
+  checkDb(error, "Could not verify league membership");
+  if (!members?.leagues) throw new ApiError("You are not a member of this league", 403);
 
   return {
     leagueId,
     profileId: user.id,
+    emailVerified: Boolean(user.email_confirmed_at),
     role: members.role as "leader" | "manager" | "organizer",
     league: members.leagues,
   };
@@ -106,9 +112,9 @@ export async function requireMember(leagueId: string): Promise<Membership> {
 export function leagueRules(league: any) {
   return {
     format: league.format,
-    squadSize: league.squadSize,
+    squadSize: league.squad_size,
     starters: league.starters,
-    subsCount: league.subsCount,
+    subsCount: league.subs_count,
   };
 }
 
@@ -152,173 +158,15 @@ export async function canManageMatch(matchId: string, profileId: string) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Side effects: notifications, activity, audit                        */
-/* ------------------------------------------------------------------ */
-
-export async function notifyMembers(
-  leagueId: string,
-  input: {
-    type: string;
-    title: string;
-    body: string;
-    link?: string;
-    exceptProfileId?: string;
-    roles?: string[];
-  },
-) {
-  const supabase = await getSupabase();
-
-  let query = supabase
-    .from("league_members")
-    .select("profile_id")
-    .eq("league_id", leagueId);
-
-  if (input.roles?.length) {
-    query = query.in("role", input.roles);
-  }
-
-  const { data: rows } = await query;
-  const targets = rows
-    ?.map((r: any) => r.profile_id)
-    .filter((id: string) => id !== input.exceptProfileId) ?? [];
-  if (!targets.length) return;
-
-  await supabase.from("notifications").insert(
-    targets.map((profileId: string) => ({
-      profile_id: profileId,
-      league_id: leagueId,
-      type: input.type,
-      title: input.title,
-      body: input.body,
-      link: input.link ?? `/leagues/${leagueId}`,
-    })),
-  );
-}
-
-export async function notifyUser(
-  profileId: string,
-  input: { type: string; title: string; body: string; link?: string; leagueId?: string },
-) {
-  const supabase = await getSupabase();
-  await supabase.from("notifications").insert({
-    profile_id: profileId,
-    league_id: input.leagueId ?? null,
-    type: input.type,
-    title: input.title,
-    body: input.body,
-    link: input.link ?? "/notifications",
-  });
-}
-
-export async function logActivity(
-  leagueId: string,
-  actorId: string | null,
-  action: string,
-  summary: string,
-  meta?: Record<string, unknown>,
-) {
-  const supabase = await getSupabase();
-  await supabase.from("league_activity").insert({
-    league_id: leagueId,
-    profile_id: actorId ?? undefined,
-    action,
-    summary,
-    meta: meta ?? {},
-  });
-}
-
-export async function logAudit(
-  leagueId: string | null,
-  actorId: string | null,
-  action: string,
-  entity: string,
-  entityId: string,
-  meta?: Record<string, unknown>,
-) {
-  const supabase = await getSupabase();
-  await supabase.from("audit_logs").insert({
-    league_id: leagueId ?? undefined,
-    actor_id: actorId ?? undefined,
-    action,
-    entity,
-    entity_id: entityId,
-    meta: meta ?? {},
-  });
-}
-
-/* ------------------------------------------------------------------ */
 /* Idempotent mutation coordinator                                     */
 /* ------------------------------------------------------------------ */
 
-export type MutationOutcome<T> =
-  | { state: "applied"; data: T }
-  | { state: "duplicate"; data: T };
-
-export async function withIdempotency<T>(
-  opts: { route: string; profileId: string; operationId?: string | null; payload: unknown },
-  fn: () => Promise<T>,
-): Promise<MutationOutcome<T> | { state: "unknown" }> {
-  const operationId = opts.operationId?.trim();
-  if (!operationId) {
-    return { state: "applied", data: await fn() };
-  }
-  if (operationId.length > 80) throw new ApiError("Invalid operation id", 400);
-
-  const requestHash = createHash("sha256")
-    .update(JSON.stringify(opts.payload ?? null))
-    .digest("hex");
-
-  const supabase = await getSupabase();
-
-  const { data: existing } = await supabase
-    .from("mutation_ops")
-    .select("*")
-    .eq("id", operationId)
-    .maybeSingle();
-
-  const row = existing;
-  if (row) {
-    if (row.profile_id !== opts.profileId)
-      throw new ApiError("Operation id belongs to another user", 409);
-    if (row.request_hash !== requestHash)
-      throw new ApiError("Operation id reused with a different payload", 409);
-    if (row.status === "applied") {
-      return { state: "duplicate", data: row.result as T };
-    }
-    // pending: an earlier attempt never reported back — do not re-run.
-    return { state: "unknown" };
-  }
-
-  await supabase.from("mutation_ops").insert({
-    id: operationId,
-    profile_id: opts.profileId,
-    route: opts.route,
-    request_hash: requestHash,
-    status: "pending",
-  });
-
-  try {
-    const data = await fn();
-    await supabase
-      .from("mutation_ops")
-      .update({ status: "applied", applied_at: new Date().toISOString(), result: JSON.stringify(data ?? null) })
-      .eq("id", operationId);
-    return { state: "applied", data };
-  } catch (err) {
-    await supabase
-      .from("mutation_ops")
-      .update({
-        status: "failed",
-        result: JSON.stringify({ error: err instanceof Error ? err.message : "failed" }),
-      })
-      .eq("id", operationId);
-    throw err;
-  }
-}
-
-/** Reads the operation id from the request headers. */
-export function operationId(req: NextRequest) {
-  return req.headers.get("x-operation-id");
+/** Scope a retry key to the authenticated actor, route, league and normalized payload. */
+export function creationId(req: NextRequest, profileId: string, route: string, payload: unknown) {
+  const key = req.headers.get("x-operation-id")?.trim();
+  if (!key) return randomUUID();
+  if (key.length > 80) throw new ApiError("Invalid operation id", 400);
+  return createHash("sha256").update(JSON.stringify([profileId, route, key, payload])).digest("hex");
 }
 
 /* ------------------------------------------------------------------ */
@@ -327,12 +175,13 @@ export function operationId(req: NextRequest) {
 
 export async function loadSquad(leagueId: string, profileId: string) {
   const supabase = await getSupabase();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("fantasy_squads")
     .select("*")
     .eq("league_id", leagueId)
     .eq("profile_id", profileId)
     .maybeSingle();
+  checkDb(error, "Could not load your squad");
   return data ?? null;
 }
 
@@ -348,10 +197,11 @@ export async function loadSquadPlayers(squadId: string) {
 
 export async function memberProfiles(leagueId: string) {
   const supabase = await getSupabase();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("league_members")
     .select("profile_id, role, team_name, profiles(username, display_name, avatar_url)")
     .eq("league_id", leagueId);
+  checkDb(error, "Could not load league members");
   return (data ?? []).map((r: any) => ({
     profileId: r.profile_id,
     role: r.role,

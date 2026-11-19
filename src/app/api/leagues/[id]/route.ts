@@ -5,9 +5,9 @@ import {
   ApiError,
   assertRole,
   handler,
-  logActivity,
+  confirmedRow,
+  checkDb,
   memberProfiles,
-  notifyMembers,
   requireMember,
 } from "@/lib/server";
 
@@ -15,37 +15,32 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export const dynamic = "force-dynamic";
 
+function leagueDto(l: any) {
+  return { id: l.id, name: l.name, description: l.description, format: l.format, starters: l.starters,
+    subsCount: l.subs_count, squadSize: l.squad_size, inviteCode: l.invite_code, vicePolicy: l.vice_policy };
+}
+
 export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   const membership = await requireMember(id);
   const supabase = await getSupabase();
 
-  const { data: standingsRows } = await supabase
-    .from("league_standings")
-    .select("*, profiles(username, display_name, avatar_url)")
-    .eq("league_id", id)
-    .order("rank", { ascending: true });
-
-  const { data: activity } = await supabase
-    .from("league_activity")
-    .select("*")
-    .eq("league_id", id)
-    .order("created_at", { ascending: false })
-    .limit(30);
-
-  const { count: memberCount } = await supabase
-    .from("league_members")
-    .select("*", { count: "exact", head: true })
-    .eq("league_id", id);
-
-  const members = await memberProfiles(id);
+  const [standings, recent, members] = await Promise.all([
+    supabase.from("league_standings").select("*, profiles(username, display_name, avatar_url)").eq("league_id", id).order("rank"),
+    supabase.from("league_activity").select("id,action,summary,profile_id,created_at").eq("league_id", id)
+      .order("created_at", { ascending: false }).limit(30),
+    memberProfiles(id),
+  ]);
+  checkDb(standings.error, "Could not load standings");
+  checkDb(recent.error, "Could not load league activity");
+  const names = new Map(members.map((m) => [m.profileId, m.teamName]));
 
   return Response.json({
-    league: membership.league,
+    league: leagueDto(membership.league),
     role: membership.role,
     isLeader: membership.role === "leader",
     members,
-    standings: (standingsRows ?? []).map((s: any) => ({
+    standings: (standings.data ?? []).map((s: any) => ({
       profileId: s.profile_id,
       rank: s.rank,
       prevRank: s.prev_rank,
@@ -55,16 +50,16 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       username: s.profiles?.username,
       displayName: s.profiles?.display_name,
       avatarUrl: s.profiles?.avatar_url,
-      teamName: members.find((m: any) => m.profileId === s.profile_id)?.teamName ?? null,
+      teamName: names.get(s.profile_id) ?? null,
     })),
-    activity: (activity ?? []).map((a: any) => ({
+    activity: (recent.data ?? []).map((a: any) => ({
       id: a.id,
       action: a.action,
       summary: a.summary,
       actorId: a.profile_id,
       createdAt: a.created_at,
     })),
-    memberCount: memberCount ?? 0,
+    memberCount: members.length,
   });
 });
 
@@ -86,9 +81,12 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
     throw new ApiError("Invalid league settings", 422, parsed.error.flatten().fieldErrors);
   }
   const input = parsed.data;
+  if (input.subsCount !== undefined && input.subsCount + membership.league.starters > membership.league.squad_size) {
+    throw new ApiError("Starters and substitutes cannot exceed the league squad size", 422);
+  }
   const supabase = await getSupabase();
 
-  const { data: updated } = await supabase
+  const { data, error } = await supabase
     .from("leagues")
     .update({
       ...(input.name !== undefined ? { name: input.name } : {}),
@@ -100,14 +98,7 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
     .select()
     .maybeSingle();
 
-  await logActivity(id, membership.profileId, "league.settings", "League settings updated", {
-    ...input,
-  });
-  await notifyMembers(id, {
-    type: "settings_updated",
-    title: "League settings updated",
-    body: `${membership.league.name} settings were changed by a League Leader.`,
-  });
+  const updated = confirmedRow(data, error, "Could not update league settings");
 
-  return Response.json({ league: updated });
+  return Response.json({ league: leagueDto(updated) });
 });

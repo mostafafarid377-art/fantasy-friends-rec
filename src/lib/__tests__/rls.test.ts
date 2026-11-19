@@ -135,11 +135,12 @@ describe("privileged functions", () => {
     expect(fns).toMatch(/Only the League Leader or Match Organizer can approve results/);
     expect(fns).not.toMatch(/You cannot approve your own submission/);
     expect(fns).toMatch(/may approve even when they submitted/i);
-    expect(matchFlow).toMatch(/may approve even when also the Match Organizer/i);
     expect(matchFlow).not.toMatch(/allowSelfApproval/);
-    expect(matchFlow).toMatch(/version: match\.version \+ 1/);
-    expect(matchFlow).toMatch(/eq\("version", match.version\)/);
-    expect(matchFlow).toMatch(/Match changed while it was being reviewed/);
+    expect(matchFlow).toMatch(/rpc\("submit_match"/);
+    expect(matchFlow).toMatch(/rpc\("approve_match"/);
+    expect(matchFlow).toMatch(/rpc\("reject_match"/);
+    expect(matchFlow).toMatch(/p_version: version \?\? match.version/);
+    expect(matchFlow).not.toMatch(/\.from\("(?:real_matches|match_approvals)"\)\s*\.(?:update|insert)/);
     expect(fns).toMatch(/Match changed since you reviewed it/);
     expect(fns).toMatch(/function public\.reject_match/);
     expect(fns).toMatch(/A rejection reason is required/);

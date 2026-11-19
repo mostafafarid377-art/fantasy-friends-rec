@@ -1,28 +1,33 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import { ApiError, assertRole, handler, logActivity, notifyMembers, requireMember } from "@/lib/server";
+import { ApiError, assertRole, checkDb, handler, requireMember } from "@/lib/server";
 import { POSITIONS, SCORING_CATEGORIES } from "@/lib/domain";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export const dynamic = "force-dynamic";
 
+function ruleDto(row: { id: string; position: string; event_type: string; points: number | string; status: string }) {
+  return { id: row.id, position: row.position, eventType: row.event_type, points: String(row.points), status: row.status };
+}
+
 export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   const membership = await requireMember(id);
   const supabase = await getSupabase();
 
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("scoring_rules")
     .select("*")
     .eq("league_id", id)
     .order("event_type", { ascending: true })
     .order("position", { ascending: true });
 
-  const approved = (rows ?? []).every((r: any) => r.status === "approved");
+  checkDb(error, "Could not load scoring rules");
+  const approved = Boolean(rows?.length) && (rows ?? []).every((r: any) => r.status === "approved");
   return Response.json({
-    rules: rows ?? [],
+    rules: (rows ?? []).map(ruleDto),
     approved,
     isLeader: membership.role === "leader",
     categories: SCORING_CATEGORIES,
@@ -31,7 +36,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
 });
 
 const putSchema = z.object({
-  action: z.enum(["update", "approve"]),
+  action: z.enum(["update", "approve", "initialize"]),
   rules: z
     .array(
       z.object({
@@ -56,54 +61,40 @@ export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {
   const input = parsed.data;
   const supabase = await getSupabase();
 
-  if (input.action === "update") {
-    const rules = input.rules ?? [];
-    for (const rule of rules) {
-      await supabase
-        .from("scoring_rules")
-        .upsert(
-          {
-            league_id: id,
-            position: rule.position,
-            event_type: rule.eventType,
-            points: String(rule.points),
-            status: "draft",
-            approved_by: null,
-            approved_at: null,
-          },
-          { onConflict: "league_id,position,event_type" },
-        );
+  if (input.action === "initialize") {
+    const { data, error } = await supabase.rpc("initialize_scoring_rules", { p_league: id });
+    checkDb(error, "Could not initialize draft rules");
+    if (!Array.isArray(data) || data.length < POSITIONS.length * SCORING_CATEGORIES.length ||
+        data.some((row) => !row.id || row.league_id !== id)) {
+      throw new ApiError("The draft rules could not be confirmed", 409);
     }
-    await logActivity(id, membership.profileId, "rules.updated", "Scoring rules updated (draft)");
-    const { data: updatedRows } = await supabase
-      .from("scoring_rules")
-      .select("*")
-      .eq("league_id", id);
-    return Response.json({
-      rules: updatedRows ?? [],
-      approved: (updatedRows ?? []).every((r: any) => r.status === "approved"),
-    });
+    return Response.json({ rules: data.map(ruleDto), approved: data.every((row) => row.status === "approved") });
   }
 
-  const { data: existingRows } = await supabase.from("scoring_rules").select("*").eq("league_id", id);
-  if (!existingRows?.length) throw new ApiError("There are no scoring rules to approve", 409);
+  if (input.action === "update") {
+    const rules = input.rules ?? [];
+    if (!rules.length) throw new ApiError("At least one scoring rule is required", 422);
+    const { data, error } = await supabase.rpc("save_scoring_rules", {
+      p_league: id, p_rules: rules.map((rule) => ({ position: rule.position, event_type: rule.eventType, points: rule.points })),
+    });
+    checkDb(error, "Could not save scoring rules");
+    if (!Array.isArray(data) || data.length !== rules.length || data.some((r) => !r.id || r.league_id !== id)) {
+      throw new ApiError("The scoring rules could not be confirmed", 409);
+    }
+    const result = await supabase.from("scoring_rules").select("*").eq("league_id", id);
+    checkDb(result.error, "Rules were saved, but could not be reloaded");
+    return Response.json({ rules: (result.data ?? []).map(ruleDto), approved: false });
+  }
 
-  await supabase
+  const { data: updated, error } = await supabase
     .from("scoring_rules")
     .update({ status: "approved", approved_by: membership.profileId, approved_at: new Date().toISOString() })
-    .eq("league_id", id);
+    .eq("league_id", id).select();
+  checkDb(error, "Could not approve scoring rules");
+  if (!updated?.length || updated.some((r) => r.status !== "approved")) {
+    throw new ApiError("No scoring rules were confirmed as approved", 409);
+  }
 
-  await logActivity(id, membership.profileId, "rules.approved", "Scoring rules approved");
-  await notifyMembers(id, {
-    type: "rules_approved",
-    title: "Scoring rules approved",
-    body: "Official fantasy scoring is now active for this league.",
-    exceptProfileId: membership.profileId,
-  });
 
-  const { data: updated } = await supabase
-    .from("scoring_rules")
-    .select("*")
-    .eq("league_id", id);
-  return Response.json({ rules: updated ?? [], approved: true });
+  return Response.json({ rules: updated.map(ruleDto), approved: true });
 });
