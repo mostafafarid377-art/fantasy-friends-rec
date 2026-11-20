@@ -642,7 +642,7 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       await sql(c, "SELECT public.calculate_match_points($1)", [matchId]);
       const latest = (arg = leagueAId) => sql(c, "SELECT * FROM public.last_game_points($1)", [arg]);
       const fresh = (await latest()).rows[0];
-      expect(fresh).toMatchObject({ matchId, points: "8.00" });
+      expect(fresh).toMatchObject({ matchId, points: "14.00" });
       const { rows: [{ breakdown }] } = await sql(c, "SELECT breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2", [matchId, userAId]);
       expect(breakdown).toMatchObject({ captainId: goal.player_id });
       expect(breakdown.lines).toContainEqual(expect.objectContaining({ playerId: goal.player_id, multiplier: 2 }));
@@ -897,7 +897,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
       for (const [i,id] of home.slice(0,4).entries()) {
         const row = ledger.find((r)=>r.player_id===id);
         for (const event of [...eventTypes,"appearance"]) expect(row.breakdown).toContainEqual(expect.objectContaining({category:event,count:1,points:defaults[event][i]}));
-        expect(Number(row.points)).toBe([...eventTypes,"appearance"].reduce((sum,event)=>sum+defaults[event][i],0));
+        expect(basePoints(row)).toBe([...eventTypes,"appearance"].reduce((sum,event)=>sum+defaults[event][i],0));
         expect(row.breakdown.find((line:{category:string})=>line.category==="draw" || line.category==="win" || line.category==="clean_sheet")).toBeUndefined();
       }
       const cleanMatch = await create();
@@ -906,7 +906,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
       const clean = (await sql(c,"SELECT * FROM player_match_points WHERE match_id=$1",[cleanMatch])).rows;
       for (const [i,id] of home.slice(0,4).entries()) {
         const row = clean.find((r)=>r.player_id===id);
-        expect(Number(row.points)).toBe(1+defaults.clean_sheet[i]);
+        expect(basePoints(row)).toBe(1+defaults.clean_sheet[i]);
       }
       expect(clean.find((r)=>r.player_id===home[5]).breakdown).toEqual([expect.objectContaining({category:"appearance",points:1})]);
       expect(clean.some((r)=>r.player_id===home[6])).toBe(false);
@@ -965,7 +965,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
       const {rows:[score]} = await sql(c,"SELECT points,breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2",[match,userAId]);
       expect(score.breakdown.substitutions).toEqual([expect.objectContaining({outId:missing,inId:home[1]})]);
       expect(score.breakdown.lines).toHaveLength(7);
-      expect(Number(score.points)).toBe(26);
+      expect(Number(score.points)).toBe(38);
     } finally {c.release();}
   });
 
@@ -1000,8 +1000,8 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
         expect.objectContaining({inId:home[0],outId:missing[0]}),expect.objectContaining({inId:home[5],outId:missing[2]}),expect.objectContaining({inId:home[6],outId:missing[1]}),
       ]});
       expect(saved.breakdown.lines).toContainEqual({playerId:home[4],base:0,multiplier:1,points:0});
-      expect(saved.breakdown.lines).toContainEqual({playerId:home[3],base:2,multiplier:2,points:4});
-      expect(Number(saved.points)).toBe(5);
+      expect(saved.breakdown.lines).toContainEqual({playerId:home[3],base:3,multiplier:2,points:6});
+      expect(Number(saved.points)).toBe(7);
       expect((await sql(c,"SELECT * FROM public.recent_fantasy_substitutions($1)",[league.id])).rows[0]).toMatchObject({matchId:match,substitutions:saved.breakdown.substitutions});
       expect((await sql(c,"SELECT * FROM fantasy_squad_players WHERE squad_id=$1 AND slot='starter'",[squad.squad.id])).rows.map(r=>r.player_id).sort()).toEqual([...starters].sort());
       const reordered = picks.map((e)=>e.slot==='sub' && e.order > 0 ? {...e,order:3-e.order}:e);
@@ -1070,26 +1070,26 @@ describe("individual player performance (real PostgreSQL)", () => {
       await setAuthUid(c, userAId);
       const summary = (await sql(c, latestPlayerSql, [league.id, [home[1], home[2], home[4], unused, neverNamed, home[1]]])).rows;
       expect(summary).toHaveLength(4);
-      expect(summary).toContainEqual({ player_id: home[1], match_id: latest, points: "11.00" });
+      expect(summary).toContainEqual({ player_id: home[1], match_id: latest, points: "14.00" });
       expect(summary).toContainEqual({ player_id: home[2], match_id: unrelated, points: "2.00" });
       expect(summary).toContainEqual({ player_id: home[4], match_id: unrelated, points: "0.00" });
       expect(summary).toContainEqual({ player_id: unused, match_id: latest, points: null });
       const first = (await sql(c, playerHistorySql, [league.id, home[1], 10, null, null])).rows;
       expect(first.map((row) => row.match_id)).toEqual([latest, earlier]);
       expect(first[0]).toMatchObject({ title: "Week 17 match", kick_off: new Date("2026-11-08T19:00:00Z"), gameweek: 17,
-        opponent: "Away", participation: "played", points: "11.00", breakdown: expect.arrayContaining([
+        opponent: "Away", participation: "played", points: "14.00", breakdown: expect.arrayContaining([
           { category: "goal", label: "Goal", count: 1, pointsPer: 6, points: 6 },
           { category: "clean_sheet", label: "Clean sheet", count: 1, pointsPer: 4, points: 4 },
           { category: "appearance", label: "Appearance", count: 1, pointsPer: 1, points: 1 },
         ]) });
       expect((await sql(c, playerHistorySql, [league.id, home[1], 1, first[0].kick_off, latest])).rows).toEqual([first[1]]);
       const mids = (await sql(c, playerHistorySql, [league.id, home[2], 10, null, null])).rows;
-      expect(mids.find((row) => row.match_id === latest)).toMatchObject({ points: "7.00", breakdown: expect.arrayContaining([expect.objectContaining({ category: "goal", points: 5 })]) });
+      expect(mids.find((row) => row.match_id === latest)).toMatchObject({ points: "9.00", breakdown: expect.arrayContaining([expect.objectContaining({ category: "goal", points: 5 })]) });
       expect((await sql(c, "SELECT breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2", [latest, userAId])).rows[0].breakdown.lines)
-        .toContainEqual({ playerId: home[1], base: 11, multiplier: 2, points: 22 });
+        .toContainEqual({ playerId: home[1], base: 14, multiplier: 2, points: 28 });
       expect((await sql(c, playerHistorySql, [league.id, neverNamed, 10, null, null])).rows).toEqual([]);
       expect((await sql(c, playerHistorySql, [league.id, unused, 10, null, null])).rows).toMatchObject([
-        { match_id: latest, participation: "did_not_play", points: null }, { match_id: earlier, participation: "played", points: "5.00" },
+        { match_id: latest, participation: "did_not_play", points: null }, { match_id: earlier, participation: "played", points: "8.00" },
       ]);
       expect((await sql(c, playerHistorySql, [league.id, home[4], 1, null, null])).rows[0]).toMatchObject({ participation: "played", points: "0.00" });
       const benchHistory = (await sql(c, playerHistorySql, [league.id, subbedOn, 10, null, null])).rows;
@@ -1120,7 +1120,7 @@ describe("individual player performance (real PostgreSQL)", () => {
       const low = await score(2), high = await score(13);
       await setAuthUid(c, userAId);
       await sql(c, "UPDATE scoring_rules SET points=19 WHERE league_id=$1 AND position='MID' AND event_type='goal'", [low.id]);
-      for (const [current, other, expected] of [[low, high, "4.00"], [high, low, "15.00"]] as const) {
+      for (const [current, other, expected] of [[low, high, "5.00"], [high, low, "18.00"]] as const) {
         expect((await sql(c, latestPlayerSql, [current.id, [current.player, other.player]])).rows)
           .toEqual([{ player_id: current.player, match_id: current.match, points: expected }]);
         expect((await sql(c, playerHistorySql, [current.id, other.player, 10, null, null])).rows).toEqual([]);
@@ -1140,6 +1140,7 @@ const approveScore = (c: PoolClient, match: string, version = 2) =>
   sql(c, "SELECT public.approve_match($1,$2) AS result", [match, version]);
 const correctScore = (c: PoolClient, match: string, home: number, away: number, version: number, reason = "Verified with the referee") =>
   sql(c, "SELECT public.correct_match_result($1,$2,$3,$4,$5) AS result", [match, version, home, away, reason]);
+const basePoints = (row: { breakdown: { category: string; points: number }[] }) => row.breakdown.filter((line) => line.category !== "match_bonus").reduce((total, line) => total + line.points, 0);
 const hasCleanSheet = (row: { breakdown: { category: string }[] }) => row.breakdown.some((b) => b.category === "clean_sheet");
 
 async function recordedResultFixture(c: PoolClient, setup?: (id: string) => Promise<unknown>) {
@@ -1184,7 +1185,7 @@ describe("automatic scoring from the recorded final result", () => {
         expect(row.breakdown.filter((b: {category: string}) => b.category === "clean_sheet"))
           .toEqual([{ category: "clean_sheet", label: "Clean sheet", count: 1, pointsPer: pos < 2 ? 4 : 1, points: pos < 2 ? 4 : 1 }]);
       }
-      expect(rows.find((r) => r.player_id === home[5])).toMatchObject({ breakdown: [{ category: "appearance", points: 1 }] });
+      expect(rows.find((r) => r.player_id === home[5])).toMatchObject({ breakdown: expect.arrayContaining([expect.objectContaining({ category: "appearance", points: 1 })]) });
       expect(rows.some((r) => r.player_id === home[6])).toBe(false);
       expect((await sql(c, "SELECT action FROM match_approvals WHERE match_id=$1 ORDER BY version", [match])).rows)
         .toEqual([{ action: "submitted" }, { action: "approved" }]);
@@ -1223,7 +1224,7 @@ describe("automatic scoring from the recorded final result", () => {
       const standings = () => sql(c, "SELECT total_points,matches_played FROM league_standings WHERE league_id=$1 AND profile_id=$2", [league.id, userAId]);
       await setAuthUid(c, userAId);
       const original = await manager();
-      expect(original).toMatchObject({ points: "48.00", breakdown: { captainId: home[1] } });
+      expect(original).toMatchObject({ points: "58.00", breakdown: { captainId: home[1] } });
       const originalPlayer = (await individual(home[1])).rows[0];
       await save(home[0], originalSquad.squad.updated_at);
       await sql(c, "UPDATE scoring_rules SET points=40,status='draft' WHERE league_id=$1", [league.id]);
@@ -1240,31 +1241,31 @@ describe("automatic scoring from the recorded final result", () => {
         await expect(correctScore(c, match, 2, 1, 3)).rejects.toThrow(/Injected correction failure/);
         expect(await manager()).toEqual(original);
         expect((await individual(home[1])).rows[0]).toEqual(originalPlayer);
-        expect((await standings()).rows[0]).toEqual({ total_points: "48.00", matches_played: 1 });
+        expect((await standings()).rows[0]).toEqual({ total_points: "58.00", matches_played: 1 });
       } finally {
         await sql(admin, "DROP TRIGGER ff_test_correction_failure ON public.match_approvals; DROP FUNCTION public.ff_test_correction_failure()");
       }
       const corrected = (await correctScore(c, match, 2, 1, 3)).rows[0].result;
       expect(corrected.version).toBe(4);
       expect((await correctScore(c, match, 2, 1, 3)).rows[0].result).toEqual(corrected);
-      expect((await individual(home[1])).rows[0]).toMatchObject({ id: originalPlayer.id, points: "9.00", match_version: 4 });
+      expect((await individual(home[1])).rows[0]).toMatchObject({ id: originalPlayer.id, points: "12.00", match_version: 4 });
       expect(hasCleanSheet((await individual(home[1])).rows[0])).toBe(false);
-      expect(await manager()).toMatchObject({ id: original.id, points: "30.00", match_version: 4, computed_at: original.computed_at,
-        breakdown: { captainId: home[1], lines: expect.arrayContaining([{ playerId: home[1], base: 9, multiplier: 2, points: 18 }]) } });
-      expect((await standings()).rows[0]).toEqual({ total_points: "30.00", matches_played: 1 });
+      expect(await manager()).toMatchObject({ id: original.id, points: "44.00", match_version: 4, computed_at: original.computed_at,
+        breakdown: { captainId: home[1], lines: expect.arrayContaining([{ playerId: home[1], base: 12, multiplier: 2, points: 24 }]) } });
+      expect((await standings()).rows[0]).toEqual({ total_points: "44.00", matches_played: 1 });
       // The assigned organizer can correct too. A draw restores both sides' clean sheets.
       await setAuthUid(c, userCId);
       await correctScore(c, match, 0, 0, 4, "Corrected final score");
       await setAuthUid(c, userAId);
       const def = (await individual(home[1])).rows[0];
-      expect(def).toMatchObject({ points: "16.00", match_version: 5, breakdown: expect.arrayContaining([
+      expect(def).toMatchObject({ points: "19.00", match_version: 5, breakdown: expect.arrayContaining([
         expect.objectContaining({ category: "goal", points: 6 }), expect.objectContaining({ category: "clean_sheet", points: 6 }),
         expect.objectContaining({ category: "draw", points: 3 }),
       ]) });
       expect(hasCleanSheet((await individual(away[0])).rows[0])).toBe(true);
-      expect((await standings()).rows[0]).toEqual({ total_points: "54.00", matches_played: 1 });
-      expect((await sql(c, "SELECT points FROM fantasy_points_history WHERE match_id=$1", [match])).rows).toEqual([{ points: "54.00" }]);
-      expect((await sql(c, playerHistorySql, [league.id, home[1], 1, null, null])).rows[0]).toMatchObject({ points: "16.00", breakdown: def.breakdown });
+      expect((await standings()).rows[0]).toEqual({ total_points: "61.00", matches_played: 1 });
+      expect((await sql(c, "SELECT points FROM fantasy_points_history WHERE match_id=$1", [match])).rows).toEqual([{ points: "61.00" }]);
+      expect((await sql(c, playerHistorySql, [league.id, home[1], 1, null, null])).rows[0]).toMatchObject({ points: "19.00", breakdown: def.breakdown });
       expect((await sql(c, "SELECT home_score,away_score,status,version FROM real_matches WHERE id=$1", [match])).rows[0])
         .toEqual({ home_score: 0, away_score: 0, status: "approved", version: 5 });
       expect((await sql(c, "SELECT version,reason,snapshot FROM match_approvals WHERE action='corrected' AND match_id=$1 ORDER BY version", [match])).rows)
@@ -1313,19 +1314,19 @@ it.each(["captain", "vice fallback"])("shows only the signed-in manager's applie
     await approveScore(c, match);
     await setAuthUid(c, userAId);
     const mine = (await latest()).rows;
-    expect(mine.find((row) => row.player_id === home[0])).toMatchObject({ match_id: match, points: "5.00", captain_points: "10.00" });
+    expect(mine.find((row) => row.player_id === home[0])).toMatchObject({ match_id: match, points: "8.00", captain_points: "16.00" });
     expect(mine.find((row) => row.player_id === home[1]).captain_points).toBeNull();
     const history = await sql(c, playerHistorySql, [league.id, home[0], 1, null, null]);
-    expect(history.rows[0].points).toBe("5.00");
+    expect(history.rows[0].points).toBe("8.00");
     await setAuthUid(c, userBId);
     const other = (await latest()).rows;
-    expect(other.find((row) => row.player_id === home[1])).toMatchObject({ points: "5.00", captain_points: "10.00" });
+    expect(other.find((row) => row.player_id === home[1])).toMatchObject({ points: "8.00", captain_points: "16.00" });
     expect(other.find((row) => row.player_id === home[0]).captain_points).toBeNull();
     await setAuthUid(c, userCId);
     expect((await latest()).rows.every((row) => row.captain_points === null)).toBe(true);
     await correctScore(c, match, 2, 1, 3);
     await setAuthUid(c, userAId);
-    expect((await latest()).rows.find((row) => row.player_id === home[0])).toMatchObject({ points: "1.00", captain_points: "2.00" });
+    expect((await latest()).rows.find((row) => row.player_id === home[0])).toMatchObject({ points: "4.00", captain_points: "8.00" });
   } finally { c.release(); }
 });
 
@@ -1422,7 +1423,7 @@ it("enforces both kickoff deadlines with database time, honors rescheduling, and
   } finally { c.release(); }
 });
 
-it("scores per-match thresholds and three unique bonus ranks through approval and atomic statistics correction", async () => {
+it("scores per-match thresholds and automatic tied bonus ranks through approval and atomic statistics correction", async () => {
   const c = await freshClient();
   try {
     const { league, match, home, away } = await recordedResultFixture(c);
@@ -1436,52 +1437,58 @@ it("scores per-match thresholds and three unique bonus ranks through approval an
       {playerId: home[0], saves, defensiveContributions: 120},
       ...[home[1],home[2],home[4]].map((playerId,i) => ({playerId,saves:0,defensiveContributions:i===0?def:other})),
     ];
-    const save = (target: string, version: number, rows: unknown[], bonus: string[] | null, reason: string | null = null) => sql(c,
-      "SELECT public.save_match_statistics($1,$2,$3,$4,$5) AS result", [target,version,JSON.stringify(rows),bonus,reason]);
-    const award = [home[0],home[1],away[2]];
+    const save = (target: string, version: number, rows: unknown[], reason: string | null = null) => sql(c,
+      "SELECT public.save_match_statistics($1,$2,$3,$4) AS result", [target,version,JSON.stringify(rows),reason]);
     await setAuthUid(c,userBId);
-    await expect(save(match,1,stats(2,9,11),award)).rejects.toMatchObject({code:"42501"});
+    await expect(save(match,1,stats(2,9,11))).rejects.toMatchObject({code:"42501"});
     await expect(sql(c,"UPDATE match_player_statistics SET saves=99 WHERE match_id=$1",[match])).rejects.toMatchObject({code:"42501"});
     await setAuthUid(c,userCId);
+    await expect(sql(c,"SELECT public.save_match_statistics($1,1,'[]', $2, null)",[match,home.slice(0,3)])).rejects.toMatchObject({code:"42501"});
+    await expect(sql(c,"SELECT public.ff_apply_match_bonus($1,$2,1)",[match,league.id])).rejects.toMatchObject({code:"42501"});
     const outsider = await league.makePlayer("DEF",league.home,"Not in lineup");
-    for (const invalid of [[home[0],home[0],away[2]],[home[0],home[5],away[2]],[home[0],outsider,away[2]],[home[0],home[1],randomUUID()]]) {
-      await expect(save(match,1,stats(2,9,11),invalid)).rejects.toMatchObject({ code:"22023" });
+    for (const playerId of [home[5],outsider,randomUUID()]) {
+      await expect(save(match,1,[{playerId,saves:0,defensiveContributions:10}])).rejects.toMatchObject({code:"22023"});
     }
-    await expect(save(match,1,[...stats(2,9,11),...stats(2,9,11)],award)).rejects.toMatchObject({ code:"22023" });
-    // A later roster change must not change the position registered on the lineup.
+    await expect(save(match,1,[...stats(2,9,11),...stats(2,9,11)])).rejects.toMatchObject({code:"22023"});
     await sql(admin,"UPDATE players SET position='MID' WHERE id=$1",[home[1]]);
     await sql(c,"SELECT public.write_match_event($1,$2,'substitution',$3)",[match,randomUUID(),
       JSON.stringify({teamId:league.home,playerId:home[5],otherId:home[1],minute:25})]);
-    await save(match,1,stats(2,9,11),[away[2],home[5],home[1]]);
-    await save(match,2,stats(2,9,11),award);
-    await save(second,1,stats(2,9,11),[]);
-    await submitScore(c,match,1,1,3);
-    await expect(save(match,4,stats(9,10,12),award)).rejects.toThrow(/locked during review/);
-    await approveScore(c,match,4);
+    await save(match,1,stats(2,9,11));
+    await save(second,1,stats(2,9,11));
+    await submitScore(c,match,1,1,2);
+    await expect(save(match,3,stats(9,10,12))).rejects.toThrow(/locked during review/);
+    await approveScore(c,match,3);
     await submitScore(c,second,1,1,2);
     await approveScore(c,second,3);
-    const extra = async (id: string) => (await sql(c,`SELECT player_id,line->>'category' AS category,(line->>'points')::int AS points
-      FROM player_match_points CROSS JOIN LATERAL jsonb_array_elements(breakdown) AS line WHERE match_id=$1
-      AND line->>'category' IN ('goalkeeper_saves','defensive_contributions','match_bonus')`,[id])).rows;
-    const initial = await extra(match);
-    expect(initial).toHaveLength(3);
-    expect(initial).toEqual(expect.arrayContaining(award.map((player_id,i) => ({ player_id,category:"match_bonus",points:3-i }))));
-    expect(await extra(second)).toEqual([]); // 2+2 saves and 9+9 contributions do not combine.
+    const ledger = async (id: string) => (await sql(c,"SELECT player_id,points,breakdown FROM player_match_points WHERE match_id=$1",[id])).rows;
+    const lines = (row: {breakdown:{category:string;points:number;rank?:number}[]}) => row.breakdown.filter((x) => x.category !== "appearance");
+    const before = await ledger(match);
+    expect(before).toHaveLength(11);
+    expect(before.some((r) => r.player_id === home[6])).toBe(false);
+    expect(before.every((r) => r.points === "4.00" && lines(r).length === 1 && lines(r)[0].rank === 1)).toBe(true);
+    const otherMatch = await ledger(second);
+    expect(otherMatch).toHaveLength(10);
+    expect(otherMatch.every((r) => basePoints(r) === 1)).toBe(true); // No cross-match accumulation.
     const totals = async () => (await sql(c,"SELECT points FROM manager_points WHERE match_id=$1 AND profile_id=$2",[match,userAId])).rows[0];
-    const firstTotal = Number((await totals()).points);
-    await expect(save(match,5,stats(3,10,12),award,"not allowed")).rejects.toThrow(/Finalized bonus/);
-    let version = 5;
-    for (const [saves,points] of [[3,1],[5,1],[6,2],[9,3]]) {
-      await save(match,version++,stats(saves,10,12),null,"Verified stats");
-      const breakdown = await extra(match);
-      expect(breakdown).toHaveLength(7);
-      expect(breakdown).toEqual(expect.arrayContaining([
-        ...initial, { player_id:home[0],category:"goalkeeper_saves",points },
-        ...[home[1],home[2],home[4]].map((player_id) => ({player_id,category:"defensive_contributions",points:2})),
-      ]));
-      expect(Number((await totals()).points)).toBe(firstTotal+2*points+6);
+    let version = 4;
+    for (const [saves,points,keeperRank,otherRank,total] of [[3,1,null,1,23],[5,1,null,1,23],[6,2,1,1,31],[9,3,1,2,30]] as const) {
+      await save(match,version++,stats(saves,10,12),"Verified stats");
+      const rows = await ledger(match);
+      const keeper = rows.find((r) => r.player_id === home[0]);
+      expect(lines(keeper).find((r) => r.category === "goalkeeper_saves")?.points).toBe(points);
+      expect(lines(keeper).some((r) => r.category === "defensive_contributions")).toBe(false);
+      const awards = (r: typeof keeper) => lines(r).filter((x) => x.category === "match_bonus");
+      if (keeperRank === null) expect(awards(keeper)).toEqual([]);
+      else expect(awards(keeper)).toMatchObject([{rank:keeperRank,points:4-keeperRank}]);
+      for (const playerId of [home[1],home[2],home[4]]) {
+        const row = rows.find((r) => r.player_id === playerId);
+        expect(lines(row).find((r) => r.category === "defensive_contributions")?.points).toBe(2);
+        expect(awards(row)).toMatchObject([{rank:otherRank,points:4-otherRank}]);
+      }
+      expect(Number((await totals()).points)).toBe(total);
     }
-    await expect(save(match,version-1,stats(2,9,11),null,"Stale write")).rejects.toMatchObject({code:"40001"});
+    await expect(save(match,version-1,stats(2,9,11),"Stale write")).rejects.toMatchObject({code:"40001"});
+    expect(await ledger(second)).toEqual(otherMatch);
     expect((await sql(c,"SELECT points FROM fantasy_points_history WHERE match_id=$1 AND profile_id=$2",[match,userAId])).rows[0]).toEqual(await totals());
     const standings = await sql(c,"SELECT total_points FROM league_standings WHERE league_id=$1 AND profile_id=$2",[league.id,userAId]);
     const aggregate = await sql(c,"SELECT sum(points) AS total FROM manager_points WHERE league_id=$1 AND profile_id=$2",[league.id,userAId]);
@@ -1538,4 +1545,41 @@ it("initializes Google profiles from the trusted provider and preserves custom a
   finally { c.release(); }
   await sql(admin,"UPDATE auth.users SET raw_user_meta_data='{\"full_name\":\"Changed Google Name\"}',email=$2 WHERE id=$1",[ids[0],`updated-${ids[0]}@example.test`]);
   expect((await names())[0]).toBe("My Custom Name");
+});
+
+it("awards competition ranks per match and reranks on a score correction without carrying old bonus points forward", async () => {
+  const c = await freshClient();
+  try {
+    const { league, match, home, away } = await recordedResultFixture(c);
+    for (const [teamId, playerId] of [[league.home, home[2]], [league.home, home[4]], [league.away, away[2]]]) {
+      await sql(c,"SELECT public.write_match_event($1,$2,'event',$3)",[match,randomUUID(),JSON.stringify({teamId,playerId,eventType:"goal",minute:25})]);
+    }
+    // An in-progress match created before the migration can have manual metadata.
+    await sql(admin,"INSERT INTO match_player_statistics(match_id,player_id,position,bonus_rank) VALUES($1,$2,'MID',1)",[match,home[3]]);
+    const awards = async () => (await sql(c,`SELECT player_id AS player,(line->>'rank')::int AS rank,(line->>'points')::int AS points
+      FROM player_match_points CROSS JOIN LATERAL jsonb_array_elements(breakdown) AS line
+      WHERE match_id=$1 AND line->>'category'='match_bonus' ORDER BY player_id`,[match])).rows;
+    await submitScore(c,match,2,1);
+    expect(await awards()).toEqual([]);
+    await approveScore(c,match);
+    const first = await awards();
+    expect(first).toHaveLength(3);
+    expect(first).toEqual(expect.arrayContaining([
+      {player:home[2],rank:1,points:3},{player:away[2],rank:1,points:3},{player:home[4],rank:3,points:1},
+    ]));
+    await approveScore(c,match);
+    expect(await awards()).toEqual(first);
+    await correctScore(c,match,2,0,3);
+    const revised = await awards();
+    expect(revised).toHaveLength(5);
+    expect(revised).toEqual(expect.arrayContaining([
+      {player:home[2],rank:1,points:3},{player:away[2],rank:2,points:2},
+      ...[home[0],home[1],home[4]].map((player) => ({player,rank:3,points:1})),
+    ]));
+    await correctScore(c,match,2,0,3);
+    expect(await awards()).toEqual(revised);
+    // Migrated manual metadata is neither counted nor rewritten by scoring.
+    expect((await sql(c,"SELECT player_id,bonus_rank FROM match_player_statistics WHERE match_id=$1",[match])).rows)
+      .toEqual([{player_id:home[3],bonus_rank:1}]);
+  } finally { c.release(); }
 });

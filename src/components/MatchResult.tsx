@@ -47,9 +47,9 @@ export function MatchResult({ match, home, away, homeLogo, awayLogo, canManage, 
         <Field label={`Home score · ${home}`}><TextInput name="homeScore" required inputMode="numeric" pattern="[0-9]{1,3}" maxLength={3} value={homeScore} disabled={busy} onChange={(e) => setHomeScore(e.target.value)} /></Field>
         <Field label={`Away score · ${away}`}><TextInput name="awayScore" required inputMode="numeric" pattern="[0-9]{1,3}" maxLength={3} value={awayScore} disabled={busy} onChange={(e) => setAwayScore(e.target.value)} /></Field>
       </div>
-      <p className="text-xs text-sage">{correcting ? "This updates clean sheets and any configured win or draw points. Recorded goals, assists and other events stay unchanged." : "Enter the final on-field score. Clean-sheet points are calculated automatically on approval."}</p>
+      <p className="text-xs text-sage">{correcting ? "This updates clean sheets and any configured win or draw points, then recalculates automatic bonuses. Recorded goals, assists and other events stay unchanged." : "Enter the final on-field score. Clean-sheet and bonus points are calculated automatically on approval."}</p>
       {correcting && <Field label="Correction reason"><TextInput required maxLength={400} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} /></Field>}
-      {unsavedStatistics && <p className="text-sm text-card-y">Save or discard your statistics and bonus changes first.</p>}
+      {unsavedStatistics && <p className="text-sm text-card-y">Save or discard your statistics changes first.</p>}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" loading={busy} disabled={unsavedStatistics || !valid || (correcting && (!changed || !reason.trim()))}>
           <ClipboardCheck className="h-4 w-4" /> {correcting ? "Save score correction" : "Submit for review"}

@@ -12,8 +12,8 @@ beforeEach(() => {
   }));
 });
 const put = (body: unknown) => PUT(new NextRequest("http://local.test/api/matches/match/statistics",{method:"PUT",body:JSON.stringify(body)}),{params:Promise.resolve({id:"match"})});
-it("rejects unauthorized callers and duplicate ranks; confirms only the new database revision", async () => {
-  const input={version:4,stats:[{playerId:"one",saves:3,defensiveContributions:0}],bonus:["one","two","three"]};
+it("rejects unauthorized callers and manual bonus payloads; confirms only the new database revision", async () => {
+  const input={version:4,stats:[{playerId:"one",saves:3,defensiveContributions:0}]};
   role="manager";
   expect((await put(input)).status).toBe(403);
   role="organizer";
@@ -23,5 +23,5 @@ it("rejects unauthorized callers and duplicate ranks; confirms only the new data
   expect((await put(input)).status).toBe(409);
   db.rpc.mockResolvedValueOnce({data:{matchId:"match",version:5},error:null});
   expect((await put(input)).status).toBe(200);
-  expect(db.rpc).toHaveBeenLastCalledWith("save_match_statistics",{p_match:"match",p_version:4,p_stats:input.stats,p_bonus:input.bonus,p_reason:null});
+  expect(db.rpc).toHaveBeenLastCalledWith("save_match_statistics",{p_match:"match",p_version:4,p_stats:input.stats,p_reason:null});
 });
