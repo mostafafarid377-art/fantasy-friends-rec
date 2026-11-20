@@ -19,6 +19,8 @@ vi.mock("next/headers", () => ({ cookies: async () => ({
 }) }));
 
 const app = "https://fantasy.example.test";
+const production = "https://fantasy-friends-rec.vercel.app";
+const navigation = { "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
 const project = "https://example-project.supabase.co";
 const returnTo = "/matches/example?panel=events#score";
 const callbackPath = "/auth/callback/google";
@@ -28,6 +30,7 @@ const upstream = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>()
 
 beforeEach(() => {
   vi.stubEnv("GOOGLE_OAUTH_APP_ORIGIN", app);
+  vi.stubEnv("VERCEL_ENV", undefined);
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", project);
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
   jar.clear(); writes.mockClear(); upstream.mockReset();
@@ -43,16 +46,19 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 let pendingCookie: string | undefined;
-const start = async (next = returnTo, origin: string | null = app) => {
+const start = async ({ next = returnTo, origin = app, target = app, headers = {} }: {
+  next?: string; origin?: string | null; target?: string; headers?: Record<string, string>;
+} = {}) => {
   const res = await POST(new NextRequest("http://internal:3000/api/auth/google", {
-  method: "POST", headers: { ...(origin === null ? {} : { origin }), "x-forwarded-host": "untrusted.example.test" },
-  body: new URLSearchParams({ next }),
+    method: "POST",
+    headers: { host: new URL(target).host, ...(origin === null ? {} : { origin }), "x-forwarded-host": "untrusted.example.test", ...headers },
+    body: new URLSearchParams({ next }),
   }));
   pendingCookie = res.cookies.get("ff-google-flow")?.value;
   return res;
 };
-const finish = (query = "code=valid-code", flow: string | null | undefined = pendingCookie) => callback(new NextRequest(`http://internal:3000${callbackPath}?${query}`, {
-  headers: flow == null ? {} : { cookie: `ff-google-flow=${encodeURIComponent(flow)}` },
+const finish = (query = "code=valid-code", flow: string | null | undefined = pendingCookie, target = app) => callback(new NextRequest(`http://internal:3000${callbackPath}?${query}`, {
+  headers: { host: new URL(target).host, ...(flow == null ? {} : { cookie: `ff-google-flow=${encodeURIComponent(flow)}` }) },
 }));
 
 describe("Google OAuth", () => {
@@ -73,18 +79,78 @@ describe("Google OAuth", () => {
   });
 
   it("refuses cross-origin and unconfigured starts", async () => {
-    expect((await start(returnTo, "https://untrusted.example.test")).status).toBe(403);
-    expect((await start(returnTo, null)).status).toBe(403);
+    expect((await start({ origin: "https://untrusted.example.test" })).status).toBe(403);
+    expect((await start({ origin: null })).status).toBe(403);
     vi.stubEnv("GOOGLE_OAUTH_APP_ORIGIN", "http://fantasy.example.test");
     expect((await start()).headers.get("location")).toBe("/login?auth_error=google_unavailable");
     expect(writes).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "null"])("accepts a real same-origin document POST with Origin %j on stable production", async (origin) => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    // Even if the opt-in names another environment, the stable production host
+    // matches the pinned production origin and will receive its own cookies.
+    const res = await start({ target: production, origin, headers: navigation });
+    expect(res.status).toBe(303);
+    const redirect = new URL(res.headers.get("location")!);
+    expect(redirect.searchParams.get("redirect_to")).toBe(`${production}${callbackPath}`);
+    expect(res.cookies.get("ff-google-flow")).toMatchObject({ secure: true, httpOnly: true, sameSite: "lax", path: callbackPath });
+    expect(res.cookies.get("ff-google-flow")).not.toHaveProperty("domain");
+    expect(writes).toHaveBeenCalledWith(expect.stringMatching(verifier), expect.any(String), expect.objectContaining({ path: "/", secure: true, httpOnly: true, sameSite: "lax" }));
+    expect(writes.mock.calls.find(([name]) => verifier.test(name))?.[2]).not.toHaveProperty("domain");
+    expect((await finish("code=valid-code", pendingCookie, production)).headers.get("location")).toBe(returnTo);
+  });
+
+  it("accepts the explicit browser origin on stable production despite a different configured URL", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    const res = await start({ target: production, origin: production, headers: navigation });
+    expect(new URL(res.headers.get("location")!).searchParams.get("redirect_to")).toBe(`${production}${callbackPath}`);
+  });
+
+  it("starts on localhost with host-only, non-Secure OAuth cookies for HTTP", async () => {
+    const local = "http://localhost:3000";
+    vi.stubEnv("GOOGLE_OAUTH_APP_ORIGIN", local);
+    const res = await start({ target: local, origin: local, headers: navigation });
+    expect(new URL(res.headers.get("location")!).searchParams.get("redirect_to")).toBe(`${local}${callbackPath}`);
+    expect(res.cookies.get("ff-google-flow")).toMatchObject({ secure: false, sameSite: "lax" });
+    expect(writes).toHaveBeenCalledWith(expect.stringMatching(verifier), expect.any(String), expect.objectContaining({ secure: false }));
+  });
+
+  it("still returns the original 403 for foreign, unproven and untrusted requests, before PKCE writes", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    const common = { target: production };
+    for (const input of [
+      { ...common, origin: "null" },
+      { ...common, origin: null, headers: { ...navigation, "sec-fetch-site": "cross-site" } },
+      { ...common, origin: "null", headers: { ...navigation, "sec-fetch-site": "same-site" } },
+      { ...common, origin: "null", headers: { ...navigation, "sec-fetch-dest": "iframe" } },
+      { ...common, origin: "null", headers: { ...navigation, "sec-fetch-mode": "cors" } },
+      { ...common, origin: app, headers: navigation },
+      { ...common, origin: production, headers: { ...navigation, "sec-fetch-site": "cross-site" } },
+      { target: "https://untrusted.example.test", origin: production, headers: { ...navigation, "x-forwarded-host": new URL(production).host } },
+    ]) {
+      const res = await start(input);
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("Start Google sign-in from the Fantasy Friends sign-in page.");
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it("does not enable the pinned production domain on a preview deployment", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview");
+    expect((await start({ target: production, origin: production, headers: navigation })).status).toBe(403);
+    expect((await finish("code=valid-code", "a".repeat(32) + ":/dashboard", production)).headers.get("location")).toBe("/login?auth_error=google_unavailable");
+    expect(writes).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("exchanges the code using the same PKCE verifier and writes the existing app session", async () => {
     const auth = new URL((await start()).headers.get("location")!);
     const res = await finish("code=valid-code&next=https%3A%2F%2Funtrusted.example.test");
     expect(res.headers.get("location")).toBe(returnTo);
-    expect(res.cookies.get("ff-google-flow")?.maxAge).toBe(0);
+    expect(res.cookies.get("ff-google-flow")).toMatchObject({ maxAge: 0, expires: new Date(0) });
+    expect(res.headers.get("set-cookie")).toMatch(/expires=Thu, 01 Jan 1970/i);
     const [tokenUrl, init] = upstream.mock.calls[0];
     expect(tokenUrl).toBe(`${project}/auth/v1/token?grant_type=pkce`);
     const payload = JSON.parse(String(init?.body));
