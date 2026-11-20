@@ -14,6 +14,7 @@ missing forward migrations, in order:
 3. `0007_squad_system.sql` (squad release)
 4. `0008_player_photos.sql` (dashboard pitch and photo release)
 5. `0009_bench_lineups_scoring.sql` (bench, match lineup and scoring release)
+6. `0010_player_performance.sql` (individual points and finalized match history)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -79,7 +80,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0009_bench_lineups_scoring.sql`. The
+`0001_schema.sql` to `0010_player_performance.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -177,3 +178,24 @@ and app together.
 4. Create a new league and inspect its draft matrix. Compare an existing
    customized league and an approved historical match before and after rollout;
    neither should change.
+
+## Individual player performance
+
+Apply `0010` after `0009` on staging before releasing the matching web app.
+The migration adds two indexes and two read-only, security-invoker RPCs; it
+changes no point rows, rules, or RLS policies. No additional configuration is
+needed. The existing fantasy manager's last-game total is unchanged.
+
+- The squad pitch and dashboard preview batch the latest game for the
+  displayed starters and bench players. Opening a player loads their finalized
+  match history in pages of 20, newest kickoff first.
+- History includes approved games where the player has lineup, substitution-on,
+  or current-version scoring evidence. An unlisted player is not assumed to have
+  been present just because their current team was scheduled. When a named
+  substitute never came on, show **Did not play** and `—` unless there is a
+  persisted individual score. A real saved zero displays as **0 pts**.
+- Confirm that a starter who was captain shows their raw points, not the
+  doubled fantasy contribution; tap a starter and bench player, expand an
+  event breakdown, and reload. Check an unused substitute, a participating zero,
+  and a player with no finalized games. Repeat on a narrow screen and check that
+  a nonmember cannot read either endpoint.

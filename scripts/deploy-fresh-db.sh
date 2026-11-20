@@ -89,6 +89,7 @@ MIGRATIONS=(
   "0007_squad_system.sql"
   "0008_player_photos.sql"
   "0009_bench_lineups_scoring.sql"
+  "0010_player_performance.sql"
 )
 
 for migration in "${MIGRATIONS[@]}"; do

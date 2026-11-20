@@ -5,6 +5,7 @@ import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, Plus, Save } from "lucide
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
+import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "./PlayerPerformance";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from "./ui";
 import { notifyLeagueContentChanged, useLeagueContentUpdates } from "@/lib/client/league-updates";
@@ -55,6 +56,8 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   const editing = initialMode || edit !== null;
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
+  const scores = useLatestPlayerGames(leagueId, edit?.players ?? squad.data?.players ?? []);
+  const latest = scores.data ?? {};
   useLeagueContentUpdates(leagueId, squad.reload, false);
   useLeagueContentUpdates(leagueId, pool.reload, false);
 
@@ -152,7 +155,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   const benchRow = (p: SquadEntry, label: string) => <button type="button" disabled={saving} onClick={() => setPlayerId(p.id)}
     className="flex min-w-0 flex-1 items-center gap-2 rounded border border-line px-2 py-2 text-left text-chalk hover:border-green">
     <span className="num text-xs text-green">{label}</span><Avatar name={p.name} url={p.photoUrl} size={28} />
-    <span className="min-w-0 flex-1 break-words text-sm">{p.name}</span><span className="text-xs text-sage">{p.position}</span>
+    <span className="min-w-0 flex-1 break-words text-sm">{p.name}<PlayerPointsLabel game={latest[p.id]} /></span><span className="text-xs text-sage">{p.position}</span>
   </button>;
   const priorityButton = "grid min-h-10 min-w-10 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-40";
   const addStarter = (position: Position) => openPicker({ slot: "starter", position });
@@ -168,7 +171,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
       <PageHeader eyebrow={`${leagueName} · ${rules.format} fantasy`} title={editing ? (stored.players.length ? "Edit squad" : "Pick squad") : "My squad"}
-        subtitle={editing ? "Tap a pitch slot to pick. Tap a player to set captaincy, move, remove or replace them. Changes only count after saving."
+        subtitle={editing ? "Tap a pitch slot to pick, or tap a player for their performance and squad actions. Changes only count after saving."
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
         actions={<>{pickActions}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
       {(message || squad.error) && <div className="mb-4" role="alert">
@@ -187,7 +190,8 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             </select> : <Badge>{shape.label}</Badge>}
           </div>
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
-            disabled={saving} onAdd={addStarter} onSelect={setPlayerId} />
+            disabled={saving} latest={latest} onAdd={addStarter} onSelect={setPlayerId} />
+          {scores.error ? <ErrorNote message={scores.error} onRetry={() => void scores.reload()} /> : scores.loading && <p role="status" className="text-xs text-sage">Loading latest player points…</p>}
           {!!unplaced.length && <Panel className="p-3">
             <p className="mb-2 text-sm text-card-y">Some saved starters no longer fit. Move, replace or remove them to repair the lineup.</p>
             {unplaced.map((p) => <Button key={p.id} variant="ghost" onClick={() => setPlayerId(p.id)}>{p.name} · {p.position}</Button>)}
@@ -248,10 +252,10 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
       {pick && <SquadPicker title={pick.replace ? `Replace ${pick.replace.name}` : pick.position ? `Pick a ${pick.position}` : pick.slot === "sub" ? "Pick a substitute" : "Pick a reserve"}
         replacement={Boolean(pick.replace)} allowed={eligiblePositions(pick)} selected={new Set(players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()}
         onPick={pickPlayer} onClose={() => setPick(null)} />}
-      {selected && !moving && <Modal open title={selected.name} onClose={() => setPlayerId(null)}>
-        <div className="mb-4 flex items-center gap-3"><Avatar name={selected.name} url={selected.photoUrl} size={44} />
-          <p className="text-sm text-sage">{selected.position} · {LABEL[selected.slot]} · {selected.status !== "active" ? "Archived" : selected.availability}</p></div>
-        {editing ? <div className="grid grid-cols-2 gap-2">
+      {selected && !moving && <PlayerPerformanceDialog key={selected.id} leagueId={leagueId} entry={selected}
+        latest={latest[selected.id]} onClose={() => setPlayerId(null)} actions={<>
+        <p className="mb-2 text-xs text-sage">{LABEL[selected.slot]} · {selected.status !== "active" ? "Archived" : selected.availability}</p>
+        {editing ? <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
           {selected.slot === "starter" && selected.status === "active" && <>
             <Button variant="outline" onClick={() => assign("captain", selected)}>{captainId === selected.id ? "Clear captain" : "Make captain"}</Button>
             <Button variant="outline" onClick={() => assign("vice", selected)}>{viceId === selected.id ? "Clear vice" : "Make vice"}</Button>
@@ -262,7 +266,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
           <Button variant="outline" onClick={() => openPicker({ slot: selected.slot, replace: selected })}>Replace player</Button>
           <Button variant="danger" onClick={() => changePlayers(players.filter((p) => p.id !== selected.id))}>Remove player</Button>
         </div> : <Button onClick={begin}>Edit squad</Button>}
-      </Modal>}
+      </>} />}
       {selected && moving && <MoveDialog player={selected} destination={moving} rules={rules} players={players} formation={shape.label}
         onMove={changePlayers} onBack={() => setMoving(null)} />}
       {notice && !editing && <Toast message={notice} onClose={() => setNotice(null)} />}
