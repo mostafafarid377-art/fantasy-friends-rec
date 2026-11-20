@@ -57,16 +57,15 @@ export function MatchStatistics({ matchId, version, started, status, correctable
         </div>
       </div>)}</div>}
     </details>
-    <section aria-label="Match Bonus Points" className="space-y-2 border-t border-line pt-3">
+    {finalized && <section aria-label="Match Bonus Points" className="space-y-2 border-t border-line pt-3">
       <h2 className="text-lg text-chalk">Match Bonus Points</h2>
-      {!finalized && <p className="text-sm text-sage">Bonuses are calculated on approval. Tied players share a rank.</p>}
-      {finalized && (bonusAwards.length ? <ul className="space-y-1 text-sm text-chalk">
+      {bonusAwards.length ? <ul className="space-y-1 text-sm text-chalk">
         {bonusAwards.map((award) => <li key={award.playerId} className="flex flex-wrap justify-between gap-x-3">
           <span>{award.rank == null ? "Historical award" : `Rank ${award.rank}`} · {known.get(award.playerId)?.name ?? "Player"}</span>
           <span className="num text-green">+{award.points} pts</span>
         </li>)}
-      </ul> : <p className="text-sm text-sage">No bonus awards in the finalized result.</p>)}
-    </section>
+      </ul> : <p className="text-sm text-sage">No bonus awards in the finalized result.</p>}
+    </section>}
     {error && <ErrorNote message={error} />}
     {!validCounts && <p className="text-sm text-card-y">Use whole numbers from 0 to 999.</p>}
     {edit && finalized && dirty && <Field label="Statistics correction reason"><TextInput value={reason} maxLength={400} disabled={locked} onChange={(e) => setReason(e.target.value)} /></Field>}
