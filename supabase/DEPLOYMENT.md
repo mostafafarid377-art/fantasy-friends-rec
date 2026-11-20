@@ -5,22 +5,34 @@ Supabase Auth. The app does not need `DATABASE_URL` or a service-role key.
 
 ## Existing Hagz-fantasy deployment
 
-This release adds two forward-only migrations. Apply **only** the following
-new files, in order, through the project's reviewed migration process:
+Do not deploy without authorization. Use the existing Hagz-fantasy project
+(`zkrfgdiujpagaddsxbcb`). Review the project's migration history and apply only
+missing forward migrations, in order:
 
-1. `0005_confirmed_writes.sql`
-2. `0006_write_side_effects.sql`
+1. `0005_confirmed_writes.sql` (previous release)
+2. `0006_write_side_effects.sql` (previous release)
+3. `0007_squad_system.sql` (this release)
 
-Then deploy the matching app build to Vercel. Confirm the production variables
-still point to Hagz-fantasy (`zkrfgdiujpagaddsxbcb`):
+Coordinate `0007` with the matching app rollout: the new app needs both
+`save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
+be unavailable after `0007` revokes the old RPC. Plan this as one maintenance
+window. An app-only rollback after `0007` does not restore old squad writes.
+Do not restore unchecked grants to recover them; prefer a reviewed forward fix.
+
+Confirm the Vercel variables still point to the same project:
 `NEXT_PUBLIC_SUPABASE_URL` (project root, without `/rest/v1`) and
 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Keep all credentials out of Git.
 
-Neither migration updates or backfills existing rows at deployment. The new
-functions and triggers run on subsequent authorized app actions only. RLS
-and table grants stay enabled and unchanged. Do not run the legacy destructive
-migration, reset the database, or run an unrestricted `supabase db push`
-against Hagz-fantasy; migrations `0001`–`0004` are the existing baseline.
+`0007` does not update, backfill or delete rows. Existing squads and points are
+preserved. Squad RLS remains enabled and unchanged; direct authenticated DML
+and the old RPC grant are revoked in favor of the checked RPC. Smaller squad
+sizes are permitted; 15 remains the default and upper limit. Existing squad
+settings aren't rewritten. Leaders changing limits through Settings may need to
+ask members to rebalance their squads.
+
+Do not run the legacy destructive migration, reset the database, or run an
+unrestricted `supabase db push` against Hagz-fantasy; `0001`–`0004` are the
+existing baseline.
 
 After deploying, League Leaders in leagues with an empty Scoring screen can
 choose **Initialize draft rules** and review them before approval. This is a
@@ -29,7 +41,7 @@ normal, authenticated app action; it does not overwrite existing rules.
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0006_write_side_effects.sql`. The
+`0001_schema.sql` to `0007_squad_system.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -48,3 +60,22 @@ constraints, RLS, grants and RPC transactions, not live Supabase Auth or REST.
 
 See [PRODUCTION_WRITE_AND_PERFORMANCE_AUDIT.md](../PRODUCTION_WRITE_AND_PERFORMANCE_AUDIT.md)
 for the verification results and live smoke checklist.
+
+## Squad rollout smoke checks
+
+Use explicitly authorized test accounts/leagues; don't write to production as
+part of a read-only check.
+
+- On a phone, switch between a 5v5 and a 7v7 league where the same account has
+  different roles. Reload and verify the selected league, roster, role controls
+  and pitch. A league with no squad must remain empty until the first save.
+- Pick from the league player pool, save players and bench, reopen, then swap
+  a defender for a midfielder. Check the new formation, keeper-only swaps,
+  distinct captaincy and that Cancel leaves the saved squad unchanged.
+- Confirm a League Leader can add/edit players and add/rename real teams. A
+  manager cannot manage the roster; a Match Organizer only gets match actions
+  they are authorized to perform.
+- Compare **Last Game Points** with the member's score for the most recent
+  approved match by kickoff. A pending match must not replace it; an approved
+  match without a current-version manager score shows no score. Check that
+  zero points is shown as `0` and the standings still show season totals.

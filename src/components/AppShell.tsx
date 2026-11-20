@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { Fragment, useState, useTransition, type ReactNode } from "react";
 import {
   Bell,
   ChevronDown,
@@ -11,6 +11,7 @@ import {
   History,
   LayoutDashboard,
   LogOut,
+  Menu,
   Swords,
   Table2,
   User,
@@ -21,7 +22,7 @@ import {
 } from "lucide-react";
 import { useLeague } from "./LeagueContext";
 import { Wordmark } from "./Mark";
-import { Avatar, Badge, LiveDot } from "./ui";
+import { Avatar, LiveDot } from "./ui";
 
 type NavItem = {
   href: string;
@@ -59,6 +60,21 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { league, leagues, selectLeague, user, unread, logout, recovered } = useLeague();
   const [switcher, setSwitcher] = useState(false);
+  const [more, setMore] = useState(false);
+  const [navigating, startTransition] = useTransition();
+  const router = useRouter();
+  const matchDetail = /^\/matches\/(?!new$)[^/]+$/.test(pathname);
+  const changeLeague = (id: string) => {
+    setSwitcher(false);
+    setMore(false);
+    if (id === league?.id) return;
+    if (matchDetail || pathname === "/points") {
+      startTransition(() => router.replace(matchDetail ? "/matches" : "/points"));
+    }
+    selectLeague(id);
+  };
+  const leagueScoped = !["/leagues", "/profile", "/notifications"].includes(pathname);
+  const moreItems = NAV.filter((item) => !MOBILE.some((tab) => tab.href === item.href));
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
@@ -82,6 +98,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="relative px-3 pb-3">
           <button
             onClick={() => setSwitcher((s) => !s)}
+            aria-expanded={switcher}
+            aria-label={`Active league: ${league?.name ?? "none"}`}
             className="flex w-full items-center gap-2.5 rounded-lg border border-line bg-pitch-850 px-3 py-2.5 text-left transition-colors hover:border-green-dim"
           >
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-green/12 font-display text-[13px] font-bold text-green">
@@ -103,10 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {leagues.map((l) => (
                   <button
                     key={l.id}
-                    onClick={() => {
-                      selectLeague(l.id);
-                      setSwitcher(false);
-                    }}
+                    onClick={() => changeLeague(l.id)}
                     className={`flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-[13.5px] transition-colors hover:bg-pitch-800 ${
                       l.id === league?.id ? "text-green" : "text-chalk"
                     }`}
@@ -183,20 +198,37 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       {/* ---------------- mobile top bar ---------------- */}
-      <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-line bg-pitch-950/92 px-4 backdrop-blur lg:hidden">
-        <Link href="/dashboard">
-          <Wordmark />
-        </Link>
-        <div className="flex items-center gap-3">
-          {league && <Badge tone="live">{league.format}</Badge>}
-          <Link href="/profile" aria-label="Profile">
-            <Avatar name={user?.displayName ?? "?"} url={user?.avatarUrl} size={30} />
-          </Link>
+      <header className="sticky top-0 z-40 border-b border-line bg-pitch-950/95 px-4 py-2 backdrop-blur lg:hidden">
+        <div className="flex min-h-10 items-center justify-between gap-2">
+          <Link href="/dashboard" aria-label="Fantasy Friends dashboard" className="min-w-0"><Wordmark className="[&>span]:min-w-0 [&>span]:truncate [&>svg]:shrink-0" /></Link>
+          <button type="button" aria-expanded={more} aria-controls="mobile-more" onClick={() => setMore((old) => !old)}
+            className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-md border border-line px-2.5 text-sm text-chalk">
+            <Menu className="h-4 w-4" /> More
+          </button>
         </div>
+        {leagues.length > 0 ? <label className="mt-1 flex items-center gap-2">
+          <span className="slate shrink-0">Active league</span>
+          <select aria-label="Active league" className="h-10 min-w-0 flex-1 truncate rounded-md border border-line bg-pitch-850 px-2 text-sm font-semibold text-chalk"
+            value={league?.id ?? ""} disabled={!league} onChange={(e) => changeLeague(e.target.value)}>
+            {!league && <option value="">Loading…</option>}
+            {leagues.map((l) => <option key={l.id} value={l.id}>{l.name} · {l.format}</option>)}
+          </select>
+        </label> : <Link href="/leagues" className="block py-2 text-sm text-green">Create or join a league</Link>}
+        {more && <nav id="mobile-more" aria-label="More navigation" className="absolute inset-x-3 top-full mt-1 grid max-h-[62dvh] grid-cols-2 gap-1 overflow-auto rounded-lg border border-line bg-pitch-850 p-2 shadow-xl">
+          {moreItems.map((item) => <Link key={item.href} href={item.href} onClick={() => setMore(false)}
+            aria-current={isActive(item.href) ? "page" : undefined}
+            className="flex min-h-11 items-center gap-2 px-2 text-sm text-chalk hover:bg-pitch-800">
+            {item.icon} {item.href === "/players" ? (league?.role === "leader" ? "Players & teams" : "Player pool") : item.href === "/settings" ? "League settings" : item.label}
+          </Link>)}
+          <Link href="/leagues" onClick={() => setMore(false)} className="flex min-h-11 items-center gap-2 px-2 text-sm text-chalk"><Users className="h-4 w-4" /> My leagues</Link>
+        </nav>}
       </header>
 
-      {/* ---------------- content ---------------- */}
-      <main className="pb-24 lg:pb-10 lg:pl-[236px]">{children}</main>
+      {/* A switch resets page-local selections, forms and async responses. */}
+      <main className="pb-24 lg:pb-10 lg:pl-[236px]">
+        {matchDetail && navigating ? <p className="p-5 text-sm text-sage" role="status">Switching league…</p> :
+          <Fragment key={leagueScoped ? JSON.stringify([user?.id, league?.id]) : user?.id}>{children}</Fragment>}
+      </main>
 
       {/* ---------------- mobile tab bar ---------------- */}
       <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-line bg-pitch-900/97 backdrop-blur lg:hidden">
@@ -205,6 +237,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <li key={item.href} className="flex-1">
               <Link
                 href={item.href}
+                onClick={() => setMore(false)}
                 className={`relative flex h-16 flex-col items-center justify-center gap-1 transition-colors ${
                   isActive(item.href) ? "text-green" : "text-sage-dim"
                 }`}

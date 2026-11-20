@@ -78,6 +78,9 @@ export default function PlayersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [teamModal, setTeamModal] = useState(false);
   const [teamName, setTeamName] = useState("");
+  const [teamEditing, setTeamEditing] = useState<string | null>(null);
+  const [managingTeams, setManagingTeams] = useState(false);
+  const [teamError, setTeamError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
   const [detail, setDetail] = useState<Player | null>(null);
@@ -159,23 +162,26 @@ export default function PlayersPage() {
     }
   };
 
-  const createTeam = async () => {
+  const saveTeam = async () => {
     if (!league || teamName.trim().length < 2) return;
     setSaving(true);
+    setTeamError(null);
     try {
-      const res = await api<{ team: Team }>(`/api/leagues/${league.id}/teams`, {
-        method: "POST",
+      const base = `/api/leagues/${league.id}/teams`;
+      const res = await api<{ team: Team }>(teamEditing ? `${base}/${teamEditing}` : base, {
+        method: teamEditing ? "PATCH" : "POST",
         body: { name: teamName.trim() },
-        idempotent: true,
+        idempotent: !teamEditing,
       });
       const saved = assertConfirmed(res?.team, "The saved team could not be confirmed", league.id);
+      if ((teamEditing && saved.id !== teamEditing) || saved.name !== teamName.trim()) throw new Error("The team name could not be confirmed");
       setData((old) => old ? { ...old, teams: [...old.teams.filter((t) => t.id !== saved.id), saved]
         .sort((a, b) => a.name.localeCompare(b.name)) } : old);
       setTeamName("");
       setTeamModal(false);
-      setToast({ message: "Team added", tone: "ok" });
+      setToast({ message: teamEditing ? "Team renamed" : "Team added", tone: "ok" });
     } catch (err) {
-      setToast({ message: err instanceof Error ? err.message : "Could not add team", tone: "error" });
+      setTeamError(err instanceof Error ? err.message : "Could not save team");
     } finally {
       setSaving(false);
     }
@@ -208,14 +214,13 @@ export default function PlayersPage() {
     <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
       <PageHeader
         eyebrow={`${league?.name} · league-scoped database`}
-        title="Players"
+        title="Player pool"
         subtitle="Every league registers its own players. Nothing here is shared with any other league."
         actions={
           isLeader ? (
             <>
-              <Button variant="outline" onClick={() => setTeamModal(true)}>
-                Add team
-              </Button>
+              <Button variant="outline" onClick={() => { setTeamEditing(null); setTeamName(""); setTeamError(null); setTeamModal(true); }}>Add team</Button>
+              {!!data?.teams.length && <Button variant="outline" onClick={() => setManagingTeams(true)}>Manage teams</Button>}
               <Button
                 onClick={() => {
                   setDraft({ ...EMPTY });
@@ -441,18 +446,26 @@ export default function PlayersPage() {
         )}
       </Modal>
 
-      {/* add team */}
-      <Modal open={teamModal} onClose={() => setTeamModal(false)} title="Add a real team" width="max-w-sm">
+      <Modal open={managingTeams} onClose={() => setManagingTeams(false)} title="Manage real teams" width="max-w-sm">
+        <ul className="space-y-2">{data?.teams.map((t) => <li key={t.id} className="flex items-center justify-between gap-2 rounded border border-line p-2 text-sm text-chalk">
+          <span className="min-w-0 break-words">{t.name}</span>
+          <Button variant="outline" size="sm" onClick={() => {
+            setTeamEditing(t.id); setTeamName(t.name); setTeamError(null); setManagingTeams(false); setTeamModal(true);
+          }}>Rename</Button>
+        </li>)}</ul>
+      </Modal>
+      <Modal open={teamModal} onClose={() => { if (!saving) setTeamModal(false); }} title={teamEditing ? "Rename real team" : "Add a real team"} width="max-w-sm">
         <div className="space-y-4">
+          {teamError && <div role="alert"><ErrorNote message={teamError} /></div>}
           <Field label="Team name">
-            <TextInput value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Saturday Reds" />
+            <TextInput maxLength={50} disabled={saving} value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Saturday Reds" />
           </Field>
           <div className="flex justify-end gap-2.5">
-            <Button variant="ghost" onClick={() => setTeamModal(false)}>
+            <Button variant="ghost" disabled={saving} onClick={() => setTeamModal(false)}>
               Cancel
             </Button>
-            <Button onClick={createTeam} loading={saving} disabled={teamName.trim().length < 2}>
-              Add team
+            <Button onClick={saveTeam} loading={saving} disabled={teamName.trim().length < 2}>
+              {teamEditing ? "Save team name" : "Add team"}
             </Button>
           </div>
         </div>

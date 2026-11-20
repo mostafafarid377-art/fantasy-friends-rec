@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Swords } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Button, ErrorNote, Field, Panel, Select, Skeleton, Slate, TextInput, Toast } from "@/components/ui";
-import { useActiveLeague } from "@/components/LeagueContext";
+import { useActiveLeague, useLeague } from "@/components/LeagueContext";
 import { api, assertConfirmed, useApi } from "@/lib/client/api";
 
 type Team = { id: string; name: string };
@@ -14,8 +14,9 @@ type Fixture = { id: string; title: string; gameweek: number };
 export default function NewMatchPage() {
   const { league, loading: leagueLoading } = useActiveLeague();
   const router = useRouter();
-  const teams = useApi<{ teams: Team[] }>(league ? `/api/leagues/${league.id}/teams` : null, [league?.id]);
-  const fixtures = useApi<{ fixtures: Fixture[] }>(league ? `/api/leagues/${league.id}/fixtures` : null, [
+  const { canOrganize } = useLeague();
+  const teams = useApi<{ teams: Team[] }>(league && canOrganize ? `/api/leagues/${league.id}/teams` : null, [league?.id]);
+  const fixtures = useApi<{ fixtures: Fixture[] }>(league && canOrganize ? `/api/leagues/${league.id}/fixtures` : null, [
     league?.id,
   ]);
 
@@ -32,7 +33,7 @@ export default function NewMatchPage() {
   const valid = title.trim().length >= 3 && teamA && teamB && teamA !== teamB && kickOff;
 
   const create = async () => {
-    if (!league) return;
+    if (!league || !canOrganize) return;
     setBusy(true);
     setError(null);
     try {
@@ -65,6 +66,11 @@ export default function NewMatchPage() {
         <Skeleton className="h-72 rounded-xl" />
       </div>
     );
+
+  if (!canOrganize) return <div className="mx-auto max-w-2xl p-5">
+    <PageHeader title="New match" eyebrow={league?.name} />
+    <ErrorNote message="Only the League Leader or a league Match Organizer can create a match." />
+  </div>;
 
   if (teamList.length < 2) {
     return (

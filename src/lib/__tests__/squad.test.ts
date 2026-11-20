@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   FORMATIONS,
-  applySubstitution,
+  moveSquadPlayer,
+  compatibleFormations,
+  deriveFormation,
   isFormationForFormat,
   layoutFormation,
-  suggestFormation,
   validateLineup,
   validateSquad,
   validateSquadDraft,
@@ -58,7 +59,7 @@ function squad7(): SquadPlayer[] {
 
 describe("league format rules", () => {
   it("requires exactly 5 starters in a 5v5 league", () => {
-    expect(validateSquad(rules5, squad5(), { formation: "1-2-1" }).ok).toBe(true);
+    expect(validateSquad(rules5, squad5(), { formation: "2-2-0" }).ok).toBe(true);
     const withExtra = squad5().map((p) =>
       p.slot === "reserve" && p.id === "res1" ? { ...p, slot: "starter" as const, order: 5 } : p,
     );
@@ -68,7 +69,7 @@ describe("league format rules", () => {
   });
 
   it("requires exactly 7 starters in a 7v7 league", () => {
-    expect(validateSquad(rules7, squad7(), { formation: "1-2-3" }).ok).toBe(true);
+    expect(validateSquad(rules7, squad7(), { formation: "3-2-1" }).ok).toBe(true);
     const missing = squad7().filter((p) => p.id !== "fwd1");
     const result = validateSquad(rules7, missing, { formation: "1-2-3" });
     expect(result.ok).toBe(false);
@@ -92,7 +93,7 @@ describe("league format rules", () => {
   it("keeps substitutes out of the starting count", () => {
     const subsOnly = squad5().filter((p) => p.slot === "starter").length;
     expect(subsOnly).toBe(rules5.starters);
-    expect(validateSquad(rules5, squad5(), { formation: "1-2-1" }).ok).toBe(true);
+    expect(validateSquad(rules5, squad5(), { formation: "2-2-0" }).ok).toBe(true);
   });
 
   it("rejects an eleven-a-side lineup in a small-sided league", () => {
@@ -123,70 +124,77 @@ describe("league format rules", () => {
 
   it("enforces captain and vice-captain membership", () => {
     expect(
-      validateSquad(rules5, squad5(), { formation: "1-2-1", captainId: "def1", viceId: "mid1" }).ok,
+      validateSquad(rules5, squad5(), { formation: "2-2-0", captainId: "def1", viceId: "mid1" }).ok,
     ).toBe(true);
     expect(
-      validateSquad(rules5, squad5(), { formation: "1-2-1", captainId: "sub4", viceId: "mid1" }).ok,
+      validateSquad(rules5, squad5(), { formation: "2-2-0", captainId: "sub4", viceId: "mid1" }).ok,
     ).toBe(false);
     expect(
-      validateSquad(rules5, squad5(), { formation: "1-2-1", captainId: "def1", viceId: "def1" }).ok,
+      validateSquad(rules5, squad5(), { formation: "2-2-0", captainId: "def1", viceId: "def1" }).ok,
     ).toBe(false);
   });
 
   it("draft validation allows an incomplete squad but never exceeds caps", () => {
     const partial = squad5().slice(0, 6);
-    expect(validateSquadDraft(rules5, partial).ok).toBe(true);
+    expect(validateSquadDraft(rules5, partial, { formation: "2-2-0" }).ok).toBe(true);
     expect(validateSquad(rules5, partial, { formation: "1-2-1" }).ok).toBe(false);
 
     const overflow = [...squad5(), player("x1", "FWD", "starter", 9)];
-    expect(validateSquadDraft(rules5, overflow).ok).toBe(false);
+    expect(validateSquadDraft(rules5, overflow, { formation: "2-2-0" }).ok).toBe(false);
   });
 });
 
-describe("formation recalculation after a substitution", () => {
-  it("re-shapes the team when the position mix changes", () => {
-    // 7v7 starting shape: GK + DEF,DEF,DEF,MID,MID,FWD → 1-3-1-1
+describe("strict position layouts and editing", () => {
+  it.each([rules5, rules7])("renders every empty pitch spot and one goalkeeper ($format)", (rules) => {
+    const shape = deriveFormation(rules, [])!;
+    const slots = layoutFormation([], shape);
+    expect(slots).toHaveLength(rules.starters);
+    expect(slots.filter((s) => s.position === "GK")).toHaveLength(1);
+    expect(slots.every((s) => s.playerId === null)).toBe(true);
+  });
+
+  it("renders each selected player in their own position, including a legacy-label recovery", () => {
+    const players = squad7();
+    const shape = deriveFormation(rules7, players, "1-3-1-1")!;
+    expect(shape.label).toBe("3-2-1");
+    const slots = layoutFormation(players, shape);
+    expect(slots).toHaveLength(7);
+    expect(slots.every((s) => players.find((p) => p.id === s.playerId)?.position === s.position)).toBe(true);
+    expect(slots.find((s) => s.position === "GK")!.y).toBeGreaterThan(slots.find((s) => s.position === "FWD")!.y);
+  });
+
+  it("derives a new shape when swapping a defender for a midfielder and preserves unrelated entries", () => {
     const squad = squad7();
-    const shape = suggestFormation(
-      squad.filter((p) => p.slot === "starter" && p.position !== "GK"),
-      "7v7",
-      "1-3-1-1",
-    );
-    expect(shape.lines.reduce((a, b) => a + b, 0)).toBe(6);
-
-    // swap a defender for a midfielder
-    const result = applySubstitution(rules7, squad, "def1", "s1", "1-3-1-1");
-    expect("error" in result).toBe(false);
+    const result = moveSquadPlayer(rules7, squad, "def1", "sub", "3-2-1", "s1");
+    expect(result).toMatchObject({ formation: "2-3-1" });
     if ("error" in result) return;
-
-    expect(result.players.filter((p) => p.slot === "starter")).toHaveLength(7);
-    expect(result.players.find((p) => p.id === "def1")?.slot).toBe("sub");
-    expect(result.players.find((p) => p.id === "s1")?.slot).toBe("starter");
-
-    const outfield = result.players.filter((p) => p.slot === "starter" && p.position !== "GK");
-    expect(outfield).toHaveLength(6);
-    const formation = FORMATIONS["7v7"].find((f) => f.label === result.formation);
-    expect(formation).toBeDefined();
-    expect(formation!.lines.reduce((a, b) => a + b, 0)).toBe(6);
-    // one fewer defender available → the shape must have changed
-    expect(outfield.filter((p) => p.position === "DEF")).toHaveLength(2);
+    expect(result.players.find((p) => p.id === "def1")).toMatchObject({ slot: "sub", order: 0 });
+    expect(result.players.find((p) => p.id === "s1")).toMatchObject({ slot: "starter", order: 1 });
+    expect(result.players.find((p) => p.id === "gk1")).toBe(squad[0]);
   });
 
-  it("refuses illegal goalkeeper changes", () => {
+  it("allows a goalkeeper swap only for another goalkeeper", () => {
     const squad = squad5();
-    expect(applySubstitution(rules5, squad, "gk1", "sub3", "1-2-1")).toHaveProperty("error");
-    expect(applySubstitution(rules5, squad, "mid1", "sub1", "1-2-1")).toHaveProperty("error");
-    expect(applySubstitution(rules5, squad, "mid1", "res1", "1-2-1")).toHaveProperty("error");
+    expect(moveSquadPlayer(rules5, squad, "gk1", "sub", "2-2-0", "sub3")).toHaveProperty("error");
+    expect(moveSquadPlayer(rules5, squad, "mid1", "sub", "2-2-0", "sub1")).toHaveProperty("error");
+    expect(moveSquadPlayer(rules5, squad, "gk1", "sub", "2-2-0", "sub1")).toMatchObject({ formation: "2-2-0" });
+    expect(moveSquadPlayer(rules5, squad, "sub1", "starter", "2-2-0")).toHaveProperty("error");
   });
 
-  it("suggests a formation that places every outfield player", () => {
-    const outfield = squad7().filter((p) => p.slot === "starter" && p.position !== "GK");
-    const shape = suggestFormation(outfield, "7v7", null);
-    const laid = layoutFormation(outfield, shape);
-    expect(laid.unplaced).toHaveLength(0);
-    expect(laid.slots).toHaveLength(6);
-    const ys = laid.slots.map((s) => s.y);
-    expect(Math.min(...ys)).toBeLessThan(Math.max(...ys));
+  it("requires compatible partial shapes and only allows the exact positional counts when full", () => {
+    const starters = squad5().filter((p) => p.slot === "starter");
+    const partial = starters.slice(0, 3);
+    expect(compatibleFormations(rules5, partial).every((f) => f.lines[0] >= 2)).toBe(true);
+    expect(compatibleFormations(rules5, starters).map((f) => f.label)).toEqual(["2-2-0"]);
+    expect(deriveFormation(rules5, starters.map((p) => p.id === "def1" ? { ...p, position: "FWD" } : p))?.label).toBe("1-2-1");
+    expect(validateSquadDraft(rules5, partial, { formation: "2-1-1", captainId: "missing" }).ok).toBe(false);
+  });
+
+  it("uses the actual squad and sub limits, not the format to size the bench", () => {
+    const rules = { ...rules5, squadSize: 7, subsCount: 1 };
+    const players = squad5().filter((p) => p.slot === "starter" || ["sub1", "res1"].includes(p.id));
+    expect(validateSquad(rules, players, { formation: "2-2-0" }).ok).toBe(true);
+    expect(validateSquadDraft(rules, [...players, player("extra", "DEF", "sub")], { formation: "2-2-0" }).ok).toBe(false);
   });
 });
 
