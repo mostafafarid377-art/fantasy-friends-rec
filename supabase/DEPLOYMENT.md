@@ -116,3 +116,9 @@ part of a read-only check.
   approved match by kickoff. A pending match must not replace it; an approved
   match without a current-version manager score shows no score. Check that
   zero points is shown as `0` and the standings still show season totals.
+
+## Google sign-in
+
+See [Google OAuth setup](GOOGLE_OAUTH.md) for provider configuration, exact
+callback URLs, the deployment opt-in setting, and verification steps. It does
+not require a database migration.
