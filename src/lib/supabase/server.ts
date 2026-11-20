@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getSupabasePublicConfig } from "./config";
 
-export async function createClient() {
+export async function createClient(oauth?: { secure: boolean }) {
   const { url, publishableKey } = getSupabasePublicConfig();
   const cookieStore = await cookies();
 
@@ -14,9 +14,12 @@ export async function createClient() {
       setAll(cookiesToSet) {
         try {
           cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options),
+            cookieStore.set(name, value, oauth && /-code-verifier(?:\.\d+)?$/.test(name)
+              ? { ...options, httpOnly: true, secure: oauth.secure, maxAge: options.maxAge === 0 ? 0 : 600 }
+              : options),
           );
-        } catch {
+        } catch (error) {
+          if (oauth) throw error;
           // Server Components cannot write cookies. The proxy refreshes them.
         }
       },
