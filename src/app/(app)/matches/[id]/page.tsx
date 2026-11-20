@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -26,8 +26,10 @@ import {
   Toast,
 } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
+import { notifyLeagueContentChanged } from "@/lib/client/league-updates";
 import { api, assertConfirmed, useApi } from "@/lib/client/api";
-import { EVENT_TYPES, type LeagueRules, type Position } from "@/lib/domain";
+import { lineupPayload, lineupSelection, type SavedLineupEntry, type LineupSelection } from "@/lib/match-lineup";
+import { canSelectPlayer, validateLineup, EVENT_TYPES, type LeagueRules, type Position } from "@/lib/domain";
 
 type Player = {
   id: string;
@@ -36,10 +38,11 @@ type Player = {
   photoUrl: string | null;
   shirtNumber: number | null;
   status: string;
+  availability: string;
   teamId: string | null;
 };
 
-type LineupEntry = { id: string; playerId: string; teamId: string; slot: "starter" | "sub"; order: number };
+type LineupEntry = SavedLineupEntry;
 
 type MatchData = {
   match: {
@@ -126,9 +129,11 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // lineup editing state, keyed by team
-  const [sel, setSel] = useState<Record<string, { starters: string[]; subs: string[] }>>({});
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // Keep only local overrides in state; untouched teams always use persisted rows.
+  const [draft, setDraft] = useState<{ id: string; teams: Record<string, LineupSelection> } | null>(null);
+  const savedSelections = useMemo(() => data ? Object.fromEntries([data.match.teamAId, data.match.teamBId]
+    .map((id) => [id, lineupSelection(data.lineups, id)])) : {}, [data]);
+  const sel = { ...savedSelections, ...(draft && draft.id === matchId ? draft.teams : {}) };
 
   // event form
   const [evTeam, setEvTeam] = useState("");
@@ -148,20 +153,13 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const [rejectReason, setRejectReason] = useState("");
   const [showReject, setShowReject] = useState(false);
 
+  const defaultTeam = data?.match.teamAId;
   useEffect(() => {
-    if (!data || loadedFor === data.match.id) return;
-    const next: Record<string, { starters: string[]; subs: string[] }> = {};
-    for (const teamId of [data.match.teamAId, data.match.teamBId]) {
-      next[teamId] = {
-        starters: data.lineups.filter((l) => l.teamId === teamId && l.slot === "starter").map((l) => l.playerId),
-        subs: data.lineups.filter((l) => l.teamId === teamId && l.slot === "sub").map((l) => l.playerId),
-      };
+    if (defaultTeam) {
+      setEvTeam(defaultTeam);
+      setSubTeam(defaultTeam);
     }
-    setSel(next);
-    setLoadedFor(data.match.id);
-    setEvTeam(data.match.teamAId);
-    setSubTeam(data.match.teamAId);
-  }, [data, loadedFor]);
+  }, [matchId, defaultTeam]);
 
   const rosterByTeam = useMemo(() => {
     const map: Record<string, Player[]> = {};
@@ -176,19 +174,33 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const notify = (message: string, tone: "ok" | "error" = "ok") => setToast({ message, tone });
 
+  const lineupSaving = useRef(false);
   const saveLineup = async (teamId: string) => {
-    if (!matchId || !data) return;
+    if (!matchId || !data || lineupSaving.current) return;
+    lineupSaving.current = true;
     setBusy(true);
     setFormError(null);
     try {
       const state = sel[teamId];
-      const saved = await api<{ lineups: { id: string }[] }>(`/api/matches/${matchId}/lineup`, {
+      const saved = await api<{ lineups: SavedLineupEntry[] }>(`/api/matches/${matchId}/lineup`, {
         method: "PUT",
-        body: { teamId, starters: state.starters, subs: state.subs },
+        body: lineupPayload(teamId, state),
       });
       if (!saved?.lineups?.length || saved.lineups.some((line) => !line.id)) throw new Error("The saved lineup could not be confirmed");
+      const confirmed = lineupSelection(saved.lineups, teamId);
+      if (JSON.stringify(confirmed) !== JSON.stringify(state)) throw new Error("The saved lineup did not match the selection. Reload before retrying.");
+      setData((current) => current ? { ...current, lineups: [
+        ...current.lineups.filter((entry) => entry.teamId !== teamId),
+        ...saved.lineups.map((entry) => ({ ...entry, player: current.roster.find((p) => p.id === entry.playerId) ?? null })),
+      ] } : current);
+      setDraft((current) => {
+        if (current?.id !== matchId) return current;
+        const teams = { ...current.teams };
+        delete teams[teamId];
+        return { id: matchId, teams };
+      });
+      await reload();
       notify("Line-up saved");
-      reload();
     } catch (err) {
       const details = (err as { details?: unknown }).details;
       setFormError(
@@ -200,20 +212,22 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
       );
       notify("Line-up not saved", "error");
     } finally {
+      lineupSaving.current = false;
       setBusy(false);
     }
   };
 
   const assign = (teamId: string, playerId: string, slot: "starter" | "sub" | null) => {
-    setSel((cur) => {
-      const state = cur[teamId] ?? { starters: [], subs: [] };
-      const without = {
+    if (!matchId) return;
+    setDraft((current) => {
+      const teams = current?.id === matchId ? current.teams : {};
+      const state = teams[teamId] ?? savedSelections[teamId] ?? { starters: [], subs: [] };
+      const next = {
         starters: state.starters.filter((id) => id !== playerId),
         subs: state.subs.filter((id) => id !== playerId),
       };
-      if (!slot) return { ...cur, [teamId]: without };
-      const key = slot === "starter" ? "starters" : "subs";
-      return { ...cur, [teamId]: { ...without, [key]: [...without[key], playerId] } };
+      if (slot) next[slot === "starter" ? "starters" : "subs"].push(playerId);
+      return { id: matchId, teams: { ...teams, [teamId]: next } };
     });
   };
 
@@ -317,6 +331,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
               : "Sent back to the organizer",
         );
       }
+      if (action === "approve") notifyLeagueContentChanged(data.match.leagueId);
       setShowReject(false);
       setRejectReason("");
       reload();
@@ -344,14 +359,9 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const m = data.match;
   const editable = data.canEditEvents;
-  const lineupsComplete = (teamId: string) => {
-    const s = sel[teamId]?.starters.length ?? 0;
-    return s === data.rules.starters;
-  };
 
   const eventRoster = (teamId: string) =>
-    (sel[teamId]?.starters ?? [])
-      .concat(sel[teamId]?.subs ?? [])
+    data.lineups.filter((l) => l.teamId === teamId).map((l) => l.playerId)
       .map((id) => data.roster.find((p) => p.id === id))
       .filter(Boolean) as Player[];
 
@@ -456,8 +466,12 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
         <div className="space-y-5">
           {[m.teamAId, m.teamBId].map((teamId) => {
             const state = sel[teamId] ?? { starters: [], subs: [] };
-            const roster = rosterByTeam[teamId] ?? [];
+            const roster = [...(rosterByTeam[teamId] ?? []), ...data.roster.filter((p) => p.teamId !== teamId
+              && (state.starters.includes(p.id) || state.subs.includes(p.id)))];
             const locked = m.status === "pending" || m.status === "approved" || !data.canOrganize;
+            const lineupRules = validateLineup(data.rules, roster.filter((p) => state.starters.includes(p.id)), roster.filter((p) => state.subs.includes(p.id)));
+            const allowed = (p: Player) => p.teamId === teamId && canSelectPlayer(p);
+            const eligible = roster.filter((p) => state.starters.includes(p.id) || state.subs.includes(p.id)).every(allowed);
             const keeperIn = state.starters.some(
               (id) => data.roster.find((p) => p.id === id)?.position === "GK",
             );
@@ -484,7 +498,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                     size="sm"
                     onClick={() => saveLineup(teamId)}
                     loading={busy}
-                    disabled={locked}
+                    disabled={locked || busy || !lineupRules.ok || !eligible}
                   >
                     <Save className="h-3.5 w-3.5" /> Save line-up
                   </Button>
@@ -512,10 +526,11 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                         >
                           <Avatar name={p.fullName} url={p.photoUrl} size={26} decorative />
                           <span className="num w-7 text-[10.5px] uppercase text-green-glow/75">{p.position}</span>
-                          <span className="min-w-0 flex-1 truncate text-[13.5px] text-chalk">{p.fullName}</span>
+                          <span className="min-w-0 flex-1 truncate text-[13.5px] text-chalk">{p.fullName}{!allowed(p) && <span className="block text-xs text-card-y">{p.teamId !== teamId ? "Not on this team" : p.status !== "active" ? "Archived" : p.availability}</span>}</span>
                           <div className="flex gap-1">
                             <button
-                              disabled={locked}
+                              disabled={locked || busy || (!isStarter && !allowed(p))}
+                              aria-pressed={isStarter}
                               onClick={() => assign(teamId, p.id, isStarter ? null : "starter")}
                               className={`rounded border px-2 py-1 text-[10.5px] font-bold uppercase tracking-[0.1em] transition-colors ${
                                 isStarter ? "border-green bg-green text-[#04120a]" : "border-line text-sage hover:border-green hover:text-green"
@@ -524,7 +539,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                               XI
                             </button>
                             <button
-                              disabled={locked}
+                              disabled={locked || busy || (!isSub && !allowed(p))}
+                              aria-pressed={isSub}
                               onClick={() => assign(teamId, p.id, isSub ? null : "sub")}
                               className={`rounded border px-2 py-1 text-[10.5px] font-bold uppercase tracking-[0.1em] transition-colors ${
                                 isSub ? "border-card-y bg-card-y text-[#1a1400]" : "border-line text-sage hover:border-card-y hover:text-card-y"
@@ -539,10 +555,9 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                   </ul>
                 )}
 
-                {data.canOrganize && !locked && !lineupsComplete(teamId) && (
+                {!locked && (!lineupRules.ok || !eligible) && (
                   <p className="mt-3 text-[13px] text-card-y">
-                    Exactly {data.rules.starters} starters (one goalkeeper) are required before this
-                    result can be submitted.
+                    {!lineupRules.ok ? lineupRules.errors.join(" ") : "Remove unavailable players before saving."}
                   </p>
                 )}
               </Panel>

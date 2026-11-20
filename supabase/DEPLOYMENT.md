@@ -13,6 +13,7 @@ missing forward migrations, in order:
 2. `0006_write_side_effects.sql` (previous release)
 3. `0007_squad_system.sql` (squad release)
 4. `0008_player_photos.sql` (dashboard pitch and photo release)
+5. `0009_bench_lineups_scoring.sql` (bench, match lineup and scoring release)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -78,7 +79,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0008_player_photos.sql`. The
+`0001_schema.sql` to `0009_bench_lineups_scoring.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -122,3 +123,57 @@ part of a read-only check.
 See [Google OAuth setup](GOOGLE_OAUTH.md) for provider configuration, exact
 callback URLs, the deployment opt-in setting, and verification steps. It does
 not require a database migration.
+
+## Bench, match lineups and scoring
+
+Apply `0009` on staging first and coordinate it with the matching app release.
+It replaces the existing lineup and fantasy squad RPC implementations, seeding
+and scoring functions; adds a private finalization receipt table, a manager
+ledger index and a member-scoped recent substitutions RPC; and removes direct
+lineup writes while leaving RLS enabled and its policies unchanged. No additional
+project settings, storage or credentials are needed. There is no data backfill;
+existing picks, rules and point rows are not rewritten. Older app versions will
+not be able to save newly validated benches reliably, so roll out the database
+and app together.
+
+- Bench size and reserve capacity are unchanged. When a bench is configured,
+  priority 0 is for one goalkeeper and positions 1 onward are outfield. Older
+  benches are displayed as saved and may need adjustment the next time a member
+  saves. A zero-bench league is unchanged.
+- Approval is per real match, the existing finalization unit. It uses the saved
+  fantasy squad at approval and recorded real starters/substitutes brought on.
+  Bench players enter by priority; outfield swaps can change the formation, but
+  cannot remove the last place in any outfield line used by the original shape.
+  An unfilled no-show stays on the score sheet with zero. Reserves do not enter.
+  Auto-subs never edit the manager's saved squad. Its page shows the most recent
+  five matches with automatic substitutions.
+- Official scores are written with approval and reused for that finalized match
+  version. They include the captain rule and the league's configured vice
+  fallback. This release does not add a kickoff lock or combine multiple real
+  matches into a new gameweek-level substitution system. Clean sheets keep the
+  existing rule: a recorded real starter on a team that conceded no goals;
+  no minimum-minutes threshold is configured.
+- New leagues get all 44 position/event rules in **draft**, as before. Leaders
+  still review/approve them before submitting results. Initializing rules for
+  an older league fills missing rows only, without updating custom rules or
+  revising historical points.
+
+### Staging smoke check
+
+1. With an assigned Organizer, save a 5v5 and a 7v7 real lineup: exactly one
+   starter GK, with at least one sub if allowed. Refresh/reopen the match and
+   confirm the same order and selections. Check that a League Leader can also
+   edit the match and that a manager without authority cannot. Confirm a bad or
+   unavailable selection leaves the old lineup intact.
+2. In **My squad**, pick a separate starting lineup and a bench keeper. Where
+   the configured bench allows it, reorder two outfield substitutes, save, and
+   refresh. Replace a player and verify only eligible unselected players of
+   that exact position are offered.
+3. Record real starters and each real substitution, then submit and approve the
+   match. Leave one fantasy starter out of actual participation; try an
+   appearance with zero net points too. Check that **Recent automatic
+   substitutions**, player points, manager points, standings and history agree.
+   Reopen/retry and confirm there is only one scoring result for the match.
+4. Create a new league and inspect its draft matrix. Compare an existing
+   customized league and an approved historical match before and after rollout;
+   neither should change.

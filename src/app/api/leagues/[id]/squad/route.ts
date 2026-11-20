@@ -3,8 +3,8 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, handler, leagueRules, requireMember, checkDb } from "@/lib/server";
-import { validateSquad, validateSquadDraft, type Position } from "@/lib/domain";
-import type { SquadEntry, SquadResponse } from "@/lib/squad";
+import { normalizeBench, validateSquad, validateSquadDraft, type Position } from "@/lib/domain";
+import type { AutoSubReport, SquadEntry, SquadResponse } from "@/lib/squad";
 
 type Ctx = { params: Promise<{ id: string }> };
 export const dynamic = "force-dynamic";
@@ -31,9 +31,12 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const sb = await getSupabase();
   const membership = await requireMember(id, sb);
   // Parent revision and its entries are read in the same snapshot.
-  const { data, error } = await sb.from("fantasy_squads")
-    .select(`${SQUAD},fantasy_squad_players(player_id,slot,order,players(${PLAYER}))`)
-    .eq("league_id", id).eq("profile_id", membership.profileId).maybeSingle();
+  const [{ data, error }, recent] = await Promise.all([
+    sb.from("fantasy_squads").select(`${SQUAD},fantasy_squad_players(player_id,slot,order,players(${PLAYER}))`)
+      .eq("league_id", id).eq("profile_id", membership.profileId).maybeSingle(),
+    sb.rpc("recent_fantasy_substitutions", { p_league: id }),
+  ]);
+  checkDb(recent.error, "Could not load automatic substitutions");
   checkDb(error, "Could not load your squad");
   const row = data as unknown as (SavedSquad & { fantasy_squad_players: {
     player_id: string; slot: Entry["slot"]; order: number; players: PlayerRow | null }[] }) | null;
@@ -42,7 +45,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     return entryDto(e.players, { playerId: e.player_id, slot: e.slot, order: e.order }, id);
   });
   return Response.json({ squad: row ? squadDto(row) : null, players,
-    rules: leagueRules(membership.league), vicePolicy: membership.league.vice_policy } satisfies SquadResponse);
+    rules: leagueRules(membership.league), vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[] } satisfies SquadResponse);
 });
 
 const putSchema = z.object({
@@ -73,11 +76,11 @@ export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {
     for (const player of data ?? []) byId.set(player.id, player);
     if (byId.size !== ids.length) throw new ApiError("One or more players are not part of this league", 403);
   }
-  const players = input.entries.map((e) => {
+  const players = normalizeBench(input.entries.map((e) => {
     const p = byId.get(e.playerId)!;
     if (p.status !== "active") throw new ApiError(`${p.full_name} is archived and cannot be selected`, 422);
     return entryDto(p, e, id);
-  });
+  }));
   const complete = players.length === rules.squadSize;
   const validation = (complete ? validateSquad : validateSquadDraft)(rules, players, {
     formation: input.formation, captainId: input.captainId, viceId: input.viceCaptainId,
@@ -87,7 +90,7 @@ export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {
   const { data, error } = await sb.rpc("save_fantasy_squad_v2", {
     p_league: id, p_formation: input.formation, p_captain: input.captainId, p_vice: input.viceCaptainId,
     p_expected_updated_at: input.expectedUpdatedAt,
-    p_entries: input.entries.map((e) => ({ player_id: e.playerId, slot: e.slot, order: e.order })),
+    p_entries: players.map((e) => ({ player_id: e.id, slot: e.slot, order: e.order })),
   });
   if (error?.code === "PT409") throw new ApiError(error.message, 409);
   checkDb(error, "Could not save squad");
@@ -99,8 +102,8 @@ export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {
   if (!row?.id || !row.updated_at || row.league_id !== id || row.profile_id !== membership.profileId
       || row.formation !== input.formation || row.captain_id !== input.captainId || row.vice_captain_id !== input.viceCaptainId
       || Boolean(row.completed_at) !== complete || !Array.isArray(entries) || entries.length !== ids.length
-      || !input.entries.every((e) => {
-        const stored = saved.get(e.playerId);
+      || !players.every((e) => {
+        const stored = saved.get(e.id);
         return stored?.id && stored.squad_id === row.id && stored.slot === e.slot && stored.order === e.order;
       })) throw new ApiError("The saved squad could not be confirmed. Reload before retrying.", 409);
 

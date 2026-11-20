@@ -3,14 +3,14 @@
 import { useMemo, useState } from "react";
 import { Check, Plus } from "lucide-react";
 import { Avatar, Button, ErrorNote, Modal, Skeleton } from "./ui";
-import { POSITIONS, type Position } from "@/lib/domain";
+import { canSelectPlayer, POSITIONS, type Position } from "@/lib/domain";
 import { filterSquadPool, type PlayerPool, type PoolPlayer } from "@/lib/squad";
 
 export const fieldClass = "min-w-0 rounded-md border border-line bg-pitch-900 px-3 py-2.5 text-sm text-chalk";
 const PAGE = 30;
 
-export function SquadPicker({ title, allowed, selected, pool, error, reload, onPick, onClose }: {
-  title: string; allowed: readonly Position[]; selected: ReadonlySet<string>; pool: PlayerPool | null;
+export function SquadPicker({ title, allowed, selected, pool, error, reload, onPick, onClose, replacement = false }: {
+  replacement?: boolean; title: string; allowed: readonly Position[]; selected: ReadonlySet<string>; pool: PlayerPool | null;
   error: string | null; reload: () => void; onPick: (player: PoolPlayer) => void; onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -19,7 +19,7 @@ export function SquadPicker({ title, allowed, selected, pool, error, reload, onP
   const [sort, setSort] = useState<"name" | "reverse" | "team">("name");
   const [limit, setLimit] = useState(PAGE);
   const teams = useMemo(() => new Map(pool?.teams.map((t) => [t.id, t.name])), [pool]);
-  const eligible = useMemo(() => (pool?.players ?? []).filter((p) => allowed.includes(p.position)), [pool, allowed]);
+  const eligible = useMemo(() => (pool?.players ?? []).filter((p) => allowed.includes(p.position) && (!replacement || (!selected.has(p.id) && canSelectPlayer(p)))), [pool, allowed, replacement, selected]);
   const matches = useMemo(() => filterSquadPool(eligible, teams, search, position, team, sort), [eligible, teams, search, position, team, sort]);
   return (
     <Modal open title={title} onClose={onClose}>
@@ -41,7 +41,7 @@ export function SquadPicker({ title, allowed, selected, pool, error, reload, onP
       {error ? <ErrorNote message={error} onRetry={reload} /> : !pool ? <Skeleton className="h-40" /> : (
         <>
           <p className="mb-2 text-xs text-sage" aria-live="polite">{matches.length} matching players</p>
-          {matches.length === 0 && <p className="py-4 text-sm text-sage">No eligible players match these filters. Change the filters or close the picker and try a different formation.</p>}
+          {matches.length === 0 && <p className="py-4 text-sm text-sage">{replacement ? "No available, unselected players of this position match the filters." : "No eligible players match these filters. Try clearing the search or team filter."}</p>}
           <ul className="max-h-[48dvh] space-y-1 overflow-y-auto overscroll-contain">
             {matches.slice(0, limit).map((p) => {
               const picked = selected.has(p.id);

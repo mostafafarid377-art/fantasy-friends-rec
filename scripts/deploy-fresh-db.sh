@@ -5,7 +5,7 @@
 # Usage: DATABASE_URL="postgres://user:pass@host:5432/dbname" ./scripts/deploy-fresh-db.sh
 #
 # This script:
-#   1. Applies migrations 0001 through 0008 in order
+#   1. Applies migrations 0001 through 0009 in order
 #   2. Verifies all tables, RLS, functions, and grants are in place
 #   3. Does NOT connect to or modify the remote Supabase project Hagz-fantasy
 #   4. Does NOT run the legacy destructive migration (0000_destructive_removal.sql)
@@ -88,6 +88,7 @@ MIGRATIONS=(
   "0006_write_side_effects.sql"
   "0007_squad_system.sql"
   "0008_player_photos.sql"
+  "0009_bench_lineups_scoring.sql"
 )
 
 for migration in "${MIGRATIONS[@]}"; do
@@ -114,7 +115,7 @@ echo "============================================================"
 EXPECTED_TABLES=(
   "profiles" "leagues" "league_members" "league_standings" "league_activity"
   "teams" "players" "fantasy_squads" "fantasy_squad_players" "real_matches"
-  "match_lineups" "match_events" "match_substitutions" "match_approvals"
+  "match_lineups" "match_events" "match_substitutions" "match_approvals" "match_scoring_receipts"
   "scoring_rules" "player_match_points" "manager_points" "fantasy_points_history"
   "notifications" "audit_logs" "mutation_ops" "invitations" "fantasy_fixtures"
 )
@@ -189,7 +190,7 @@ echo "============================================================"
 echo "Fresh database deployment COMPLETE"
 echo "============================================================"
 echo ""
-echo "All migrations applied in order: 0001 through 0008"
+echo "All migrations applied in order: 0001 through 0009"
 echo "All tables created, RLS enabled, RPC grants in place."
 echo ""
 echo "Next steps:"

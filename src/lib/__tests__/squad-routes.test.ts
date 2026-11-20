@@ -31,7 +31,7 @@ beforeEach(() => {
   squad = null;
   db.getUser.mockResolvedValue({ data: { user: { id: "me" } }, error: null });
   db.from.mockImplementation((table: string) => query(({ league_members: membershipRow, players, fantasy_squads: squad } as Record<string, unknown>)[table], table));
-  db.rpc.mockResolvedValue({ data: receipt, error: null });
+  db.rpc.mockImplementation(async (name) => ({ data: name === "recent_fantasy_substitutions" ? [] : receipt, error: null }));
 });
 
 describe("league squad route", () => {
@@ -40,7 +40,7 @@ describe("league squad route", () => {
     expect(await res.json()).toMatchObject({ squad: null, players: [], rules: { squadSize: 8, subsCount: 2 } });
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "league_id", "league-a");
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "profile_id", "me");
-    expect(db.rpc).not.toHaveBeenCalled();
+    expect(db.rpc).toHaveBeenCalledExactlyOnceWith("recent_fantasy_substitutions", { p_league: "league-a" });
   });
 
   it("returns a kept draft and its full-precision revision from the same read", async () => {

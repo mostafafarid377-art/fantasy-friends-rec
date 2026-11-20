@@ -47,6 +47,10 @@ export const SCORING_CATEGORIES: ScoringCategory[] = [
 export const MATCH_STATUSES = ["draft", "pending", "approved", "rejected"];
 export type MatchStatus = (typeof MATCH_STATUSES)[number];
 
+export function canSelectPlayer(player: { status: string; availability: string }) {
+  return player.status === "active" && ["available", "doubt"].includes(player.availability);
+}
+
 export const AVAILABILITY = ["available", "doubt", "injured", "suspended"];
 
 /* ------------------------------------------------------------------ */
@@ -125,6 +129,18 @@ export function deriveFormation(rules: LeagueRules, players: Pick<SquadPlayer, "
   return allowed.find((f) => f.label === current) ?? allowed[0];
 }
 
+/** Keeper first; outfield priority is independent of starter/reserve order. */
+export function orderedBench<T extends SquadPlayer>(players: T[]): T[] {
+  return players.filter((p) => p.slot === "sub").sort((a,b) =>
+    Number(b.position === "GK") - Number(a.position === "GK") || a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export function normalizeBench<T extends SquadPlayer>(players: T[]): T[] {
+  let priority = 1;
+  const priorities = new Map(orderedBench(players).map((p) => [p.id, p.position === "GK" ? 0 : priority++]));
+  return players.map((p) => p.slot === "sub" ? { ...p, order: priorities.get(p.id)! } : p);
+}
+
 export function validateSquadDraft(rules: LeagueRules, players: SquadPlayer[], opts: SquadOptions): ValidationResult {
   const errors: string[] = [];
   const caps = squadCaps(rules);
@@ -137,6 +153,11 @@ export function validateSquadDraft(rules: LeagueRules, players: SquadPlayer[], o
     if (players.filter((p) => p.slot === slot).length > caps[slot]) {
       errors.push(`At most ${caps[slot]} ${slot === "sub" ? "substitutes" : `${slot}s`} are allowed.`);
     }
+  }
+  const bench = orderedBench(players);
+  if (bench.filter((p) => p.position === "GK").length > 1) errors.push("Only one goalkeeper is allowed on the bench.");
+  if (bench.filter((p) => p.position !== "GK").length > Math.max(0, rules.subsCount - 1)) {
+    errors.push("The first bench spot is reserved for a goalkeeper.");
   }
   const gks = starters.filter((p) => p.position === "GK").length;
   if (gks > 1 || (starters.length === rules.starters && gks !== 1)) errors.push("The starting lineup must have exactly one goalkeeper when full.");
@@ -208,6 +229,8 @@ export function validateLineup(
   subs: { position: Position }[],
 ): ValidationResult {
   const errors: string[] = [];
+  if (rules.starters !== (rules.format === "5v5" ? 5 : 7))
+    errors.push("The league's starter count does not match its format.");
   if (starters.length !== rules.starters)
     errors.push(
       `Team must start exactly ${rules.starters} players (has ${starters.length}).`,

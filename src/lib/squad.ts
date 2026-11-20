@@ -4,11 +4,15 @@ import type { playerDto, teamDto } from "./roster";
 export type PoolPlayer = ReturnType<typeof playerDto>;
 export type PlayerPool = { players: PoolPlayer[]; teams: ReturnType<typeof teamDto>[] };
 export type SquadEntry = SquadPlayer & Pick<PoolPlayer, "photoUrl" | "shirtNumber" | "availability" | "status" | "teamId">;
+export type AutoSubReport = { matchId: string; title: string; substitutions: {
+  outId: string; outName: string; inId: string; inName: string; position: Position; priority: number;
+}[] };
 export type SquadResponse = {
   squad: { id: string; formation: string; captainId: string | null; viceCaptainId: string | null; completedAt: string | null; updatedAt: string } | null;
   players: SquadEntry[];
   rules: LeagueRules;
   vicePolicy: string;
+  recentSubs?: AutoSubReport[];
 };
 
 export function filterSquadPool<T extends Pick<PoolPlayer, "fullName" | "position" | "teamId">>(

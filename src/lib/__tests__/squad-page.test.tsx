@@ -28,7 +28,9 @@ const player = (id: string, fullName: string, position: PoolPlayer["position"], 
 const pool = [player("gk-a", "Ada Keeper", "GK", red.id), player("gk-b", "Zed Keeper", "GK", red.id),
   player("gk-c", "Bert Keeper", "GK", blue.id), player("gk-x", "Archived Keeper", "GK", blue.id, "archived"),
   player("def-a", "Dana Defender", "DEF", blue.id), player("mid-a", "Moe Midfielder", "MID", red.id),
-  player("fwd-a", "Finn Forward", "FWD", blue.id)];
+  player("fwd-a", "Finn Forward", "FWD", blue.id),
+  player("def-b", "Dee Defender", "DEF"), player("mid-b", "Max Midfielder", "MID"), player("fwd-b", "Fay Forward", "FWD"),
+  { ...player("def-x", "Injured Defender", "DEF"), availability: "injured" }];
 const empty = (l: SessionLeague): SquadResponse => ({ squad: null, players: [], vicePolicy: "auto_captain",
   rules: { format: l.format, starters: l.starters, subsCount: l.subsCount, squadSize: l.starters + 2 } });
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
@@ -84,43 +86,73 @@ describe("squad screen HTTP contract", () => {
     fireEvent.change(dialog().getByRole("searchbox"), { target: { value: "Bert" } });
     fireEvent.click(dialog().getByRole("button", { name: /Bert Keeper/ }));
     click(/Bert Keeper, GK/); click("Make captain");
-    click("Add sub");
+    click("Pick bench goalkeeper");
     expect((await dialog().findByRole("button", { name: /Bert Keeper.*Selected/ }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(dialog().getByRole("button", { name: /Moe Midfielder/ }));
+    fireEvent.click(dialog().getByRole("button", { name: /Zed Keeper/ }));
     fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]);
     expect(await screen.findByText("Squad draft saved.")).toBeTruthy();
     expect(put).toHaveBeenCalledWith(a.id, expect.objectContaining({ captainId: "gk-c", entries: expect.arrayContaining([
-      expect.objectContaining({ playerId: "mid-a", slot: "sub" }),
+      expect.objectContaining({ playerId: "gk-b", slot: "sub", order: 0 }),
     ]) }));
     page.unmount();
     renderInShell();
     expect(await screen.findByRole("button", { name: "Bert Keeper, GK, captain" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Moe Midfielder/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
   });
 
-  it("reshapes cross-position replacement, offers valid swaps, and cancels local changes", async () => {
+  it.each([
+    ["GK", "Ada Keeper", "Zed Keeper", "gk-b", 0],
+    ["DEF", "Dana Defender", "Dee Defender", "def-b", 1],
+    ["MID", "Moe Midfielder", "Max Midfielder", "mid-b", 2],
+    ["FWD", "Finn Forward", "Fay Forward", "fwd-b", 3],
+  ])("replaces %s with only eligible same-position players and persists in the same slot", async (pos, oldName, newName, newId, order) => {
     const { put, saved } = fixture();
-    const entry = (index: number, slot: "starter" | "sub", order: number) => ({ ...pool[index], name: pool[index].fullName, slot, order });
+    const players = [0,4,5,6,2].map((index, i) => ({ ...pool[index], name: pool[index].fullName,
+      slot: (i === 4 ? "sub" : "starter") as "sub" | "starter", order: i === 4 ? 0 : i }));
     saved.set(a.id, { ...empty(a), squad: { id: "existing", formation: "1-2-1", captainId: "gk-a", viceCaptainId: "def-a",
-      updatedAt: "2026-11-19T01:02:03Z", completedAt: null }, players: [entry(0,"starter",0), entry(4,"starter",1), entry(5,"sub",0)] });
-    renderInShell();
+      updatedAt: "2026-11-19T01:02:03Z", completedAt: null }, players });
+    const page = renderInShell();
     fireEvent.click(await screen.findByRole("button", { name: "Edit squad" }));
-    click(/Ada Keeper, GK/); click("Move to bench");
-    expect(dialog().getByText("A starting goalkeeper can only swap with another goalkeeper.")).toBeTruthy();
-    expect((dialog().getByRole("button", { name: /Swap with Moe/ }) as HTMLButtonElement).disabled).toBe(true);
-    click("Back to player actions"); click("Close dialog");
-    click(/Dana Defender, DEF/); click("Replace player");
-    const replacement = await dialog().findByRole("button", { name: /Finn Forward/ });
-    expect(dialog().queryByRole("button", { name: /Ada Keeper/ })).toBeNull();
-    // A full cross-position change is also covered in the domain and SQL suites.
-    fireEvent.change(screen.getByRole("combobox", { name: "Formation" }), { target: { value: "4-0-0" } });
-    fireEvent.click(replacement);
-    expect(await screen.findByRole("button", { name: /Finn Forward, FWD/ })).toBeTruthy();
-    expect((screen.getByRole("combobox", { name: "Formation" }) as HTMLSelectElement).value).not.toBe("4-0-0");
-    expect(screen.getByText(/Captaincy was cleared/)).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "Cancel" })[0]);
-    expect(await screen.findByRole("button", { name: /Dana Defender, DEF, vice-captain/ })).toBeTruthy();
-    expect(put).not.toHaveBeenCalled();
+    click(new RegExp(`${oldName}, ${pos}`)); click("Replace player");
+    const replacement = await dialog().findByRole("button", { name: new RegExp(newName) });
+    for (const p of pool.filter((p) => p.fullName !== newName)) expect(dialog().queryByRole("button", { name: new RegExp(p.fullName) })).toBeNull();
+    fireEvent.change(dialog().getByRole("searchbox"), { target: { value: "does-not-exist" } });
+    expect(dialog().getByText(/No available, unselected players/)).toBeTruthy();
+    fireEvent.change(dialog().getByRole("searchbox"), { target: { value: "" } });
+    expect(replacement.textContent).toContain(pos);
+    fireEvent.click(dialog().getByRole("button", { name: new RegExp(newName) }));
+    expect((screen.getByRole("combobox", { name: "Formation" }) as HTMLSelectElement).value).toBe("1-2-1");
+    fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]);
+    expect(await screen.findByText("Squad draft saved.")).toBeTruthy();
+    expect(put).toHaveBeenCalledWith(a.id, expect.objectContaining({ formation: "1-2-1", entries: expect.arrayContaining([
+      { playerId: newId, slot: "starter", order }, ...players.filter((p) => p.name !== oldName).map((p) => ({ playerId: p.id, slot: p.slot, order: p.order })),
+    ]) }));
+    page.unmount(); renderInShell();
+    expect(await screen.findByRole("button", { name: new RegExp(`${newName}, ${pos}`) })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: new RegExp(`${oldName}, ${pos}`) })).toBeNull();
+  });
+
+  it("keeps the bench keeper first and persists outfield priority plus a finalized substitution report", async () => {
+    const { saved, put } = fixture();
+    const players = [0,1,5,6].map((index, i) => ({ ...pool[index], name: pool[index].fullName,
+      slot: (i ? "sub" : "starter") as "sub" | "starter", order: i ? i - 1 : 0 }));
+    const data = { ...empty(a), rules: { ...empty(a).rules, subsCount: 3, squadSize: 10 }, players,
+      squad: { id: "saved", formation: "1-2-1", captainId: null, viceCaptainId: null, updatedAt: "2026-11-19T01:02:03Z", completedAt: null },
+      recentSubs: [{ matchId: "m1", title: "Previous match", substitutions: [{ outId: "gk-a", inId: "gk-b", outName: "Ada Keeper", inName: "Zed Keeper", position: "GK" as const, priority: 0 }] }] };
+    saved.set(a.id, data);
+    const page = renderInShell();
+    await screen.findByText("Recent automatic substitutions");
+    expect(screen.getByText("replaced").parentElement?.textContent).toBe("Zed Keeper replaced Ada Keeper");
+    click("Edit squad"); click("Raise Finn Forward priority");
+    fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]);
+    await screen.findByText("Squad draft saved.");
+    expect(put).toHaveBeenCalledWith(a.id, expect.objectContaining({ entries: expect.arrayContaining([
+      { playerId: "gk-b", slot: "sub", order: 0 }, { playerId: "fwd-a", slot: "sub", order: 1 }, { playerId: "mid-a", slot: "sub", order: 2 },
+    ]) }));
+    page.unmount(); renderInShell();
+    await screen.findByRole("region", { name: "Starting lineup" });
+    const rows = within(screen.getByRole("region", { name: "Starting lineup" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining("Zed Keeper"), expect.stringContaining("Finn Forward"), expect.stringContaining("Moe Midfielder")]);
   });
 
   it("switches leagues without carrying edits or creating squads and remembers the choice", async () => {
