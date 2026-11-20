@@ -1,5 +1,7 @@
 "use client";
 
+import { RealTeamName } from "@/components/TeamLogo";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Swords } from "lucide-react";
@@ -8,7 +10,7 @@ import { Button, ErrorNote, Field, Panel, Select, Skeleton, Slate, TextInput, To
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
 import { api, assertConfirmed, useApi } from "@/lib/client/api";
 
-type Team = { id: string; name: string };
+type Team = { id: string; name: string; crestUrl?: string | null };
 type Fixture = { id: string; title: string; gameweek: number };
 
 export default function NewMatchPage() {
@@ -136,6 +138,10 @@ export default function NewMatchPage() {
             </Field>
           </div>
 
+          {(teamA || teamB) && <div className="flex flex-wrap gap-3 text-sm text-chalk">{[teamA, teamB].filter(Boolean).map((id, index) => {
+            const team = teams.data?.teams.find((t) => t.id === id);
+            return team ? <RealTeamName key={`${id}:${index}`} name={team.name} logo={team.crestUrl} /> : null;
+          })}</div>}
           {teamA && teamA === teamB && (
             <p className="text-[13px] text-card-r">A team cannot play itself.</p>
           )}

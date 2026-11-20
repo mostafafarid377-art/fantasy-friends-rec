@@ -2,6 +2,7 @@
 
 import { useDeferredValue, useMemo, useState } from "react";
 import { Archive, Pencil, Plus, ShieldAlert, UserSquare2 } from "lucide-react";
+import { RealTeamName } from "@/components/TeamLogo";
 import { PageHeader } from "@/components/AppShell";
 import {
   Avatar,
@@ -38,7 +39,7 @@ type Player = {
   description: string | null;
 };
 
-type Team = { id: string; leagueId: string; name: string };
+type Team = { id: string; leagueId: string; name: string; crestUrl?: string | null };
 type Data = { players: Player[]; teams: Team[]; total: number };
 const PLAYER_BATCH = 50;
 
@@ -84,6 +85,8 @@ export default function PlayersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [teamModal, setTeamModal] = useState(false);
   const [teamName, setTeamName] = useState("");
+  const [logoChange, setLogoChange] = useState<PhotoChange>(KEEP_PHOTO);
+  const [logoPreparing, setLogoPreparing] = useState(false);
   const [teamEditing, setTeamEditing] = useState<string | null>(null);
   const [managingTeams, setManagingTeams] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
@@ -185,9 +188,10 @@ export default function PlayersPage() {
   };
 
   const saveTeam = async () => {
-    if (!league || teamName.trim().length < 2) return;
+    if (!league || saving || logoPreparing || teamName.trim().length < 2) return;
     setSaving(true);
     setTeamError(null);
+    let metadataSaved = false;
     try {
       const base = `/api/leagues/${league.id}/teams`;
       const res = await api<{ team: Team }>(teamEditing ? `${base}/${teamEditing}` : base, {
@@ -195,15 +199,29 @@ export default function PlayersPage() {
         body: { name: teamName.trim() },
         idempotent: !teamEditing,
       });
-      const saved = assertConfirmed(res?.team, "The saved team could not be confirmed", league.id);
+      let saved = assertConfirmed(res?.team, "The saved team could not be confirmed", league.id);
       if ((teamEditing && saved.id !== teamEditing) || saved.name !== teamName.trim()) throw new Error("The team name could not be confirmed");
-      setData((old) => old ? { ...old, teams: [...old.teams.filter((t) => t.id !== saved.id), saved]
+      const updateTeam = (team: Team) => setData((old) => old ? { ...old, teams: [...old.teams.filter((t) => t.id !== team.id), team]
         .sort((a, b) => a.name.localeCompare(b.name)) } : old);
+      updateTeam(saved);
+      metadataSaved = true;
+      if (logoChange.kind === "upload" || (logoChange.kind === "remove" && saved.crestUrl)) {
+        setTeamEditing(saved.id);
+        const path = `${base}/${encodeURIComponent(saved.id)}/logo`;
+        const result = await api<{ team: Team }>(path, logoChange.kind === "upload"
+          ? { method: "POST", body: logoChange.blob } : { method: "DELETE" });
+        const updated = assertConfirmed(result?.team, "The team logo change could not be confirmed", league.id);
+        if (updated.id !== saved.id || (logoChange.kind === "upload" ? !updated.crestUrl?.startsWith(`${path}?v=`) : updated.crestUrl !== null)) throw new Error("The saved logo did not match");
+        saved = updated;
+        updateTeam(saved);
+      }
+      notifyLeagueContentChanged(league.id);
+      setLogoChange(KEEP_PHOTO);
       setTeamName("");
       setTeamModal(false);
       setToast({ message: teamEditing ? "Team renamed" : "Team added", tone: "ok" });
     } catch (err) {
-      setTeamError(err instanceof Error ? err.message : "Could not save team");
+      setTeamError(`${metadataSaved ? "Team details were saved, but the logo change was not confirmed. " : ""}${err instanceof Error ? err.message : "Could not save team"}`);
     } finally {
       setSaving(false);
     }
@@ -241,7 +259,7 @@ export default function PlayersPage() {
         actions={
           isLeader ? (
             <>
-              <Button variant="outline" onClick={() => { setTeamEditing(null); setTeamName(""); setTeamError(null); setTeamModal(true); }}>Add team</Button>
+              <Button variant="outline" onClick={() => { setLogoChange(KEEP_PHOTO); setLogoPreparing(false); setTeamEditing(null); setTeamName(""); setTeamError(null); setTeamModal(true); }}>Add team</Button>
               {!!data?.teams.length && <Button variant="outline" onClick={() => setManagingTeams(true)}>Manage teams</Button>}
               <Button
                 onClick={() => {
@@ -325,7 +343,7 @@ export default function PlayersPage() {
                 <div className="num mt-0.5 flex flex-wrap gap-2 text-[11.5px] uppercase tracking-[0.1em] text-sage-dim">
                   <span className="text-green-glow/80">{p.position}</span>
                   <span>#{p.shirtNumber ?? "—"}</span>
-                  <span className="normal-case tracking-normal">{teamNameOf(p.teamId)}</span>
+                  <span className="normal-case tracking-normal"><RealTeamName name={teamNameOf(p.teamId)} logo={data?.teams.find((t) => t.id === p.teamId)?.crestUrl} /></span>
                 </div>
               </button>
 
@@ -449,24 +467,26 @@ export default function PlayersPage() {
 
       <Modal open={managingTeams} onClose={() => setManagingTeams(false)} title="Manage real teams" width="max-w-sm">
         <ul className="space-y-2">{data?.teams.map((t) => <li key={t.id} className="flex items-center justify-between gap-2 rounded border border-line p-2 text-sm text-chalk">
-          <span className="min-w-0 break-words">{t.name}</span>
+          <span className="min-w-0 break-words"><RealTeamName name={t.name} logo={t.crestUrl} /></span>
           <Button variant="outline" size="sm" onClick={() => {
-            setTeamEditing(t.id); setTeamName(t.name); setTeamError(null); setManagingTeams(false); setTeamModal(true);
+            setLogoChange(KEEP_PHOTO); setLogoPreparing(false); setTeamEditing(t.id); setTeamName(t.name); setTeamError(null); setManagingTeams(false); setTeamModal(true);
           }}>Rename</Button>
         </li>)}</ul>
       </Modal>
-      <Modal open={teamModal} onClose={() => { if (!saving) setTeamModal(false); }} title={teamEditing ? "Rename real team" : "Add a real team"} width="max-w-sm">
+      <Modal open={teamModal} onClose={() => { if (!saving) setTeamModal(false); }} title={teamEditing ? "Edit real team" : "Add a real team"} width="max-w-sm">
         <div className="space-y-4">
           {teamError && <div role="alert"><ErrorNote message={teamError} /></div>}
           <Field label="Team name">
             <TextInput maxLength={50} disabled={saving} value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Saturday Reds" />
           </Field>
+          <PlayerPhotoField logo name={teamName} current={data?.teams.find((t) => t.id === teamEditing)?.crestUrl ?? null} change={logoChange}
+            onChange={setLogoChange} disabled={saving} onPreparing={setLogoPreparing} />
           <div className="flex justify-end gap-2.5">
             <Button variant="ghost" disabled={saving} onClick={() => setTeamModal(false)}>
               Cancel
             </Button>
-            <Button onClick={saveTeam} loading={saving} disabled={teamName.trim().length < 2}>
-              {teamEditing ? "Save team name" : "Add team"}
+            <Button onClick={saveTeam} loading={saving} disabled={teamName.trim().length < 2 || logoPreparing}>
+              {teamEditing ? "Save team" : "Add team"}
             </Button>
           </div>
         </div>
@@ -490,7 +510,7 @@ export default function PlayersPage() {
             <dl className="mt-5 space-y-2.5 border-t border-line pt-4 text-[14px]">
               <div className="flex justify-between">
                 <dt className="slate">Team</dt>
-                <dd className="text-chalk">{teamNameOf(detail.teamId)}</dd>
+                <dd className="text-chalk"><RealTeamName name={teamNameOf(detail.teamId)} logo={data?.teams.find((t) => t.id === detail.teamId)?.crestUrl} /></dd>
               </div>
               <div className="flex justify-between">
                 <dt className="slate">Availability</dt>

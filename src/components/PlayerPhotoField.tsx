@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, ImagePlus } from "lucide-react";
 import { Avatar, Button, Field, TextInput } from "./ui";
+import { TeamLogo } from "./TeamLogo";
+import { TEAM_LOGO_EDGE, TEAM_LOGO_LIMIT } from "@/lib/team-logo";
 import { PHOTO_EDGE, PHOTO_MAX_BYTES } from "@/lib/player-photo";
 
 export type PhotoChange = { kind: "keep" | "remove" } | { kind: "upload"; blob: Blob } | { kind: "link"; url: string };
 export const KEEP_PHOTO: PhotoChange = { kind: "keep" };
 
-async function optimize(file: File) {
+async function optimize(file: File, logo: boolean) {
   if (!file.size || file.size > 25 * 1024 * 1024) throw new Error("Choose a photo under 25 MB.");
   if (file.type && !/^image\/(jpeg|png|webp|heic|heif|avif)$/i.test(file.type)) {
     throw new Error("Choose a JPEG, PNG, WebP, AVIF or a supported phone photo.");
@@ -22,20 +24,26 @@ async function optimize(file: File) {
     const crop = Math.min(image.naturalWidth, image.naturalHeight);
     const edge = Math.min(PHOTO_EDGE, crop);
     const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = edge;
-    const ctx = canvas.getContext("2d", { alpha: false });
+    const scale = Math.min(1, TEAM_LOGO_EDGE / Math.max(image.naturalWidth, image.naturalHeight));
+    canvas.width = logo ? Math.max(1, Math.round(image.naturalWidth * scale)) : edge;
+    canvas.height = logo ? Math.max(1, Math.round(image.naturalHeight * scale)) : edge;
+    const ctx = canvas.getContext("2d", { alpha: logo });
     if (!ctx) throw new Error("This device couldn’t prepare the image.");
-    ctx.fillStyle = "#f4f7f5";
-    ctx.fillRect(0, 0, edge, edge);
-    ctx.drawImage(image, (image.naturalWidth - crop) / 2, (image.naturalHeight - crop) / 2, crop, crop, 0, 0, edge, edge);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.84));
-    if (!blob?.size || blob.size > PHOTO_MAX_BYTES) throw new Error("The photo could not be compressed. Try a smaller image.");
+    if (logo) ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    else {
+      ctx.fillStyle = "#f4f7f5";
+      ctx.fillRect(0, 0, edge, edge);
+      ctx.drawImage(image, (image.naturalWidth - crop) / 2, (image.naturalHeight - crop) / 2, crop, crop, 0, 0, edge, edge);
+    }
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, logo ? "image/webp" : "image/jpeg", 0.84));
+    if (!blob?.size || blob.size > (logo ? TEAM_LOGO_LIMIT : PHOTO_MAX_BYTES)) throw new Error("The photo could not be compressed. Try a smaller image.");
     return blob;
   } finally { URL.revokeObjectURL(source); }
 }
 
-export function PlayerPhotoField({ name, current, change, onChange, disabled, onPreparing }: {
+export function PlayerPhotoField({ name, current, change, onChange, disabled, onPreparing, logo = false }: {
   name: string; current: string | null; change: PhotoChange; onChange: (change: PhotoChange) => void;
+  logo?: boolean;
   disabled: boolean; onPreparing: (busy: boolean) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +63,7 @@ export function PlayerPhotoField({ name, current, change, onChange, disabled, on
     const serial = ++request.current;
     setError(null); setBusy(true); onPreparing(true);
     try {
-      const optimized = await optimize(file);
+      const optimized = await optimize(file, logo);
       if (request.current === serial) onChange({ kind: "upload", blob: optimized });
     } catch (err) {
       if (request.current === serial) setError(err instanceof Error ? err.message : "Could not prepare this photo.");
@@ -75,9 +83,9 @@ export function PlayerPhotoField({ name, current, change, onChange, disabled, on
   );
   return (
     <fieldset className="min-w-0 rounded-lg border border-line p-3">
-      <legend className="px-1 text-sm font-semibold text-chalk">Player photo</legend>
+      <legend className="px-1 text-sm font-semibold text-chalk">{logo ? "Team logo" : "Player photo"}</legend>
       <div className="flex flex-wrap items-center gap-3">
-        <Avatar name={name || "Player"} url={src} size={60} />
+        {logo ? <TeamLogo url={src} size={60} /> : <Avatar name={name || "Player"} url={src} size={60} />}
         <div className="flex flex-wrap gap-2">{input(false)}{input(true)}</div>
       </div>
       {busy && <p role="status" className="mt-2 text-sm text-sage">Preparing photo…</p>}
@@ -86,11 +94,11 @@ export function PlayerPhotoField({ name, current, change, onChange, disabled, on
       {change.kind === "remove" && <p className="mt-2 text-xs text-sage">Photo will be removed when you save.</p>}
       <div className="mt-2 flex flex-wrap gap-1">
         {(current || change.kind === "upload" || change.kind === "link") && change.kind !== "remove" &&
-          <Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => { setError(null); onChange(current ? { kind: "remove" } : KEEP_PHOTO); }}>Remove photo</Button>}
-        {change.kind !== "keep" && <Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => { setError(null); onChange(KEEP_PHOTO); }}>Undo photo change</Button>}
-        {change.kind !== "link" && <Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => { setError(null); onChange({ kind: "link", url: current?.startsWith("http") ? current : "" }); }}>Use image link</Button>}
+          <Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => { setError(null); onChange(current ? { kind: "remove" } : KEEP_PHOTO); }}>Remove {logo ? "logo" : "photo"}</Button>}
+        {change.kind !== "keep" && <Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => { setError(null); onChange(KEEP_PHOTO); }}>Undo {logo ? "logo" : "photo"} change</Button>}
+        {!logo && change.kind !== "link" && <Button size="sm" variant="ghost" disabled={disabled || busy} onClick={() => { setError(null); onChange({ kind: "link", url: current?.startsWith("http") ? current : "" }); }}>Use image link</Button>}
       </div>
-      {change.kind === "link" && <Field label="Photo URL" hint="Use a full http or https image link.">
+      {!logo && change.kind === "link" && <Field label="Photo URL" hint="Use a full http or https image link.">
         <TextInput type="url" placeholder="https://…" disabled={disabled} value={change.url} onChange={(e) => onChange({ kind: "link", url: e.target.value })} />
       </Field>}
     </fieldset>

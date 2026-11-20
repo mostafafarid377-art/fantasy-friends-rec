@@ -9,7 +9,7 @@ const params = Promise.resolve({ id: "league-a", playerId: "player-a" });
 const request = (query = "") => new NextRequest(`http://local.test/${query}`);
 const filters = vi.fn();
 let member: object | null, player: object | null;
-const profile = { full_name: "Keeper", position: "GK", photo_url: "https://example.com/photo.jpg", teams: { name: "Home" } };
+const profile = { full_name: "Keeper", position: "GK", photo_url: "https://example.com/photo.jpg", teams: { id: "home", name: "Home", crest_url: "https://example.com/home.webp" } };
 const date = "2026-11-19T12:34:56.012345+00:00";
 beforeEach(() => {
   vi.resetAllMocks();
@@ -36,22 +36,22 @@ it("batches selected player IDs, keeps null distinct from zero and separates cap
 it("returns the scoped profile and first 20 finalized rows, preserving event breakdown and cursor precision", async () => {
   const breakdown = [{ category: "penalty_saved", count: 1, pointsPer: 5, points: 5 }];
   db.rpc.mockResolvedValue({ data: Array.from({ length: 21 }, (_, i) => ({ match_id: `match-${i}`, title: `Match ${i}`, kick_off: date,
-    gameweek: i, opponent: "Visitors", participation: i ? "did_not_play" : "played", points: i ? null : "5.00", breakdown: i ? null : breakdown })), error: null });
+    gameweek: i, opponent: "Visitors", opponent_id: "away", opponent_crest: "https://example.com/away.webp", participation: i ? "did_not_play" : "played", points: i ? null : "5.00", breakdown: i ? null : breakdown })), error: null });
   const res = await performance(request(), { params });
   const json = await res.json();
   expect(res.headers.get("cache-control")).toBe("private, no-store");
   expect(filters).toHaveBeenCalledWith("players", "league_id", "league-a");
   expect(filters).toHaveBeenCalledWith("players", "id", "player-a");
-  expect(json.player).toEqual({ name: profile.full_name, team: "Home", position: "GK", photoUrl: profile.photo_url });
+  expect(json.player).toEqual({ name: profile.full_name, team: "Home", teamLogo: "https://example.com/home.webp", position: "GK", photoUrl: profile.photo_url });
   expect(json.games).toHaveLength(20);
-  expect(json.games[0]).toEqual({ matchId: "match-0", title: "Match 0", kickOff: date, gameweek: 0, opponent: "Visitors",
+  expect(json.games[0]).toEqual({ matchId: "match-0", title: "Match 0", kickOff: date, gameweek: 0, opponent: "Visitors", opponentLogo: "https://example.com/away.webp",
     participation: "played", points: 5, breakdown: [{ ...breakdown[0], label: "Penalty saved" }] });
   expect(json.games[1]).toMatchObject({ participation: "did_not_play", points: null, breakdown: [] });
   expect(json.next).toEqual({ kickOff: date, matchId: "match-19" });
   db.rpc.mockResolvedValue({ data: [], error: null });
   const query = new URLSearchParams({ before: json.next.kickOff, match: json.next.matchId });
   expect(await (await performance(request(`?${query}`), { params })).json()).toMatchObject({ games: [], next: null });
-  expect(db.rpc).toHaveBeenLastCalledWith("player_finalized_games", { p_league: "league-a", p_player: "player-a", p_limit: 21,
+  expect(db.rpc).toHaveBeenLastCalledWith("player_finalized_games_with_logos", { p_league: "league-a", p_player: "player-a", p_limit: 21,
     p_before_kickoff: date, p_before_match: "match-19" });
   expect((await performance(request("?before=invalid"), { params })).status).toBe(422);
 });

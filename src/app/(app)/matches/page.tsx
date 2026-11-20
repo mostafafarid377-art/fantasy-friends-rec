@@ -1,5 +1,7 @@
 "use client";
 
+import { RealTeamName } from "@/components/TeamLogo";
+
 import { useState } from "react";
 import Link from "next/link";
 import { CalendarClock, ChevronRight, Plus, Swords } from "lucide-react";
@@ -17,7 +19,7 @@ type Match = {
   kickOff: string;
   durationMinutes: number | null;
   teamAName: string;
-  teamBName: string;
+  teamALogo?: string | null; teamBLogo?: string | null; teamBName: string;
   organizerId: string;
   rejectionReason: string | null;
   eventCount: number;
@@ -132,7 +134,7 @@ export default function MatchesPage() {
                     {m.durationMinutes != null && <span className="num text-xs text-sage">{m.durationMinutes} min</span>}
                   </div>
                   <div className="mt-2 font-display text-[21px] font-bold uppercase leading-tight text-chalk">
-                    {m.teamAName} <span className="text-green">{m.homeScore != null && m.awayScore != null ? `${m.homeScore}–${m.awayScore}` : "v"}</span> {m.teamBName}
+                    <RealTeamName name={m.teamAName} logo={m.teamALogo} /> <span className="text-green">{m.homeScore != null && m.awayScore != null ? `${m.homeScore}–${m.awayScore}` : "v"}</span> <RealTeamName name={m.teamBName} logo={m.teamBLogo} />
                   </div>
                   <div className="mt-0.5 truncate text-[13px] text-sage">{m.title}</div>
                   {m.status === "rejected" && m.rejectionReason && (

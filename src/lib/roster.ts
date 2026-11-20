@@ -1,3 +1,4 @@
+import { teamLogoUrl } from "@/lib/team-logo";
 import { playerPhotoUrl } from "@/lib/player-photo";
 import type { Position } from "@/lib/domain";
 
@@ -19,5 +20,5 @@ export function playerDto(p: PlayerRow) {
 }
 
 export function teamDto(t: { id: string; league_id: string; name: string; short_name: string | null; crest_url: string | null }) {
-  return { id: t.id, leagueId: t.league_id, name: t.name, shortName: t.short_name, crestUrl: t.crest_url };
+  return { id: t.id, leagueId: t.league_id, name: t.name, shortName: t.short_name, crestUrl: teamLogoUrl(t.crest_url, t.league_id, t.id) };
 }

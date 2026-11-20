@@ -266,7 +266,7 @@ export function PageHeader({
   actions,
 }: {
   eyebrow?: string;
-  title: string;
+  title: ReactNode;
   subtitle?: string;
   actions?: ReactNode;
 }) {

@@ -31,7 +31,7 @@ beforeEach(() => {
   squad = null;
   db.getUser.mockResolvedValue({ data: { user: { id: "me" } }, error: null });
   db.from.mockImplementation((table: string) => query(({ league_members: membershipRow, players, fantasy_squads: squad } as Record<string, unknown>)[table], table));
-  db.rpc.mockImplementation(async (name) => ({ data: name === "recent_fantasy_substitutions" ? [] : receipt, error: null }));
+  db.rpc.mockImplementation(async (name) => ({ data: name === "recent_fantasy_substitutions" ? [] : name === "ff_squad_deadline" ? { locked: false, kickOff: null, matchId: null, title: null, serverNow: revision } : receipt, error: null }));
 });
 
 describe("league squad route", () => {
@@ -40,7 +40,8 @@ describe("league squad route", () => {
     expect(await res.json()).toMatchObject({ squad: null, players: [], rules: { squadSize: 8, subsCount: 2 } });
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "league_id", "league-a");
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "profile_id", "me");
-    expect(db.rpc).toHaveBeenCalledExactlyOnceWith("recent_fantasy_substitutions", { p_league: "league-a" });
+    expect(db.rpc).toHaveBeenCalledWith("recent_fantasy_substitutions", { p_league: "league-a" });
+    expect(db.rpc).toHaveBeenCalledWith("ff_squad_deadline", { p_league: "league-a" });
   });
 
   it("returns a kept draft and its full-precision revision from the same read", async () => {
@@ -96,4 +97,11 @@ it("restricts real-team renaming to the league leader and scopes both identifier
   expect(update).toHaveBeenCalledWith({ name: "Reds" });
   expect(filters).toHaveBeenCalledWith("teams", "league_id", "league-a");
   expect(filters).toHaveBeenCalledWith("teams", "id", "team-a");
+});
+
+it("propagates the database deadline denial to a direct API caller", async () => {
+  db.rpc.mockResolvedValueOnce({ data: null, error: { code: "P0001", message: "Squad Locked: a match has started" } });
+  const result = await PUT(request("PUT", input), ctx);
+  expect(result.status).toBe(409);
+  expect((await result.json()).error).toContain("Squad Locked");
 });

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Check, Plus } from "lucide-react";
+import { RealTeamName } from "./TeamLogo";
 import { Avatar, Button, ErrorNote, Modal, Skeleton } from "./ui";
 import { canSelectPlayer, POSITIONS, type Position } from "@/lib/domain";
 import { filterSquadPool, type PlayerPool, type PoolPlayer } from "@/lib/squad";
@@ -53,7 +54,7 @@ export function SquadPicker({ title, allowed, selected, pool, error, reload, onP
                     <Avatar name={p.fullName} url={p.photoUrl} size={34} />
                     <span className="min-w-0 flex-1">
                       <span className="block break-words text-sm font-semibold text-chalk">{p.fullName}</span>
-                      <span className="block text-xs text-sage">{p.position} · {p.teamId ? (teams.get(p.teamId) ?? "Unassigned team") : "Free agent"}</span>
+                      <span className="block text-xs text-sage">{p.position} · {p.teamId ? <RealTeamName name={teams.get(p.teamId) ?? "Unassigned team"} logo={pool.teams.find((t) => t.id === p.teamId)?.crestUrl} /> : "Free agent"}</span>
                       {inactive && <span className="block text-xs text-card-y">Archived</span>}
                       {p.availability !== "available" && <span className="block text-xs capitalize text-card-y">{p.availability}</span>}
                     </span>

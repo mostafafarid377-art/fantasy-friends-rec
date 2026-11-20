@@ -1,5 +1,7 @@
 "use client";
 
+import { RealTeamName } from "./TeamLogo";
+
 import { useRef, useState, type ReactNode } from "react";
 import { api, useApi } from "@/lib/client/api";
 import { useLeagueContentUpdates } from "@/lib/client/league-updates";
@@ -61,7 +63,7 @@ export function PlayerPerformanceDialog({ leagueId, entry, latest, onClose, acti
     <div className="mb-4 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border border-line bg-pitch-900 p-3">
       <Avatar name={name} url={player ? player.photoUrl : entry.photoUrl} size={48} decorative />
       <div className="min-w-0 break-words">
-        <div className="text-sm text-chalk">{player?.position ?? entry.position}{player?.team ? ` · ${player.team}` : ""}</div>
+        <div className="text-sm text-chalk">{player?.position ?? entry.position}{player?.team && <> · <RealTeamName name={player.team} logo={player.teamLogo} /></>}</div>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-sage">Latest game <PlayerPointsLabel game={latestWithCaptain} /></div>
       </div>
     </div>
@@ -85,7 +87,7 @@ function GameDetails({ game }: { game: PlayerGame }) {
     <summary className="grid min-h-12 cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 px-3 py-2.5 marker:hidden hover:bg-pitch-800 [&::-webkit-details-marker]:hidden">
       <span className="min-w-0 break-words">
         <span className="block text-sm font-semibold text-chalk">{game.title}{game.gameweek != null ? ` · GW ${game.gameweek}` : ""}</span>
-        <span className="block text-xs text-sage"><time dateTime={game.kickOff}>{DATE.format(new Date(game.kickOff))}</time>{game.opponent ? ` · vs ${game.opponent}` : ""}</span>
+        <span className="block text-xs text-sage"><time dateTime={game.kickOff}>{DATE.format(new Date(game.kickOff))}</time>{game.opponent && <> · vs <RealTeamName name={game.opponent} logo={game.opponentLogo} /></>}</span>
         <span className="block text-xs text-sage">{PARTICIPATION[game.participation]}</span>
       </span>
       <span className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 pt-0.5">

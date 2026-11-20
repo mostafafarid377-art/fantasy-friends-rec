@@ -8,6 +8,7 @@ export type PlayerGame = LatestPlayerGame & {
   kickOff: string;
   gameweek: number | null;
   opponent: string | null;
+  opponentLogo?: string | null;
   participation: "played" | "did_not_play" | "unknown";
   breakdown: BreakdownLine[];
 };
@@ -16,7 +17,7 @@ export type PlayerHistory = {
   next: { kickOff: string; matchId: string } | null;
 };
 export type PlayerPerformance = PlayerHistory & {
-  player: { name: string; position: Position; photoUrl: string | null; team: string | null };
+  player: { name: string; position: Position; photoUrl: string | null; team: string | null; teamLogo?: string | null };
 };
 
 export function formatPlayerPoints(points: number | null | undefined) {

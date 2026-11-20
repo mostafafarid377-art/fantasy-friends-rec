@@ -1,5 +1,7 @@
 "use client";
 
+import { RealTeamName } from "@/components/TeamLogo";
+
 import { useState } from "react";
 import Link from "next/link";
 import { History as HistoryIcon } from "lucide-react";
@@ -38,7 +40,7 @@ export default function HistoryPage() {
     league ? `/api/leagues/${league.id}/standings` : null,
     [league?.id],
   );
-  const matches = useApi<{ total: number; hasMore: boolean; matches: { id: string; title: string; status: string; kickOff: string; teamAName: string; teamBName: string }[] }>(
+  const matches = useApi<{ total: number; hasMore: boolean; matches: { id: string; title: string; status: string; kickOff: string; teamAName: string; teamALogo?: string | null; teamBLogo?: string | null; teamBName: string }[] }>(
     league ? `/api/matches?leagueId=${league.id}&status=approved&page=${page}` : null,
     [league?.id],
   );
@@ -134,7 +136,7 @@ export default function HistoryPage() {
                   <Link href={`/matches/${m.id}`} className="flex items-center gap-3 py-2.5 hover:text-green">
                     <Badge tone="live">final</Badge>
                     <span className="min-w-0 flex-1 truncate text-[14px] text-chalk">
-                      {m.teamAName} v {m.teamBName}
+                      <RealTeamName name={m.teamAName} logo={m.teamALogo} /> v <RealTeamName name={m.teamBName} logo={m.teamBLogo} />
                     </span>
                     <span className="num text-[11.5px] text-sage-dim">
                       {new Date(m.kickOff).toLocaleDateString()}

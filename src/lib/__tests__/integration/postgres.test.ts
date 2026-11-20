@@ -76,7 +76,8 @@ beforeAll(async () => {
     public.profiles CASCADE;
     TRUNCATE auth.users CASCADE;`);
 
-  await sql(admin, `DROP TRIGGER IF EXISTS on_auth_user_created_ff ON auth.users`);
+  // Keep the live Auth insert trigger active while seeding deterministic fixture names.
+  await sql(admin, `ALTER TABLE auth.users ENABLE TRIGGER on_auth_user_created_ff`);
 
   await sql(admin, `
     INSERT INTO auth.users (id, email, email_confirmed_at, created_at, updated_at)
@@ -91,7 +92,7 @@ beforeAll(async () => {
     VALUES ($1, 'userA@example.com', 'usera@example.com', '', 'usera', 'User A', now(), now(), now()),
            ($2, 'userB@example.com', 'userb@example.com', '', 'userb', 'User B', now(), now(), now()),
            ($3, 'userC@example.com', 'userc@example.com', '', 'userc', 'User C', now(), now(), now())
-    ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, updated_at = now();
+    ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, username=EXCLUDED.username, display_name=EXCLUDED.display_name, updated_at = now();
   `, [userAId, userBId, userCId]);
 });
 
@@ -107,7 +108,7 @@ describe("PostgreSQL integration: schema deployment", () => {
     const required = [
       "profiles","leagues","league_members","league_standings","league_activity",
       "teams","players","fantasy_squads","fantasy_squad_players","real_matches",
-      "match_lineups","match_events","match_substitutions","match_approvals","match_scoring_receipts",
+      "match_lineups","match_events","match_substitutions","match_approvals","match_scoring_receipts","match_player_statistics",
       "scoring_rules","player_match_points","manager_points","fantasy_points_history",
       "notifications","audit_logs","mutation_ops","invitations","fantasy_fixtures",
     ];
@@ -697,7 +698,7 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       const { rows: teams } = await sql(c, "SELECT id FROM teams WHERE league_id=$1 ORDER BY id LIMIT 2", [leagueAId]);
       await setAuthUid(c, userCId);
       const id = randomUUID();
-      await sql(c, "SELECT public.create_real_match($1,$2,$3,$4,'Organizer draft',now(),null)", [id, leagueAId, teams[0].id, teams[1].id]);
+      await sql(c, "SELECT public.create_real_match($1,$2,$3,$4,'Organizer draft',now()+interval '1 hour',null)", [id, leagueAId, teams[0].id, teams[1].id]);
       await setAuthUid(c, userAId);
       const playerId = randomUUID();
       await sql(c, "INSERT INTO players(id,league_id,team_id,full_name,position,created_by) VALUES($1,$2,$3,'Event scorer','MID',$4)",
@@ -787,7 +788,7 @@ async function releaseLeague(c: PoolClient, size: number) {
   const makeMatch = async () => {
     await setAuthUid(c,userCId);
     const match = randomUUID();
-    await sql(c,"SELECT public.create_real_match($1,$2,$3,$4,'Release match',now(),null)",[match,id,home,away]);
+    await sql(c,"SELECT public.create_real_match($1,$2,$3,$4,'Release match',now()+interval '1 hour',null)",[match,id,home,away]);
     return match;
   };
   return { id, home, away, makePlayer, makeMatch };
@@ -1038,9 +1039,9 @@ describe("individual player performance (real PostgreSQL)", () => {
       await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)", [league.id, home[1], home[2], JSON.stringify(matchEntries(home.slice(0, 5), [unused]))]);
       const makeMatch = async (date: string, starters = home.slice(0, 5), bench: string[] = []) => {
         const id = await league.makeMatch();
-        await sql(admin, "UPDATE real_matches SET kick_off=$2 WHERE id=$1", [id, date]);
         await persistLineup(c, id, league.home, matchEntries(starters, bench));
         await persistLineup(c, id, league.away, matchEntries(away));
+        await sql(admin, "UPDATE real_matches SET kick_off=$2 WHERE id=$1", [id, date]);
         return id;
       };
       const finalize = async (id: string, home = 0) => {
@@ -1379,4 +1380,162 @@ it("stores a match's chosen duration atomically, rejects invalid values, and lea
     await expect(create(invalid, 60)).rejects.toMatchObject({ code: "42501" });
     expect((await sql(c, "SELECT id FROM real_matches WHERE id=$1", [invalid])).rowCount).toBe(0);
   } finally { c.release(); }
+});
+
+it("enforces both kickoff deadlines with database time, honors rescheduling, and preserves squad rows", async () => {
+  const c = await freshClient();
+  try {
+    const { league, match, home } = await recordedResultFixture(c);
+    const save = (revision: string | null) => sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS saved",
+      [league.id, home[1], home[0], revision, JSON.stringify(matchEntries(home.slice(0, 5), [home[6]]))]);
+    const deadline = async () => (await sql(c, "SELECT public.ff_squad_deadline($1) AS info", [league.id])).rows[0].info;
+    await setAuthUid(c, userBId);
+    const saved = (await save(null)).rows[0].saved;
+    await setAuthUid(c, userCId);
+    const edit = (kickOff: string, version: number) => sql(c, "SELECT public.edit_real_match_details($1,$2,$3) AS match", [match, version, JSON.stringify({ kickOff })]);
+    const { rows: [clock] } = await sql(c, "SELECT (clock_timestamp()+interval '2 hours') AT TIME ZONE 'Africa/Cairo' AS local");
+    const cairo = clock.local.toISOString().slice(0,-1) + "+02:00";
+    await edit(cairo, 1);
+    expect(Date.parse((await deadline()).kickOff)).toBe(Date.parse(cairo));
+    expect(await deadline()).toMatchObject({ locked: false, matchId: match });
+    await setAuthUid(c, userBId);
+    const revised = (await save(saved.squad.updated_at)).rows[0].saved;
+    await expect(persistLineup(c,match,league.home,matchEntries(home.slice(0, 5)))).rejects.toMatchObject({ code: "42501" });
+    // At the cutoff, use the database's wall clock, not the caller's timezone or transaction start.
+    await sql(admin, "UPDATE real_matches SET kick_off=clock_timestamp() WHERE id=$1", [match]);
+    expect(await deadline()).toMatchObject({ locked: true, matchId: match });
+    await expect(save(revised.squad.updated_at)).rejects.toThrow(/Squad Locked/);
+    await expect(sql(c,"UPDATE fantasy_squad_players SET slot='reserve' WHERE squad_id=$1",[saved.squad.id])).rejects.toMatchObject({ code:"42501" });
+    expect((await sql(c,"SELECT captain_id,vice_captain_id,formation FROM fantasy_squads WHERE id=$1",[saved.squad.id])).rows[0])
+      .toEqual({ captain_id: home[1], vice_captain_id: home[0], formation: "1-2-1" });
+    expect((await sql(c,"SELECT player_id,slot,\"order\" FROM fantasy_squad_players WHERE squad_id=$1",[saved.squad.id])).rows)
+      .toEqual(expect.arrayContaining(matchEntries(home.slice(0,5),[home[6]])));
+    await setAuthUid(c, userCId);
+    await expect(edit(cairo, 2)).rejects.toThrow(/cannot change after/);
+    await expect(persistLineup(c,match,league.home,matchEntries(home.slice(0, 5)))).rejects.toThrow(/Lineup Locked/);
+    await expect(sql(c,"SELECT public.clear_match_lineups($1)",[match])).rejects.toThrow(/Lineup Locked/);
+    const next = await league.makeMatch();
+    expect(await deadline()).toMatchObject({ locked: true, matchId: match });
+    await submitScore(c,match,1,0,2);
+    await approveScore(c,match,3);
+    expect(await deadline()).toMatchObject({ locked: false, matchId: next });
+  } finally { c.release(); }
+});
+
+it("scores per-match thresholds and three unique bonus ranks through approval and atomic statistics correction", async () => {
+  const c = await freshClient();
+  try {
+    const { league, match, home, away } = await recordedResultFixture(c);
+    await setAuthUid(c,userAId);
+    await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)", [league.id, home[0], home[1], JSON.stringify(matchEntries(home.slice(0,5),[home[6]]))]);
+    const second = await league.makeMatch();
+    await persistLineup(c,second,league.home,matchEntries(home.slice(0,5),home.slice(5)));
+    await persistLineup(c,second,league.away,matchEntries(away));
+    await sql(admin,"UPDATE real_matches SET kick_off=clock_timestamp() WHERE id=ANY($1)",[[match,second]]);
+    const stats = (saves: number, def: number, other: number) => [
+      {playerId: home[0], saves, defensiveContributions: 120},
+      ...[home[1],home[2],home[4]].map((playerId,i) => ({playerId,saves:0,defensiveContributions:i===0?def:other})),
+    ];
+    const save = (target: string, version: number, rows: unknown[], bonus: string[] | null, reason: string | null = null) => sql(c,
+      "SELECT public.save_match_statistics($1,$2,$3,$4,$5) AS result", [target,version,JSON.stringify(rows),bonus,reason]);
+    const award = [home[0],home[1],away[2]];
+    await setAuthUid(c,userBId);
+    await expect(save(match,1,stats(2,9,11),award)).rejects.toMatchObject({code:"42501"});
+    await expect(sql(c,"UPDATE match_player_statistics SET saves=99 WHERE match_id=$1",[match])).rejects.toMatchObject({code:"42501"});
+    await setAuthUid(c,userCId);
+    const outsider = await league.makePlayer("DEF",league.home,"Not in lineup");
+    for (const invalid of [[home[0],home[0],away[2]],[home[0],home[5],away[2]],[home[0],outsider,away[2]],[home[0],home[1],randomUUID()]]) {
+      await expect(save(match,1,stats(2,9,11),invalid)).rejects.toMatchObject({ code:"22023" });
+    }
+    await expect(save(match,1,[...stats(2,9,11),...stats(2,9,11)],award)).rejects.toMatchObject({ code:"22023" });
+    // A later roster change must not change the position registered on the lineup.
+    await sql(admin,"UPDATE players SET position='MID' WHERE id=$1",[home[1]]);
+    await sql(c,"SELECT public.write_match_event($1,$2,'substitution',$3)",[match,randomUUID(),
+      JSON.stringify({teamId:league.home,playerId:home[5],otherId:home[1],minute:25})]);
+    await save(match,1,stats(2,9,11),[away[2],home[5],home[1]]);
+    await save(match,2,stats(2,9,11),award);
+    await save(second,1,stats(2,9,11),[]);
+    await submitScore(c,match,1,1,3);
+    await expect(save(match,4,stats(9,10,12),award)).rejects.toThrow(/locked during review/);
+    await approveScore(c,match,4);
+    await submitScore(c,second,1,1,2);
+    await approveScore(c,second,3);
+    const extra = async (id: string) => (await sql(c,`SELECT player_id,line->>'category' AS category,(line->>'points')::int AS points
+      FROM player_match_points CROSS JOIN LATERAL jsonb_array_elements(breakdown) AS line WHERE match_id=$1
+      AND line->>'category' IN ('goalkeeper_saves','defensive_contributions','match_bonus')`,[id])).rows;
+    const initial = await extra(match);
+    expect(initial).toHaveLength(3);
+    expect(initial).toEqual(expect.arrayContaining(award.map((player_id,i) => ({ player_id,category:"match_bonus",points:3-i }))));
+    expect(await extra(second)).toEqual([]); // 2+2 saves and 9+9 contributions do not combine.
+    const totals = async () => (await sql(c,"SELECT points FROM manager_points WHERE match_id=$1 AND profile_id=$2",[match,userAId])).rows[0];
+    const firstTotal = Number((await totals()).points);
+    await expect(save(match,5,stats(3,10,12),award,"not allowed")).rejects.toThrow(/Finalized bonus/);
+    let version = 5;
+    for (const [saves,points] of [[3,1],[5,1],[6,2],[9,3]]) {
+      await save(match,version++,stats(saves,10,12),null,"Verified stats");
+      const breakdown = await extra(match);
+      expect(breakdown).toHaveLength(7);
+      expect(breakdown).toEqual(expect.arrayContaining([
+        ...initial, { player_id:home[0],category:"goalkeeper_saves",points },
+        ...[home[1],home[2],home[4]].map((player_id) => ({player_id,category:"defensive_contributions",points:2})),
+      ]));
+      expect(Number((await totals()).points)).toBe(firstTotal+2*points+6);
+    }
+    await expect(save(match,version-1,stats(2,9,11),null,"Stale write")).rejects.toMatchObject({code:"40001"});
+    expect((await sql(c,"SELECT points FROM fantasy_points_history WHERE match_id=$1 AND profile_id=$2",[match,userAId])).rows[0]).toEqual(await totals());
+    const standings = await sql(c,"SELECT total_points FROM league_standings WHERE league_id=$1 AND profile_id=$2",[league.id,userAId]);
+    const aggregate = await sql(c,"SELECT sum(points) AS total FROM manager_points WHERE league_id=$1 AND profile_id=$2",[league.id,userAId]);
+    expect(Number(standings.rows[0].total_points)).toBe(Number(aggregate.rows[0].total));
+    await sql(admin,"UPDATE teams SET crest_url='https://example.test/opponent.webp' WHERE id=$1",[league.away]);
+    const history = await sql(c,"SELECT * FROM public.player_finalized_games_with_logos($1,$2,2)",[league.id,home[0]]);
+    expect(history.rows).toHaveLength(2);
+    expect(history.rows.every((r) => r.opponent_id===league.away && r.opponent_crest==="https://example.test/opponent.webp")).toBe(true);
+  } finally { c.release(); }
+});
+
+it("scopes private team logo objects to league roles and protects the linked reference", async () => {
+  const c = await freshClient();
+  try {
+    const { id,home,away } = await releaseLeague(c,5);
+    const key = () => `${id}/${home}/${randomUUID()}.webp`;
+    const [first,next] = [key(),key()];
+    const add = (path: string) => sql(c,"INSERT INTO storage.objects(bucket_id,name) VALUES('team-logos',$1)",[path]);
+    const read = () => sql(c,"SELECT name FROM storage.objects WHERE bucket_id='team-logos' AND name=ANY($1)",[[first,next]]);
+    const link = (path: string | null,team=home) => sql(c,"UPDATE teams SET crest_url=$2 WHERE id=$1",[team,path && `team-logos/${path}`]);
+    const remove = (path: string) => sql(c,"DELETE FROM storage.objects WHERE bucket_id='team-logos' AND name=$1",[path]);
+    await add(first); await add(next);
+    await expect(link(first,away)).rejects.toMatchObject({code:"22023"});
+    await link(first);
+    expect((await remove(first)).rowCount).toBe(0);
+    await setAuthUid(c,userBId);
+    expect((await link(null)).rowCount).toBe(0);
+    await expect(add(key())).rejects.toMatchObject({code:"42501"});
+    expect((await read()).rows).toEqual([{name:first}]);
+    await setAuthUid(c,null);
+    expect((await read()).rowCount).toBe(0);
+    await setAuthUid(c,userAId);
+    await link(next);
+    expect((await remove(first)).rowCount).toBe(1);
+    expect((await sql(c,"SELECT crest_url FROM teams WHERE id=$1",[home])).rows[0].crest_url).toBe(`team-logos/${next}`);
+    await link(null);
+    expect((await remove(next)).rowCount).toBe(1);
+  } finally { c.release(); }
+});
+
+it("initializes Google profiles from the trusted provider and preserves custom and email names", async () => {
+  const ids = Array.from({length:4},()=>randomUUID());
+  const make = (id: string, provider: string, meta: unknown) => sql(admin,
+    "INSERT INTO auth.users(id,email,raw_app_meta_data,raw_user_meta_data,email_confirmed_at) VALUES($1,$2,$3,$4,now())",
+    [id,`${id}@example.test`,JSON.stringify({provider}),JSON.stringify(meta)]);
+  await make(ids[0],"google",{full_name:"  Provided Full Name  ",name:"Second Choice"});
+  await make(ids[1],"google",{full_name:"\t ",name:"Short Name"});
+  await make(ids[2],"google",{full_name:{unexpected:1}});
+  await make(ids[3],"email",{display_name:"Chosen on Signup",username:"email_member",full_name:"Ignore Me"});
+  const names = async () => (await sql(admin,"SELECT display_name FROM profiles WHERE id=ANY($1) ORDER BY array_position($1,id)",[ids])).rows.map((r) => r.display_name);
+  expect(await names()).toEqual(["Provided Full Name","Short Name",`user_${ids[2].replaceAll("-","").slice(0,10)}`,"Chosen on Signup"]);
+  const c = await freshClient();
+  try { await setAuthUid(c,ids[0]); await sql(c,"UPDATE profiles SET display_name='My Custom Name' WHERE id=$1",[ids[0]]); }
+  finally { c.release(); }
+  await sql(admin,"UPDATE auth.users SET raw_user_meta_data='{\"full_name\":\"Changed Google Name\"}',email=$2 WHERE id=$1",[ids[0],`updated-${ids[0]}@example.test`]);
+  expect((await names())[0]).toBe("My Custom Name");
 });

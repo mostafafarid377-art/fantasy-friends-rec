@@ -31,11 +31,13 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const sb = await getSupabase();
   const membership = await requireMember(id, sb);
   // Parent revision and its entries are read in the same snapshot.
-  const [{ data, error }, recent] = await Promise.all([
+  const [{ data, error }, recent, deadline] = await Promise.all([
     sb.from("fantasy_squads").select(`${SQUAD},fantasy_squad_players(player_id,slot,order,players(${PLAYER}))`)
       .eq("league_id", id).eq("profile_id", membership.profileId).maybeSingle(),
     sb.rpc("recent_fantasy_substitutions", { p_league: id }),
+    sb.rpc("ff_squad_deadline", { p_league: id }),
   ]);
+  checkDb(deadline.error, "Could not load the squad deadline");
   checkDb(recent.error, "Could not load automatic substitutions");
   checkDb(error, "Could not load your squad");
   const row = data as unknown as (SavedSquad & { fantasy_squad_players: {
@@ -45,7 +47,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     return entryDto(e.players, { playerId: e.player_id, slot: e.slot, order: e.order }, id);
   });
   return Response.json({ squad: row ? squadDto(row) : null, players,
-    rules: leagueRules(membership.league), vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[] } satisfies SquadResponse);
+    rules: leagueRules(membership.league), vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[], deadline: deadline.data } satisfies SquadResponse);
 });
 
 const putSchema = z.object({

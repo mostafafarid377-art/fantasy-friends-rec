@@ -10,6 +10,9 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { RealTeamName } from "@/components/TeamLogo";
+import { useKickoffClock } from "@/lib/match-deadline";
+import { MatchStatistics, type MatchStat } from "@/components/MatchStatistics";
 import { MatchResult, type MatchScore } from "@/components/MatchResult";
 import { PageHeader } from "@/components/AppShell";
 import {
@@ -67,12 +70,14 @@ type MatchData = {
     version: number;
     fixtureId: string | null;
   };
+  serverNow?: string;
+  statistics?: MatchStat[];
   rules: LeagueRules;
   role: string;
   canOrganize: boolean;
   canEditEvents: boolean;
   canApprove: boolean;
-  lineups: (LineupEntry & { player: Player | null })[];
+  lineups: (LineupEntry & { matchPosition?: string; player: Player | null })[];
   events: {
     id: string;
     teamId: string;
@@ -94,9 +99,9 @@ type MatchData = {
     playerOff: Player | null;
   }[];
   approvals: { id: string; action: string; actorId: string; reason: string | null; version: number; createdAt: string;
-    scoreChange?: (MatchScore & { previousHomeScore: number; previousAwayScore: number }) | null }[];
+    scoreChange?: (MatchScore & { previousHomeScore: number; previousAwayScore: number; statisticsCorrected?: boolean }) | null }[];
   roster: Player[];
-  teams: { id: string; name: string }[];
+  teams: { id: string; name: string; crestUrl?: string | null }[];
 };
 
 const EVENT_LABEL: Record<string, string> = {
@@ -128,6 +133,18 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
     [matchId],
   );
 
+  const timeToKickoff = useKickoffClock(data?.serverNow, data?.match.kickOff);
+  const started = timeToKickoff === 0;
+  useEffect(() => {
+    if (!data?.serverNow || document.visibilityState === "hidden") return;
+    const refresh = () => { if (document.visibilityState === "visible") void reload(); };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [Boolean(data?.serverNow), reload]);
+  const [statisticsDirty, setStatisticsDirty] = useState(false);
+  const [newKickoff, setNewKickoff] = useState("");
+  const [rescheduling, setRescheduling] = useState(false);
+  useEffect(() => { setStatisticsDirty(false); }, [data?.match.id, data?.match.version]);
   const [tab, setTab] = useState<"lineups" | "events" | "history">("lineups");
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -137,7 +154,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const [draft, setDraft] = useState<{ id: string; teams: Record<string, LineupSelection> } | null>(null);
   const savedSelections = useMemo(() => data ? Object.fromEntries([data.match.teamAId, data.match.teamBId]
     .map((id) => [id, lineupSelection(data.lineups, id)])) : {}, [data]);
-  const sel = { ...savedSelections, ...(draft && draft.id === matchId ? draft.teams : {}) };
+  const sel = { ...savedSelections, ...(!started && draft && draft.id === matchId ? draft.teams : {}) };
 
   // event form
   const [evTeam, setEvTeam] = useState("");
@@ -180,7 +197,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const lineupSaving = useRef(false);
   const saveLineup = async (teamId: string) => {
-    if (!matchId || !data || lineupSaving.current) return;
+    if (started || !matchId || !data || lineupSaving.current) return;
     lineupSaving.current = true;
     setBusy(true);
     setFormError(null);
@@ -313,7 +330,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const reviewing = useRef(false);
   const flow = async (action: "submit" | "approve" | "reject" | "correct", score?: MatchScore, correctionReason?: string) => {
-    if (!matchId || !data || reviewing.current || busy) return false;
+    if (!matchId || !data || reviewing.current || busy || statisticsDirty) return false;
     reviewing.current = true;
     setBusy(true);
     setFormError(null);
@@ -371,6 +388,24 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const teamName = (id: string) => data.teams.find((t) => t.id === id)?.name ?? "Team";
 
+  const logoOf = (id: string) => data.teams.find((t) => t.id === id)?.crestUrl;
+  const teamLabel = (id: string) => <RealTeamName name={teamName(id)} logo={logoOf(id)} />;
+  const participants = data.lineups.flatMap((l) => {
+    if (!l.player || ![m.teamAId, m.teamBId].includes(l.teamId) || (l.slot !== "starter" && !data.substitutions.some((sub) => sub.teamId === l.teamId && sub.playerOnId === l.playerId))) return [];
+    return [{ id: l.playerId, name: l.player.fullName, position: data.statistics?.find((r) => r.playerId === l.playerId)?.position ?? l.matchPosition ?? l.player.position, team: teamName(l.teamId) }];
+  });
+  const reschedule = async () => {
+    if (started || !newKickoff || busy) return;
+    setBusy(true);
+    try {
+      const kickoff = new Date(newKickoff).toISOString();
+      const result = await api<{ match: { id: string; kick_off: string } }>(`/api/matches/${m.id}`, { method: "PATCH", body: { kickOff: kickoff } });
+      if (result?.match?.id !== m.id || Date.parse(result.match.kick_off) !== Date.parse(kickoff)) throw new Error("The kickoff change could not be confirmed");
+      await reload(); setRescheduling(false); setNewKickoff(""); notify("Kickoff updated");
+    } catch (e) { notify(e instanceof Error ? e.message : "Could not update kickoff", "error"); }
+    finally { setBusy(false); }
+  };
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
       <Link href="/matches" className="slate mb-4 inline-flex items-center gap-1.5 hover:text-green">
@@ -384,13 +419,24 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
           hour: "2-digit",
           minute: "2-digit",
         })} · v${m.version}`}
-        title={`${teamName(m.teamAId)} v ${teamName(m.teamBId)}`}
+        title={<span className="flex flex-wrap items-center gap-2">{teamLabel(m.teamAId)} <span>v</span> {teamLabel(m.teamBId)}</span>}
         subtitle={m.durationMinutes == null ? m.title : `${m.title} · ${m.durationMinutes} min`}
         actions={<Badge tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Badge>}
       />
 
-      <MatchResult key={`${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)}
-        canManage={data.canOrganize} busy={busy} onSave={flow} />
+      {started && <p className="mb-4 text-sm text-sage"><strong className="text-chalk">Lineup Locked.</strong> The match has started.</p>}
+      {!started && editable && <div className="mb-4 flex flex-wrap items-end gap-2">
+        {rescheduling ? <><Field label="New kickoff (local time)"><TextInput type="datetime-local" value={newKickoff} onChange={(e) => setNewKickoff(e.target.value)} /></Field>
+          <Button size="sm" onClick={reschedule} disabled={!newKickoff || busy}>Save kickoff</Button><Button variant="ghost" size="sm" onClick={() => setRescheduling(false)}>Cancel</Button></>
+          : <Button size="sm" variant="outline" onClick={() => setRescheduling(true)}>Change kickoff</Button>}
+      </div>}
+      {data.statistics && <MatchStatistics key={`${m.id}:${m.version}`} matchId={m.id} version={m.version} status={m.status}
+        started={started} correctable={m.homeScore != null && m.awayScore != null} canManage={data.canOrganize}
+        players={participants} saved={data.statistics} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={async () => {
+          await reload(); notify("Match statistics saved");
+        }} />}
+      <MatchResult key={`${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)} homeLogo={logoOf(m.teamAId)} awayLogo={logoOf(m.teamBId)}
+        canManage={data.canOrganize} busy={busy} unsavedStatistics={statisticsDirty} onSave={flow} />
 
       {m.status === "rejected" && m.rejectionReason && (
         <div className="mb-5 rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3.5">
@@ -466,7 +512,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             const state = sel[teamId] ?? { starters: [], subs: [] };
             const roster = [...(rosterByTeam[teamId] ?? []), ...data.roster.filter((p) => p.teamId !== teamId
               && (state.starters.includes(p.id) || state.subs.includes(p.id)))];
-            const locked = m.status === "pending" || m.status === "approved" || !data.canOrganize;
+            const locked = started || m.status === "pending" || m.status === "approved" || !data.canOrganize;
             const lineupRules = validateLineup(data.rules, roster.filter((p) => state.starters.includes(p.id)), roster.filter((p) => state.subs.includes(p.id)));
             const allowed = (p: Player) => p.teamId === teamId && canSelectPlayer(p);
             const eligible = roster.filter((p) => state.starters.includes(p.id) || state.subs.includes(p.id)).every(allowed);
@@ -478,7 +524,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
               <Panel key={teamId} className="p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-[22px] text-chalk">{teamName(teamId)}</h2>
+                    <h2 className="text-[22px] text-chalk">{teamLabel(teamId)}</h2>
                     <div className="num mt-1 flex gap-3 text-[11.5px] uppercase tracking-[0.12em]">
                       <span className={state.starters.length === data.rules.starters ? "text-green" : "text-card-y"}>
                         XI {state.starters.length}/{data.rules.starters}
@@ -742,7 +788,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                           {e.assistPlayer && <span className="text-sage"> — assist {e.assistPlayer.fullName}</span>}
                         </span>
                         <span className="block truncate text-[11.5px] text-sage-dim">
-                          {teamName(e.teamId)}
+                          {teamLabel(e.teamId)}
                           {e.note ? ` · ${e.note}` : ""}
                         </span>
                       </span>
@@ -767,7 +813,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                       <span className="block truncate text-[14px] text-chalk">
                         {s.playerOn?.fullName ?? "?"} on · {s.playerOff?.fullName ?? "?"} off
                       </span>
-                      <span className="block truncate text-[11.5px] text-sage-dim">{teamName(s.teamId)}</span>
+                      <span className="block truncate text-[11.5px] text-sage-dim">{teamLabel(s.teamId)}</span>
                     </span>
                   </li>
                 ))}
@@ -801,7 +847,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                     <Badge tone="neutral">v{a.version}</Badge>
                     <span className="num text-[11.5px] text-sage-dim">{new Date(a.createdAt).toLocaleString()}</span>
                   </div>
-                  {a.scoreChange && <p className="mt-1 text-sm text-chalk">{a.scoreChange.previousHomeScore}–{a.scoreChange.previousAwayScore} corrected to {a.scoreChange.homeScore}–{a.scoreChange.awayScore}</p>}
+                  {a.scoreChange?.statisticsCorrected ? <p className="mt-1 text-sm text-chalk">Match statistics corrected; scores recalculated.</p> : a.scoreChange && <p className="mt-1 text-sm text-chalk">{a.scoreChange.previousHomeScore}–{a.scoreChange.previousAwayScore} corrected to {a.scoreChange.homeScore}–{a.scoreChange.awayScore}</p>}
                   {a.reason && <p className="mt-1 text-[13.5px] text-sage">{a.reason}</p>}
                 </li>
               ))}

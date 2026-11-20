@@ -115,7 +115,8 @@ async function requestJson<T>(route: string, options: RequestOptions): Promise<T
   const method = options.method ?? "GET";
   const actor = options.recoveryActor ?? actorId;
   const multipart = options.body instanceof FormData ? options.body : null;
-  const operationId = !multipart && options.idempotent && method === "POST" && isReplayable(route)
+  const binary = options.body instanceof Blob ? options.body : null;
+  const operationId = !multipart && !binary && options.idempotent && method === "POST" && isReplayable(route)
     ? options.operationId ?? newOperationId() : undefined;
   const queued = actor && operationId && options.body !== undefined;
   if (queued) {
@@ -129,11 +130,11 @@ async function requestJson<T>(route: string, options: RequestOptions): Promise<T
     response = await fetch(route, {
       method, cache: "no-store", credentials: "same-origin", signal: options.signal,
       headers: {
-        ...(!multipart ? { "Content-Type": "application/json" } : {}),
+        ...(!multipart ? { "Content-Type": binary?.type || "application/json" } : {}),
         ...(operationId ? { "x-operation-id": operationId } : {}),
         ...(options.recoveryActor ? { "x-ff-recovery-actor": options.recoveryActor } : {}),
       },
-      body: multipart ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
+      body: multipart ?? binary ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
     });
   } catch (err) {
     if (options.signal?.aborted) throw err;
