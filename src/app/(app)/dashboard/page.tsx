@@ -23,7 +23,7 @@ import {
   Slate,
 } from "@/components/ui";
 import { Pitch } from "@/components/Pitch";
-import { deriveFormation, FORMATIONS, type LeagueFormat } from "@/lib/domain";
+import { deriveFormation, FORMATIONS, orderedBench, type LeagueFormat } from "@/lib/domain";
 import type { SquadEntry } from "@/lib/squad";
 import { useLeagueContentUpdates } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
@@ -316,7 +316,8 @@ export default function DashboardPage() {
 function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">) {
   const players = squad?.players ?? [];
   const formation = deriveFormation(league, players, squad?.formation);
-  const bench = players.filter((p) => p.slot === "sub");
+  const bench = orderedBench(players);
+  const hasBenchKeeper = bench.some((p) => p.position === "GK");
   return (
     <Panel className="min-w-0 p-3 sm:p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -331,9 +332,10 @@ function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">
       </div> : <>
         {!formation && <p className="mt-2 text-xs text-card-y">Some starters no longer fit. Review the full squad to fix the lineup.</p>}
         {bench.length > 0 && <div className="mt-3 border-t border-line pt-2">
-          <Slate>Substitutes</Slate>
+          <Slate>Bench</Slate>
           <ul className="mt-2 grid grid-cols-2 gap-1.5">
-            {bench.map((p) => <li key={p.id} className="flex min-w-0 items-center gap-1.5 rounded bg-pitch-900 px-1.5 py-1" title={p.name}>
+            {bench.map((p, i) => <li key={p.id} className="flex min-w-0 items-center gap-1.5 rounded bg-pitch-900 px-1.5 py-1" title={p.name}>
+              <span className="num text-[9px] text-green">{p.position === "GK" ? "GK" : i + (hasBenchKeeper ? 0 : 1)}</span>
               <Avatar name={p.name} url={p.photoUrl} size={23} decorative />
               <span className="min-w-0 truncate text-xs text-chalk">{p.name}</span>
               <span className="ml-auto text-[9px] text-sage">{p.position}</span>

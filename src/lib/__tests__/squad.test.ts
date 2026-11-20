@@ -52,7 +52,7 @@ function squad7(): SquadPlayer[] {
     player("mid1", "MID", "starter", 4),
     player("mid2", "MID", "starter", 5),
     player("fwd1", "FWD", "starter", 6),
-    ...["s1", "s2", "s3", "s4", "s5"].map((id, i) => player(id, "MID", "sub", i)),
+    ...["s1", "s2", "s3", "s4", "s5"].map((id, i) => player(id, i === 0 ? "GK" : "MID", "sub", i)),
     ...["r1", "r2", "r3"].map((id) => player(id, "DEF", "reserve")),
   ];
 }
@@ -165,11 +165,11 @@ describe("strict position layouts and editing", () => {
 
   it("derives a new shape when swapping a defender for a midfielder and preserves unrelated entries", () => {
     const squad = squad7();
-    const result = moveSquadPlayer(rules7, squad, "def1", "sub", "3-2-1", "s1");
+    const result = moveSquadPlayer(rules7, squad, "def1", "sub", "3-2-1", "s2");
     expect(result).toMatchObject({ formation: "2-3-1" });
     if ("error" in result) return;
-    expect(result.players.find((p) => p.id === "def1")).toMatchObject({ slot: "sub", order: 0 });
-    expect(result.players.find((p) => p.id === "s1")).toMatchObject({ slot: "starter", order: 1 });
+    expect(result.players.find((p) => p.id === "def1")).toMatchObject({ slot: "sub", order: 1 });
+    expect(result.players.find((p) => p.id === "s2")).toMatchObject({ slot: "starter", order: 1 });
     expect(result.players.find((p) => p.id === "gk1")).toBe(squad[0]);
   });
 

@@ -1,16 +1,4 @@
-/**
- * Deterministic fantasy points engine.
- *
- * Points are computed ONLY from approved real-match events + approved
- * scoring rules. Every calculation is a pure function of its inputs, so
- * the same inputs always produce the same output and results can be
- * recomputed safely (upserts keyed by match+player prevent duplicates).
- *
- * IMPORTANT: numerical values are never invented here. Leagues ship with
- * a DRAFT rule set created in code; only rules the League Leader has
- * approved are used for official points.
- */
-
+/** Labels used by the persisted SQL score ledger, plus pure scoring reference tests. */
 import type { Position } from "./domain";
 
 export type RuleStatus = "draft" | "approved";
@@ -168,6 +156,10 @@ export function computePlayerPoints(input: ComputeInput): PlayerPoints[] {
       input.events.filter((e) => e.playerId === playerId && e.eventType === "penalty_missed").length,
     );
 
+    const scored = goalsConceded(teamId === input.result.teamAId ? input.result.teamBId : input.result.teamAId, input.events);
+    push("win", Number(scored > conceded));
+    push("draw", Number(scored === conceded));
+
     out.push({
       playerId,
       points: breakdown.reduce((s, b) => s + b.points, 0),
@@ -233,48 +225,3 @@ export function computeManagerPoints(input: ManagerInput): ManagerPoints {
 
   return { points: total, captainId: activeCaptain, breakdown };
 }
-
-/* ------------------------------------------------------------------ */
-/* Draft rule set — DRAFT CONFIGURATION, requires League Leader        */
-/* approval before it can produce official points.                     */
-/* ------------------------------------------------------------------ */
-
-const DRAFT_TEMPLATE: { position: Position; category: string; points: number }[] = [
-  { position: "FWD", category: "goal", points: 4 },
-  { position: "MID", category: "goal", points: 5 },
-  { position: "DEF", category: "goal", points: 6 },
-  { position: "GK", category: "goal", points: 8 },
-  { position: "FWD", category: "assist", points: 3 },
-  { position: "MID", category: "assist", points: 3 },
-  { position: "DEF", category: "assist", points: 3 },
-  { position: "GK", category: "assist", points: 3 },
-  { position: "GK", category: "clean_sheet", points: 2 },
-  { position: "DEF", category: "clean_sheet", points: 2 },
-  { position: "MID", category: "clean_sheet", points: 1 },
-  { position: "FWD", category: "clean_sheet", points: 0 },
-  { position: "GK", category: "appearance", points: 1 },
-  { position: "DEF", category: "appearance", points: 1 },
-  { position: "MID", category: "appearance", points: 1 },
-  { position: "FWD", category: "appearance", points: 1 },
-  { position: "GK", category: "yellow_card", points: -1 },
-  { position: "DEF", category: "yellow_card", points: -1 },
-  { position: "MID", category: "yellow_card", points: -1 },
-  { position: "FWD", category: "yellow_card", points: -1 },
-  { position: "GK", category: "red_card", points: -3 },
-  { position: "DEF", category: "red_card", points: -3 },
-  { position: "MID", category: "red_card", points: -3 },
-  { position: "FWD", category: "red_card", points: -3 },
-  { position: "GK", category: "penalty_saved", points: 3 },
-  { position: "DEF", category: "penalty_missed", points: -1 },
-  { position: "MID", category: "penalty_missed", points: -1 },
-  { position: "FWD", category: "penalty_missed", points: -1 },
-  { position: "GK", category: "own_goal", points: -2 },
-  { position: "DEF", category: "own_goal", points: -2 },
-  { position: "MID", category: "own_goal", points: -2 },
-  { position: "FWD", category: "own_goal", points: -2 },
-];
-
-export const DRAFT_RULE_SET = DRAFT_TEMPLATE.map((r) => ({
-  ...r,
-  status: "draft" as RuleStatus,
-}));

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeftRight, Ellipsis, Plus, Save } from "lucide-react";
+import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, Plus, Save } from "lucide-react";
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
@@ -10,7 +10,7 @@ import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from 
 import { notifyLeagueContentChanged, useLeagueContentUpdates } from "@/lib/client/league-updates";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import {
-  compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
+  canSelectPlayer, normalizeBench, orderedBench, compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
   nextSquadOrder, OUTFIELD, POSITIONS, squadCaps, validateSquad, validateSquadDraft,
   type LeagueRules, type Position, type SquadPlayer,
 } from "@/lib/domain";
@@ -92,6 +92,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
     setPick(target); setPlayerId(null); setMoving(null);
   }
   function changePlayers(next: SquadEntry[], nextFormation?: string) {
+    next = normalizeBench(next);
     const starting = new Set(next.filter((p) => p.slot === "starter").map((p) => p.id));
     const captain = captainId && starting.has(captainId) ? captainId : null;
     const vice = viceId && starting.has(viceId) ? viceId : null;
@@ -103,14 +104,14 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   function pickPlayer(player: PoolPlayer) {
     if (!pick || players.some((p) => p.id === player.id) || player.status !== "active" || player.leagueId !== leagueId) return;
     const allowed = eligiblePositions(pick);
-    if (!allowed.includes(player.position)) return;
+    if (!allowed.includes(player.position) || (pick.replace && !canSelectPlayer(player))) return;
     const nextEntry = { ...player, name: player.fullName, slot: pick.slot, order: pick.replace?.order ?? nextSquadOrder(players, pick.slot) };
     const next = pick.replace ? players.map((p) => p.id === pick.replace?.id ? nextEntry : p) : [...players, nextEntry];
     const candidate = deriveFormation(rules, next, formation);
     if (!candidate) { setPick(null); setMessage("That player cannot fit this starting lineup. Choose a goalkeeper for the keeper spot or an eligible outfield player."); return; }
     const check = validateSquadDraft(rules, next, { formation: candidate.label });
     if (!check.ok) { setPick(null); setMessage(check.errors.join(" ")); return; }
-    changePlayers(next, candidate.label);
+    changePlayers(next, pick.replace ? formation : candidate.label);
   }
   async function save() {
     if (saving || conflict || !validation.ok || archived.length) return;
@@ -121,7 +122,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         entries: players.map((p) => ({ playerId: p.id, slot: p.slot, order: p.order })),
       } });
       if (result.state !== "applied" || !result.squad?.id || !result.squad.updatedAt) throw new ApiRequestError("Save was not confirmed. Reload before retrying.", 409);
-      squad.setData(result);
+      squad.setData({ ...result, recentSubs: stored.recentSubs });
       notifyLeagueContentChanged(leagueId);
       cancel();
       setNotice(result.squad.completedAt ? "Squad saved." : "Squad draft saved.");
@@ -138,6 +139,22 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
     });
     setPlayerId(null); setMessage(null);
   }
+  const bench = orderedBench(players);
+  const keeper = bench.find((p) => p.position === "GK");
+  const outfield = bench.filter((p) => p.position !== "GK");
+  function shiftBench(index: number, direction: number) {
+    const target = index + direction;
+    if (target < 0 || target >= outfield.length) return;
+    const ids = outfield.map((p) => p.id);
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    changePlayers(players.map((p) => ids.includes(p.id) ? { ...p, order: ids.indexOf(p.id) + 1 } : p), formation);
+  }
+  const benchRow = (p: SquadEntry, label: string) => <button type="button" disabled={saving} onClick={() => setPlayerId(p.id)}
+    className="flex min-w-0 flex-1 items-center gap-2 rounded border border-line px-2 py-2 text-left text-chalk hover:border-green">
+    <span className="num text-xs text-green">{label}</span><Avatar name={p.name} url={p.photoUrl} size={28} />
+    <span className="min-w-0 flex-1 break-words text-sm">{p.name}</span><span className="text-xs text-sage">{p.position}</span>
+  </button>;
+  const priorityButton = "grid min-h-10 min-w-10 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-40";
   const addStarter = (position: Position) => openPicker({ slot: "starter", position });
   const pickActions = editing ? <>
     <Button variant="outline" onClick={cancel} disabled={saving}>Cancel</Button>
@@ -175,6 +192,22 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             <p className="mb-2 text-sm text-card-y">Some saved starters no longer fit. Move, replace or remove them to repair the lineup.</p>
             {unplaced.map((p) => <Button key={p.id} variant="ghost" onClick={() => setPlayerId(p.id)}>{p.name} · {p.position}</Button>)}
           </Panel>}
+          {caps.sub > 0 && <Panel className="p-3">
+            <h2 className="mb-2 text-lg text-chalk">Bench <span className="num text-sm text-sage">{bench.length}/{caps.sub}</span></h2>
+            <p className="mb-2 text-xs text-sage">Goalkeeper first. Outfield priorities are checked from 1 down.</p>
+            <ol className="space-y-2">
+              <li className="flex">{keeper ? benchRow(keeper, "GK") : <Button size="sm" variant="outline" disabled={saving || players.length >= rules.squadSize || bench.length >= caps.sub}
+                onClick={() => openPicker({ slot: "sub", position: "GK" })}>Pick bench goalkeeper</Button>}</li>
+              {bench.filter((p) => p.position === "GK" && p !== keeper).map((p) => <li key={p.id} className="flex">{benchRow(p, "Extra GK")}</li>)}
+              {outfield.map((p, index) => <li key={p.id} className="flex items-stretch gap-1">
+                {benchRow(p, `${index + 1}`)}
+                {editing && <><button type="button" className={priorityButton} aria-label={`Raise ${p.name} priority`} disabled={saving || index === 0} onClick={() => shiftBench(index, -1)}><ArrowUp aria-hidden="true" className="h-4 w-4" /></button>
+                  <button type="button" className={priorityButton} aria-label={`Lower ${p.name} priority`} disabled={saving || index === outfield.length - 1} onClick={() => shiftBench(index, 1)}><ArrowDown aria-hidden="true" className="h-4 w-4" /></button></>}
+              </li>)}
+            </ol>
+            {outfield.length < caps.sub - 1 && bench.length < caps.sub && players.length < rules.squadSize && <Button size="sm" variant="outline" className="mt-2" disabled={saving}
+              onClick={() => openPicker({ slot: "sub" })}><Plus className="h-4 w-4" /> Add outfield sub</Button>}
+          </Panel>}
         </section>
         <div className="space-y-4">
           <Panel className="p-4">
@@ -187,13 +220,13 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             {archived.length > 0 && <p className="mt-2 text-sm text-card-y">Replace or remove archived players before saving: {archived.map((p) => p.name).join(", ")}.</p>}
             {!validation.ok && <ul className="mt-2 space-y-1 text-sm text-card-y">{validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>}
           </Panel>
-          {(["sub", "reserve"] as const).filter((slot) => caps[slot] > 0 || players.some((p) => p.slot === slot)).map((slot) => {
+          {(["reserve"] as const).filter((slot) => caps[slot] > 0 || players.some((p) => p.slot === slot)).map((slot) => {
             const group = players.filter((p) => p.slot === slot).sort((a,b) => a.order-b.order || a.id.localeCompare(b.id));
             return <Panel key={slot} className="p-4">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="text-xl text-chalk">{LABEL[slot]} <span className="num text-sm text-sage">{group.length}/{caps[slot]}</span></h2>
                 {group.length < caps[slot] && players.length < rules.squadSize && <Button size="sm" variant="outline" disabled={saving}
-                  onClick={() => openPicker({ slot })}><Plus className="h-4 w-4" /> {slot === "sub" ? "Add sub" : "Add reserve"}</Button>}
+                  onClick={() => openPicker({ slot })}><Plus className="h-4 w-4" /> Add reserve</Button>}
               </div>
               {group.length ? <ul className="space-y-1">{group.map((p) => <li key={p.id}><button type="button" onClick={() => setPlayerId(p.id)} disabled={saving}
                 className="flex w-full items-center gap-3 rounded border border-line px-2 py-2 text-left text-chalk hover:border-green">
@@ -202,11 +235,18 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
               </button></li>)}</ul> : <p className="text-sm text-sage">No {LABEL[slot].toLowerCase()} picked yet.</p>}
             </Panel>;
           })}
+          {!!stored.recentSubs?.length && <Panel className="space-y-3 p-4">
+            <h2 className="text-xl text-chalk">Recent automatic substitutions</h2>
+            {stored.recentSubs.map((report) => <div key={report.matchId}>
+              <Button href={`/matches/${report.matchId}`} variant="ghost" size="sm">{report.title}</Button>
+              <ul className="pl-2 text-sm text-sage">{report.substitutions.map((sub) => <li key={sub.inId}>{sub.inName} <span className="text-green">replaced</span> {sub.outName}</li>)}</ul>
+            </div>)}
+          </Panel>}
           {editing && <div className="flex flex-wrap gap-2 lg:hidden">{pickActions}</div>}
         </div>
       </div>
       {pick && <SquadPicker title={pick.replace ? `Replace ${pick.replace.name}` : pick.position ? `Pick a ${pick.position}` : pick.slot === "sub" ? "Pick a substitute" : "Pick a reserve"}
-        allowed={eligiblePositions(pick)} selected={new Set(players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()}
+        replacement={Boolean(pick.replace)} allowed={eligiblePositions(pick)} selected={new Set(players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()}
         onPick={pickPlayer} onClose={() => setPick(null)} />}
       {selected && !moving && <Modal open title={selected.name} onClose={() => setPlayerId(null)}>
         <div className="mb-4 flex items-center gap-3"><Avatar name={selected.name} url={selected.photoUrl} size={44} />
@@ -232,7 +272,8 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
 
 function eligiblePositions(pick: PickTarget): readonly Position[] {
   if (pick.position) return [pick.position];
-  if (pick.slot === "starter" && pick.replace) return pick.replace.position === "GK" ? ["GK"] : OUTFIELD;
+  if (pick.replace) return [pick.replace.position];
+  if (pick.slot === "sub") return OUTFIELD;
   return POSITIONS;
 }
 

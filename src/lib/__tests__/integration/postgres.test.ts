@@ -107,7 +107,7 @@ describe("PostgreSQL integration: schema deployment", () => {
     const required = [
       "profiles","leagues","league_members","league_standings","league_activity",
       "teams","players","fantasy_squads","fantasy_squad_players","real_matches",
-      "match_lineups","match_events","match_substitutions","match_approvals",
+      "match_lineups","match_events","match_substitutions","match_approvals","match_scoring_receipts",
       "scoring_rules","player_match_points","manager_points","fantasy_points_history",
       "notifications","audit_logs","mutation_ops","invitations","fantasy_fixtures",
     ];
@@ -235,7 +235,7 @@ describe("PostgreSQL integration: atomic league creation RPC", () => {
 
       // Legacy create_league remains available; the app now calls create_league_confirmed.
       const { rows: rules } = await sql(cB, `SELECT id FROM public.scoring_rules WHERE league_id = $1`, [id]);
-      expect(rules.length).toBe(0);
+      expect(rules.length).toBe(44);
     } finally {
       cB.release();
     }
@@ -278,6 +278,7 @@ describe("PostgreSQL integration: squad creation", () => {
 
     await sql(admin, `INSERT INTO public.players (id, league_id, team_id, full_name, position, shirt_number, status, availability, created_at, updated_at) VALUES (gen_random_uuid()::text, $1, $2, 'GK One', 'GK', 1, 'active', 'available', now(), now()), (gen_random_uuid()::text, $1, $2, 'DEF One', 'DEF', 2, 'active', 'available', now(), now()), (gen_random_uuid()::text, $1, $3, 'DEF Two', 'DEF', 3, 'active', 'available', now(), now()), (gen_random_uuid()::text, $1, $2, 'MID One', 'MID', 4, 'active', 'available', now(), now()), (gen_random_uuid()::text, $1, $3, 'MID Two', 'MID', 5, 'active', 'available', now(), now()), (gen_random_uuid()::text, $1, $2, 'FWD One', 'FWD', 6, 'active', 'available', now(), now()), (gen_random_uuid()::text, $1, $3, 'FWD Two', 'FWD', 7, 'active', 'available', now(), now())`, [leagueAId, teams[0].id, teams[1].id]);
 
+    await sql(admin, `INSERT INTO players(id,league_id,team_id,full_name,position) VALUES(gen_random_uuid()::text,$1,$2,'Keeper Backup','GK')`, [leagueAId, teams[1].id]);
     const cC = await freshClient();
     try {
       await setAuthUid(cC, userCId);
@@ -286,12 +287,13 @@ describe("PostgreSQL integration: squad creation", () => {
       const { rows: pool } = await sql(cC, `SELECT id, position FROM public.players WHERE league_id=$1 ORDER BY full_name`, [leagueAId]);
       const starters = new Set(["GK", "DEF", "MID", "FWD"].flatMap((pos) => pool.filter((p) => p.position === pos)
         .slice(0, pos === "DEF" ? 2 : 1).map((p) => p.id)));
-      const entries = pool.map((p, order) => ({ player_id: p.id, slot: starters.has(p.id) ? "starter" : "sub", order }));
+      let benchOrder = 1;
+      const entries = pool.map((p, order) => ({ player_id: p.id, slot: starters.has(p.id) ? "starter" : "sub", order: starters.has(p.id) ? order : p.position === "GK" ? 0 : benchOrder++ }));
       const { rows: [saved] } = await sql(cC, `SELECT public.save_fantasy_squad_v2($1,'2-1-1',null,null,null,$2) AS result`, [leagueAId, JSON.stringify(entries)]);
       const squadId = saved.result.squad.id;
       expect(saved.result.squad.profile_id).toBe(userCId);
       const { rows: sp } = await sql(cC, `SELECT * FROM public.fantasy_squad_players WHERE squad_id = $1`, [squadId]);
-      expect(sp.length).toBe(7);
+      expect(sp.length).toBe(8);
       await expect(sql(cC, "UPDATE public.fantasy_squad_players SET slot='sub' WHERE squad_id=$1", [squadId])).rejects.toMatchObject({ code: "42501" });
       await expect(sql(cC, "UPDATE public.fantasy_squads SET captain_id=NULL WHERE id=$1", [squadId])).rejects.toMatchObject({ code: "42501" });
 
@@ -328,7 +330,7 @@ describe("PostgreSQL integration: match management", () => {
       const taId = matchInfo[0].team_a_id;
 
 
-      await sql(cA, `INSERT INTO public.match_lineups (id, match_id, league_id, team_id, player_id, slot, "order", created_at) VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'starter', 1, now()), (gen_random_uuid()::text, $1, $2, $3, $5, 'starter', 2, now())`, [matchId, leagueAId, taId, players[0].id, players[1].id]);
+      await sql(admin, `INSERT INTO public.match_lineups (id, match_id, league_id, team_id, player_id, slot, "order", created_at) VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'starter', 1, now()), (gen_random_uuid()::text, $1, $2, $3, $5, 'starter', 2, now())`, [matchId, leagueAId, taId, players[0].id, players[1].id]);
 
       await sql(cA, `INSERT INTO public.match_events (id, match_id, league_id, team_id, player_id, event_type, minute, note, created_by, created_at, updated_at) VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'goal', 23, 'Great strike', $5, now(), now()), (gen_random_uuid()::text, $1, $2, $3, $6, 'yellow_card', 45, 'Tactical foul', $5, now(), now())`, [matchId, leagueAId, taId, players[0].id, userAId, players[1].id]);
 
@@ -351,7 +353,7 @@ describe("PostgreSQL integration: match management", () => {
       const { rows: events } = await sql(cA, "SELECT player_id FROM public.match_events WHERE match_id=$1 ORDER BY minute", [matchId]);
       await sql(admin, "UPDATE public.players SET team_id=$1,position='DEF' WHERE id=ANY($2)", [match.team_a_id, events.map((e) => e.player_id)]);
       for (const team of [match.team_a_id, match.team_b_id]) {
-        const entries = team === match.team_a_id ? events.map((e) => ({ player_id: e.player_id, slot: "starter", order: 0 })) : [];
+        const entries = team === match.team_a_id ? events.map((e, order) => ({ player_id: e.player_id, slot: "starter", order })) : [];
         const existing = entries.length;
         for (let i = existing; i < 5; i++) {
           const id = randomUUID();
@@ -534,6 +536,8 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
     try {
       await setAuthUid(c, userAId);
       const { rows: [legacy] } = await sql(c, "SELECT public.create_league('Legacy rule repair',null,'5v5',5,5,null) AS id");
+      // Simulate a pre-upgrade league created without a seed.
+      await sql(admin, "DELETE FROM scoring_rules WHERE league_id=$1", [legacy.id]);
       expect((await sql(c, "SELECT id FROM scoring_rules WHERE league_id=$1", [legacy.id])).rowCount).toBe(0);
       const install = "SELECT * FROM public.initialize_scoring_rules($1)";
       expect((await sql(c, install, [legacy.id])).rowCount).toBe(44);
@@ -598,7 +602,7 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       for (const [order, position] of positions.entries()) {
         const player_id = randomUUID();
         await sql(c, "INSERT INTO players(id,league_id,full_name,position,created_by) VALUES($1,$2,$3,$4,$5)", [player_id, other, `Seven ${order}`, position, userAId]);
-        entries.push({ player_id, slot: order < 7 ? "starter" : order < 9 ? "sub" : "reserve", order });
+        entries.push({ player_id, slot: order < 7 ? "starter" : order < 9 ? "sub" : "reserve", order: order === 7 ? 0 : order === 8 ? 1 : order });
       }
       const save = (formation: string, picks: typeof entries, revision: string | null, captain = entries[0].player_id) =>
         sql(c, "SELECT public.save_fantasy_squad_v2($1,$2,$3,$4,$5,$6) AS result",
@@ -609,7 +613,7 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       await expect(save("3-2-1", entries.map((e,i) => i === 6 ? { ...entries[7], slot: "starter" } : i === 7 ? { ...entries[6], slot: "sub" } : e), null)).rejects.toMatchObject({ code: "22023" });
       const first = (await save("3-2-1", entries, null)).rows[0].result;
       expect(first.squad.completed_at).toBeTruthy();
-      const swapped = entries.map((e,i) => i === 2 ? { ...e, slot: "sub", order: 8 } : i === 8 ? { ...e, slot: "starter", order: 2 } : e);
+      const swapped = entries.map((e,i) => i === 2 ? { ...e, slot: "sub", order: 1 } : i === 8 ? { ...e, slot: "starter", order: 2 } : e);
       const edit = (await save("2-3-1", swapped, first.squad.updated_at)).rows[0].result;
       expect(edit.squad).toMatchObject({ id: first.squad.id, formation: "2-3-1", completed_at: first.squad.completed_at });
       expect(edit.entries.find((e: {player_id: string}) => e.player_id === entries[9].player_id)).toEqual(first.entries[9]);
@@ -632,6 +636,8 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       const save = (captain: string, vice: string, revision: string) => sql(c,
         "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS result", [leagueAId, captain, vice, revision, JSON.stringify(picks)]);
       const revised = (await save(absent.id, goal.player_id, original.revision)).rows[0].result;
+      // Exercise the explicit recalculation path for a pre-receipt historical match.
+      await sql(admin, "DELETE FROM match_scoring_receipts WHERE match_id=$1", [matchId]);
       await sql(c, "SELECT public.calculate_match_points($1)", [matchId]);
       const latest = (arg = leagueAId) => sql(c, "SELECT * FROM public.last_game_points($1)", [arg]);
       const fresh = (await latest()).rows[0];
@@ -696,7 +702,13 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       const playerId = randomUUID();
       await sql(c, "INSERT INTO players(id,league_id,team_id,full_name,position,created_by) VALUES($1,$2,$3,'Event scorer','MID',$4)",
         [playerId, leagueAId, teams[0].id, userAId]);
-      await sql(c, "SELECT * FROM public.replace_match_lineup($1,$2,$3)", [id, teams[0].id, JSON.stringify([{ player_id: playerId, slot: "starter", order: 0 }])]);
+      const entries = [{ player_id: playerId, slot: "starter", order: 0 }];
+      for (let order = 1; order < 5; order++) {
+        const player_id = randomUUID();
+        await sql(c, "INSERT INTO players(id,league_id,team_id,full_name,position,created_by) VALUES($1,$2,$3,$4,$5,$6)", [player_id, leagueAId, teams[0].id, `Event lineup ${order}`, order === 1 ? "GK" : "DEF", userAId]);
+        entries.push({ player_id, slot: "starter", order });
+      }
+      await sql(c, "SELECT * FROM public.replace_match_lineup($1,$2,$3)", [id, teams[0].id, JSON.stringify(entries)]);
       const eventId = randomUUID();
       const statement = "SELECT public.write_match_event($1,$2,'event',$3) AS result";
       const payload = { teamId: teams[0].id, playerId, eventType: "goal", minute: 9 };
@@ -753,5 +765,256 @@ describe("Player photo Storage policies and player linkage", () => {
       expect((await remove(nextKey)).rowCount).toBe(1);
       await remove(otherKey);
     } finally { c.release(); }
+  });
+});
+
+const defaults: Record<string, number[]> = {
+  goal: [10,6,5,4], own_goal: [-2,-2,-2,-2], assist: [3,3,3,3], yellow_card: [-1,-1,-1,-1], red_card: [-3,-3,-3,-3],
+  penalty_saved: [5,3,3,3], penalty_missed: [-1,-1,-1,-1], appearance: [1,1,1,1], clean_sheet: [4,4,1,0], win: [0,0,0,0], draw: [0,0,0,0],
+};
+const positions = ["GK","DEF","MID","FWD"];
+async function releaseLeague(c: PoolClient, size: number) {
+  await setAuthUid(c, userAId);
+  const { rows: [{ id }] } = await sql(c, "SELECT public.create_league_confirmed($1,$2,null,$3,$4,3,null) as id", [randomUUID(), `Release ${size}`, `${size}v${size}`, size]);
+  await sql(admin, "INSERT INTO league_members(id,league_id,profile_id,role) VALUES($1,$2,$3,'organizer'),($4,$2,$5,'manager')", [randomUUID(),id,userCId,randomUUID(),userBId]);
+  const [home, away] = [randomUUID(), randomUUID()];
+  await sql(c, "INSERT INTO teams(id,league_id,name) VALUES($1,$3,'Home'),($2,$3,'Away')", [home,away,id]);
+  const makePlayer = async (position: string, team: string, name = position) => {
+    const player = randomUUID();
+    await sql(admin, "INSERT INTO players(id,league_id,team_id,position,full_name,created_by) VALUES($1,$2,$3,$4,$5,$6)", [player,id,team,position,name,userAId]);
+    return player;
+  };
+  const makeMatch = async () => {
+    await setAuthUid(c,userCId);
+    const match = randomUUID();
+    await sql(c,"SELECT public.create_real_match($1,$2,$3,$4,'Release match',now(),null)",[match,id,home,away]);
+    return match;
+  };
+  return { id, home, away, makePlayer, makeMatch };
+}
+const matchEntries = (start: string[], bench: string[] = []) => [
+  ...start.map((player_id,order)=>({player_id,order,slot:"starter"})),
+  ...bench.map((player_id,order)=>({player_id,order,slot:"sub"})),
+];
+const persistLineup = (c: PoolClient, match: string, team: string, entries: ReturnType<typeof matchEntries>) =>
+  sql(c,"SELECT * FROM public.replace_match_lineup($1,$2,$3)",[match,team,JSON.stringify(entries)]);
+
+describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
+  it.each([5,7])("saves an atomic %s-a-side lineup with scoped role checks and never touches fantasy picks", async (size) => {
+    const c = await freshClient();
+    try {
+      const league = await releaseLeague(c,size);
+      const players = await Promise.all(Array.from({length:size+2},(_,i) => league.makePlayer(i===0||i===size+1 ? "GK" : "DEF",league.home,`Lineup player ${i}`)));
+      const match = await league.makeMatch();
+      const first = matchEntries(players.slice(0,size), [players[size]]);
+      await expect(persistLineup(c,match,league.home,first.slice(1))).rejects.toMatchObject({code:"22023"});
+      await expect(persistLineup(c,match,league.home,matchEntries(players.slice(1,size+1)))).rejects.toMatchObject({code:"22023"});
+      await expect(persistLineup(c,match,league.home,matchEntries([players[0],players[0],...players.slice(2,size)]))).rejects.toMatchObject({code:"22023"});
+      const saved = await persistLineup(c,match,league.home,first); // assigned organizer
+      expect(saved.rowCount).toBe(size+1);
+      expect((await persistLineup(c,match,league.home,first)).rows).toEqual(saved.rows);
+      await setAuthUid(c,userBId);
+      await expect(persistLineup(c,match,league.home,first)).rejects.toMatchObject({code:"42501"});
+      await setAuthUid(c,userAId);
+      await expect(sql(c,"DELETE FROM match_lineups WHERE match_id=$1",[match])).rejects.toMatchObject({code:"42501"});
+      const next = matchEntries([players[size+1],...players.slice(1,size)], [players[size]]);
+      await sql(admin,"UPDATE players SET availability='suspended' WHERE id=$1",[players[size+1]]);
+      await expect(persistLineup(c,match,league.home,next)).rejects.toMatchObject({code:"22023"});
+      const read = (conn: PoolClient) => sql(conn,"SELECT player_id,slot,\"order\" FROM match_lineups WHERE match_id=$1 AND team_id=$2 ORDER BY slot,\"order\"",[match,league.home]);
+      expect((await read(c)).rows).toEqual(first);
+      await sql(admin,"UPDATE players SET availability='available',team_id=NULL WHERE id=$1",[players[size+1]]);
+      await expect(persistLineup(c,match,league.home,next)).rejects.toMatchObject({code:"22023"});
+      await sql(admin,"UPDATE players SET team_id=$2 WHERE id=$1",[players[size+1],league.home]);
+      if (size === 5) {
+        // Fail after DELETE and after INSERT is attempted, not just validation.
+        await sql(admin,`CREATE FUNCTION public.ff_test_fail_lineup() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'Injected write failure'; END; $$;
+          CREATE TRIGGER ff_test_fail_lineup AFTER INSERT ON public.match_lineups FOR EACH STATEMENT EXECUTE FUNCTION public.ff_test_fail_lineup();`);
+        try {
+          await expect(persistLineup(c,match,league.home,next)).rejects.toThrow(/Injected write failure/);
+          expect((await read(c)).rows).toEqual(first);
+        } finally {
+          await sql(admin,"DROP TRIGGER ff_test_fail_lineup ON public.match_lineups; DROP FUNCTION public.ff_test_fail_lineup()");
+        }
+      }
+      await persistLineup(c,match,league.home,next); // leader not organizer
+      const reader = await freshClient();
+      try { await setAuthUid(reader,userBId); expect((await read(reader)).rows).toEqual(next); }
+      finally { reader.release(true); }
+      expect((await sql(c,"SELECT id FROM fantasy_squads WHERE league_id=$1",[league.id])).rowCount).toBe(0);
+    } finally { c.release(); }
+  });
+
+  it("skips an ineligible priority, preserves starters who played, and keeps 5- and 7-a-side shapes valid", async () => {
+    const draft = (ids: string[], pos: string[], absent: Set<string>) => ids.map((id,priority) => ({id,name:id,position:pos[priority],priority,played:!absent.has(id)}));
+    const auto = async (starters: ReturnType<typeof draft>,bench: ReturnType<typeof draft>,shape: string,size: number) =>
+      (await sql(admin,"SELECT public.ff_auto_substitutions($1,$2,$3,$4) as result",[JSON.stringify(starters),JSON.stringify(bench),shape,size])).rows[0].result;
+    const ids = ["keeper","one-def","mid-one","mid-two","fwd-one"];
+    const five = ["GK","DEF","MID","MID","FWD"];
+    const bench = draft(["bench-gk","bench-fwd","bench-def"],["GK","FWD","DEF"],new Set());
+    expect(await auto(draft(ids,five,new Set(["keeper","one-def"])),bench,"1-2-1",5)).toEqual([
+      expect.objectContaining({outId:"keeper",inId:"bench-gk"}),expect.objectContaining({outId:"one-def",inId:"bench-def"}),
+    ]);
+    expect(await auto(draft(ids,five,new Set(["one-def"])),bench,"1-2-1",5)).toEqual([expect.objectContaining({outId:"one-def",inId:"bench-def"})]);
+    expect(await auto(draft(ids,five,new Set(["one-def","keeper"])),bench.slice(1,2),"1-2-1",5)).toEqual([]);
+    expect(await auto(draft(ids,five,new Set(["mid-one","one-def"])),bench,"1-2-1",5)).toEqual([
+      expect.objectContaining({outId:"mid-one",inId:"bench-fwd"}),expect.objectContaining({outId:"one-def",inId:"bench-def"}),
+    ]);
+    expect(await auto(draft([...ids,"two-def","fwd-two"],[...five,"DEF","FWD"],new Set(["mid-one","one-def"])),bench,"2-2-2",7)).toHaveLength(2);
+    expect(await auto(draft(ids,five,new Set(["keeper"])),bench,"2-1-1",5)).toEqual([]);
+  });
+
+  it("matches all 44 new defaults; scores every event by position; only awards clean sheets to participating starters", async () => {
+    const c = await freshClient();
+    try {
+      const league = await releaseLeague(c,5);
+      const config = (await sql(c,"SELECT position,event_type,points,status FROM scoring_rules WHERE league_id=$1",[league.id])).rows;
+      expect(config).toHaveLength(44);
+      for (const row of config) {
+        expect(row.status).toBe("draft");
+        expect(Number(row.points)).toBe(defaults[row.event_type][positions.indexOf(row.position)]);
+      }
+      await sql(c,"UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1",[league.id,userAId]);
+      const home = await Promise.all([...positions,"MID","DEF","FWD"].map((pos) => league.makePlayer(pos,league.home)));
+      const away = await Promise.all([...positions,"MID"].map((pos) => league.makePlayer(pos,league.away)));
+      const create = async () => {
+        const match = await league.makeMatch();
+        await persistLineup(c,match,league.home,matchEntries(home.slice(0,5),home.slice(5)));
+        await persistLineup(c,match,league.away,matchEntries(away));
+        return match;
+      };
+      const approve = async (match: string) => { await sql(c,"SELECT public.submit_match($1)",[match]); await sql(c,"SELECT public.approve_match($1,2)",[match]); };
+      const eventMatch = await create();
+      const eventTypes = ["goal","own_goal","assist","yellow_card","red_card","penalty_saved","penalty_missed"];
+      for (const playerId of home.slice(0,4)) for (const eventType of eventTypes) {
+        const args = [eventMatch,randomUUID(),JSON.stringify({teamId:league.home,playerId,eventType,minute:10})];
+        const statement = "SELECT public.write_match_event($1,$2,'event',$3)";
+        await sql(c,statement,args); await sql(c,statement,args); // request retry must not duplicate points
+      }
+      await approve(eventMatch);
+      const ledger = (await sql(c,"SELECT * FROM player_match_points WHERE match_id=$1",[eventMatch])).rows;
+      for (const [i,id] of home.slice(0,4).entries()) {
+        const row = ledger.find((r)=>r.player_id===id);
+        for (const event of [...eventTypes,"appearance"]) expect(row.breakdown).toContainEqual(expect.objectContaining({category:event,count:1,points:defaults[event][i]}));
+        expect(Number(row.points)).toBe([...eventTypes,"appearance"].reduce((sum,event)=>sum+defaults[event][i],0));
+        expect(row.breakdown.find((line:{category:string})=>line.category==="draw" || line.category==="win" || line.category==="clean_sheet")).toBeUndefined();
+      }
+      const cleanMatch = await create();
+      await sql(c,"SELECT public.write_match_event($1,$2,'substitution',$3)",[cleanMatch,randomUUID(),JSON.stringify({teamId:league.home,playerId:home[5],otherId:home[1],minute:19})]);
+      await approve(cleanMatch);
+      const clean = (await sql(c,"SELECT * FROM player_match_points WHERE match_id=$1",[cleanMatch])).rows;
+      for (const [i,id] of home.slice(0,4).entries()) {
+        const row = clean.find((r)=>r.player_id===id);
+        expect(Number(row.points)).toBe(1+defaults.clean_sheet[i]);
+      }
+      expect(clean.find((r)=>r.player_id===home[5]).breakdown).toEqual([expect.objectContaining({category:"appearance",points:1})]);
+      expect(clean.some((r)=>r.player_id===home[6])).toBe(false);
+      const before = (await sql(c,"SELECT player_id,points,breakdown FROM player_match_points WHERE match_id=$1 ORDER BY player_id",[cleanMatch])).rows;
+      await setAuthUid(c,userAId);
+      await sql(c,"UPDATE scoring_rules SET points=37 WHERE league_id=$1 AND event_type='clean_sheet'",[league.id]);
+      await sql(c,"SELECT public.initialize_scoring_rules($1)",[league.id]);
+      await sql(c,"SELECT public.calculate_match_points($1)",[cleanMatch]);
+      expect((await sql(c,"SELECT player_id,points,breakdown FROM player_match_points WHERE match_id=$1 ORDER BY player_id",[cleanMatch])).rows).toEqual(before);
+      // The zero default is a league setting, not a missing calculation.
+      await sql(c,"UPDATE scoring_rules SET points=CASE event_type WHEN 'win' THEN 2 ELSE 3 END WHERE league_id=$1 AND event_type IN ('win','draw')",[league.id]);
+      const drawMatch = await create();
+      await approve(drawMatch);
+      const draw = (await sql(c,"SELECT breakdown FROM player_match_points WHERE match_id=$1",[drawMatch])).rows;
+      expect(draw.every((r)=>r.breakdown.some((line: {category: string; points: number})=>line.category==='draw' && line.points===3))).toBe(true);
+      const winMatch = await create();
+      await sql(c,"SELECT public.write_match_event($1,$2,'event',$3)",[winMatch,randomUUID(),JSON.stringify({teamId:league.home,playerId:home[3],eventType:'goal',minute:6})]);
+      await approve(winMatch);
+      const win = (await sql(c,"SELECT player_id,breakdown FROM player_match_points WHERE match_id=$1",[winMatch])).rows;
+      expect(win.filter((r)=>r.breakdown.some((line: {category: string; points: number})=>line.category==='win' && line.points===2))
+        .map((r)=>r.player_id).sort()).toEqual(home.slice(0,5).sort());
+    } finally {c.release();}
+  });
+
+  it("finalizes a 7-a-side replacement and rolls back all scoring if a receipt cannot be written", async () => {
+    const c = await freshClient();
+    try {
+      const league = await releaseLeague(c,7);
+      const shape = ["GK","DEF","DEF","MID","MID","FWD","FWD"];
+      const home = await Promise.all(shape.map((pos)=>league.makePlayer(pos,league.home)));
+      const away = await Promise.all(shape.map((pos)=>league.makePlayer(pos,league.away)));
+      const missing = await league.makePlayer("DEF",league.home);
+      const starters = [home[0],missing,...home.slice(2)];
+      await sql(c,"UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1",[league.id,userAId]);
+      await sql(c,"SELECT public.save_fantasy_squad_v2($1,'2-2-2',$2,$3,null,$4)",
+        [league.id,home[0],home[3],JSON.stringify(matchEntries(starters,[away[0],home[1]]))]);
+      const match = await league.makeMatch();
+      await persistLineup(c,match,league.home,matchEntries(home));
+      await persistLineup(c,match,league.away,matchEntries(away));
+      await sql(c,"SELECT public.submit_match($1)",[match]);
+      const approve = () => sql(c,"SELECT public.approve_match($1,2)",[match]);
+      await sql(admin,`CREATE FUNCTION public.ff_test_fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'Injected receipt failure'; END; $$;
+        CREATE TRIGGER ff_test_fail_receipt BEFORE INSERT ON public.match_scoring_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.ff_test_fail_receipt();`);
+      try {
+        await expect(approve()).rejects.toThrow(/Injected receipt failure/);
+        expect((await sql(c,"SELECT status FROM real_matches WHERE id=$1",[match])).rows).toEqual([{status:"pending"}]);
+        for (const table of ["player_match_points","manager_points","fantasy_points_history","match_scoring_receipts"])
+          expect((await sql(admin,`SELECT match_id FROM ${table} WHERE match_id=$1`,[match])).rowCount).toBe(0);
+        expect((await sql(c,"SELECT matches_played FROM league_standings WHERE league_id=$1 AND profile_id=$2",[league.id,userAId])).rows).toEqual([{matches_played:0}]);
+      } finally {
+        await sql(admin,"DROP TRIGGER ff_test_fail_receipt ON public.match_scoring_receipts; DROP FUNCTION public.ff_test_fail_receipt()");
+      }
+      await approve();
+      await setAuthUid(c,userAId);
+      const {rows:[score]} = await sql(c,"SELECT points,breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2",[match,userAId]);
+      expect(score.breakdown.substitutions).toEqual([expect.objectContaining({outId:missing,inId:home[1]})]);
+      expect(score.breakdown.lines).toHaveLength(7);
+      expect(Number(score.points)).toBe(26);
+    } finally {c.release();}
+  });
+
+  it("applies bench at approval, keeps a zero-point player who played, and writes one immutable standings result", async () => {
+    const c = await freshClient();
+    try {
+      const league = await releaseLeague(c,5);
+      const home = await Promise.all(["GK","DEF","MID","MID","FWD","FWD","DEF"].map((pos,i)=>league.makePlayer(pos,league.home,`Home ${i}`)));
+      const away = await Promise.all(["GK","DEF","MID","MID","FWD"].map((pos)=>league.makePlayer(pos,league.away)));
+      const missing = await Promise.all(["GK","DEF","MID"].map((pos,i)=>league.makePlayer(pos,league.home,`Absent ${i}`)));
+      await sql(c,"UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1",[league.id,userAId]);
+      // FWD scores exactly zero without bonus events; this playing starter must remain.
+      await sql(c,"UPDATE scoring_rules SET points=0 WHERE league_id=$1 AND position='FWD' AND event_type='appearance'",[league.id]);
+      const starters = [missing[0],missing[1],missing[2],home[3],home[4]];
+      const picks = matchEntries(starters,[home[0],home[5],home[6]]);
+      const save = (revision: string|null, entries=picks) => sql(c,"SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) as result",[league.id,missing[0],home[3],revision,JSON.stringify(entries)]);
+      const squad = (await save(null)).rows[0].result;
+      await sql(c,"UPDATE scoring_rules SET points=0 WHERE league_id=$1 AND position='GK' AND event_type IN ('appearance','clean_sheet')",[league.id]);
+      await setAuthUid(c,userBId);
+      await sql(c,"SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+        [league.id,home[0],home[3],JSON.stringify(matchEntries(home.slice(0,5),[away[0]]))]);
+      const match = await league.makeMatch();
+      await persistLineup(c,match,league.home,matchEntries(home.slice(0,5),home.slice(5)));
+      await persistLineup(c,match,league.away,matchEntries(away));
+      for (const [i,id] of home.slice(5).entries()) await sql(c,"SELECT public.write_match_event($1,$2,'substitution',$3)",[match,randomUUID(),JSON.stringify({teamId:league.home,playerId:id,otherId:home[i+1],minute:19})]);
+      await sql(c,"SELECT public.submit_match($1)",[match]);
+      const official = (await sql(c,"SELECT public.approve_match($1,2) as result",[match])).rows[0].result;
+      await setAuthUid(c,userAId);
+      const scores = () => sql(c,"SELECT id,points,breakdown,computed_at FROM manager_points WHERE match_id=$1 AND profile_id=$2",[match,userAId]);
+      const saved = (await scores()).rows[0];
+      expect(saved.breakdown).toMatchObject({captainId:home[3],substitutions:[
+        expect.objectContaining({inId:home[0],outId:missing[0]}),expect.objectContaining({inId:home[5],outId:missing[2]}),expect.objectContaining({inId:home[6],outId:missing[1]}),
+      ]});
+      expect(saved.breakdown.lines).toContainEqual({playerId:home[4],base:0,multiplier:1,points:0});
+      expect(saved.breakdown.lines).toContainEqual({playerId:home[3],base:2,multiplier:2,points:4});
+      expect(Number(saved.points)).toBe(5);
+      expect((await sql(c,"SELECT * FROM public.recent_fantasy_substitutions($1)",[league.id])).rows[0]).toMatchObject({matchId:match,substitutions:saved.breakdown.substitutions});
+      expect((await sql(c,"SELECT * FROM fantasy_squad_players WHERE squad_id=$1 AND slot='starter'",[squad.squad.id])).rows.map(r=>r.player_id).sort()).toEqual([...starters].sort());
+      const reordered = picks.map((e)=>e.slot==='sub' && e.order > 0 ? {...e,order:3-e.order}:e);
+      await save(squad.squad.updated_at,reordered);
+      expect((await sql(c,"SELECT public.calculate_match_points($1) as result",[match])).rows[0].result).toEqual(official);
+      await expect(sql(c,"SELECT public.approve_match($1,2)",[match])).rejects.toThrow(/not pending/);
+      expect((await scores()).rows).toEqual([saved]);
+      expect((await sql(c,"SELECT points FROM fantasy_points_history WHERE match_id=$1 AND profile_id=$2",[match,userAId])).rows).toEqual([{points:saved.points}]);
+      expect((await sql(c,"SELECT matches_played,total_points FROM league_standings WHERE league_id=$1 AND profile_id=$2",[league.id,userAId])).rows).toEqual([{matches_played:1,total_points:saved.points}]);
+      await setAuthUid(c,userBId);
+      const { rows: [zero] } = await sql(c,"SELECT breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2",[match,userBId]);
+      expect(zero.breakdown).toMatchObject({ captainId: home[0], substitutions: [] });
+      expect(zero.breakdown.lines).toContainEqual({ playerId: home[0], base: 0, multiplier: 2, points: 0 });
+      expect((await sql(c,"SELECT * FROM public.recent_fantasy_substitutions($1)",[league.id])).rowCount).toBe(0);
+    } finally {c.release();}
   });
 });
