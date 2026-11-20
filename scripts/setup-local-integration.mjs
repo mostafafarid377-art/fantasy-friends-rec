@@ -1,5 +1,5 @@
 // Prepare an empty local PostgreSQL database for integration tests. Supabase
-// Auth and Realtime objects here are test scaffolding, not deployment SQL.
+// Auth, Storage metadata and Realtime objects here are test scaffolding, not deployment SQL.
 import { readdir, readFile } from "node:fs/promises";
 import { Client } from "pg";
 
@@ -19,6 +19,14 @@ try {
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
       SELECT nullif(current_setting('auth.uid', true), '')::uuid
     $$;
+    CREATE SCHEMA storage;
+    GRANT USAGE ON SCHEMA storage TO anon, authenticated;
+    CREATE TABLE storage.buckets (id text primary key, name text not null, public boolean not null,
+      file_size_limit bigint, allowed_mime_types text[]);
+    CREATE TABLE storage.objects (bucket_id text not null references storage.buckets(id), name text not null,
+      primary key (bucket_id, name));
+    ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO anon, authenticated;
     CREATE TABLE auth.users (id uuid PRIMARY KEY, email text, email_confirmed_at timestamptz,
       raw_user_meta_data jsonb, created_at timestamptz, updated_at timestamptz);
   `);

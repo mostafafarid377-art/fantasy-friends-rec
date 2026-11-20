@@ -183,3 +183,31 @@ it("refreshes the dashboard's selected-league Last Game Points without replacing
   expect(await screen.findByText("No finalized game yet")).toBeTruthy();
   expect(screen.queryByText("Morning final")).toBeNull();
 });
+
+it("previews real starters, captaincy and substitutes, refreshes an edited squad, and renders the other league's empty pitch", async () => {
+  const make = (p: PoolPlayer, slot: "starter" | "sub", order: number) => ({ ...p, slot, order, name: p.fullName });
+  const photoUrl = "/api/leagues/league-a/players/gk-a/photo?v=photo.jpg";
+  let players = [make({ ...pool[0], photoUrl }, "starter", 0), make(pool[4], "starter", 1), make(pool[5], "sub", 0)];
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url === "/api/auth/session") return Response.json(session);
+    const l = url.endsWith(b.id) ? b : a;
+    return Response.json({ league: { ...l, squadSize: 9 }, squad: l === a ? { formation: "1-2-1", captainId: "gk-a", viceCaptainId: "def-a", players } : null,
+      standings: [], myRank: null, lastGame: null, fixtures: [], matches: [], notifications: [], rulesApproved: true, emailVerified: true, memberCount: 1 });
+  }));
+  renderInShell(<DashboardPage />);
+  const pitch = within(await screen.findByRole("region", { name: "5v5 football pitch, formation 1-2-1" }));
+  expect(pitch.getAllByRole("img")).toHaveLength(5);
+  expect(pitch.getByRole("img", { name: "Ada Keeper, GK, captain" }).querySelector("img")?.getAttribute("src")).toBe(photoUrl);
+  expect(pitch.getByRole("img", { name: "Dana Defender, DEF, vice-captain" }).textContent).toContain("VC");
+  expect(pitch.queryByText("Moe Midfielder")).toBeNull();
+  expect(screen.getByText("Moe Midfielder")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "View Full Squad" }).getAttribute("href")).toBe("/team");
+  players = [make(pool[1], "starter", 0), ...players.slice(1)];
+  fireEvent(window, new StorageEvent("storage", { key: `ff:league-content-changed:${a.id}` }));
+  expect(await pitch.findByRole("img", { name: "Zed Keeper, GK" })).toBeTruthy();
+  expect(pitch.queryByText("Ada Keeper")).toBeNull();
+  fireEvent.change(screen.getByRole("combobox", { name: "Active league" }), { target: { value: b.id } });
+  const other = within(await screen.findByRole("region", { name: /7v7 football pitch/ }));
+  expect(other.getAllByRole("img", { name: /^Empty/ })).toHaveLength(7);
+  expect(screen.getByRole("link", { name: "Pick Your Squad" }).getAttribute("href")).toBe("/team/pick");
+});

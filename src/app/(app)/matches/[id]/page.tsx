@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import {
+  Avatar,
   Badge,
   Button,
   ErrorNote,
@@ -509,7 +510,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                                 : "border-line bg-pitch-900"
                           }`}
                         >
-                          <span className="num w-8 text-[10.5px] uppercase text-green-glow/75">{p.position}</span>
+                          <Avatar name={p.fullName} url={p.photoUrl} size={26} decorative />
+                          <span className="num w-7 text-[10.5px] uppercase text-green-glow/75">{p.position}</span>
                           <span className="min-w-0 flex-1 truncate text-[13.5px] text-chalk">{p.fullName}</span>
                           <div className="flex gap-1">
                             <button

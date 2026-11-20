@@ -7,6 +7,7 @@ import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from "./ui";
+import { notifyLeagueContentChanged, useLeagueContentUpdates } from "@/lib/client/league-updates";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import {
   compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
@@ -54,11 +55,18 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   const editing = initialMode || edit !== null;
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
+  useLeagueContentUpdates(leagueId, squad.reload, false);
+  useLeagueContentUpdates(leagueId, pool.reload, false);
+
   if (squad.error && !squad.data) return <div className="mx-auto max-w-5xl p-5"><ErrorNote message={squad.error} onRetry={() => void squad.reload()} /></div>;
   if (!squad.data) return <div className="mx-auto max-w-5xl space-y-4 p-5"><Skeleton className="h-24" /><Skeleton className="h-80" /></div>;
   const stored = squad.data;
   const current = edit ?? snapshot(stored);
-  const { players, formation, captainId, viceId } = current;
+  const { formation, captainId, viceId } = current;
+  // Refresh photo presentation without touching the unsaved slot choices or
+  // the revision guarding concurrent squad edits.
+  const photos = new Map([...stored.players, ...(pool.data?.players ?? [])].map((p) => [p.id, p.photoUrl]));
+  const players = edit ? current.players.map((p) => photos.has(p.id) ? { ...p, photoUrl: photos.get(p.id) ?? null } : p) : current.players;
   const { rules } = stored;
   const caps = squadCaps(rules);
   const shape = findFormation(formation, rules.format) ?? FORMATIONS[rules.format][0];
@@ -114,6 +122,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
       } });
       if (result.state !== "applied" || !result.squad?.id || !result.squad.updatedAt) throw new ApiRequestError("Save was not confirmed. Reload before retrying.", 409);
       squad.setData(result);
+      notifyLeagueContentChanged(leagueId);
       cancel();
       setNotice(result.squad.completedAt ? "Squad saved." : "Squad draft saved.");
     } catch (err) {

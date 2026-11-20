@@ -711,3 +711,47 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
   });
 
 });
+
+describe("Player photo Storage policies and player linkage", () => {
+  it("uses a private bucket, scopes upload/read/removal, and preserves a linked photo on other edits", async () => {
+    const c = await freshClient();
+    try {
+      const { rows: [bucket] } = await sql(admin, "SELECT public, file_size_limit FROM storage.buckets WHERE id='player-images'");
+      expect(bucket).toEqual({ public: false, file_size_limit: "5242880" });
+      const playerId = randomUUID(), sameLeagueOther = randomUUID(), outsider = randomUUID();
+      const key = `${leagueAId}/${playerId}/${randomUUID()}.jpg`;
+      const nextKey = `${leagueAId}/${playerId}/${randomUUID()}.jpg`;
+      const otherKey = `${leagueAId}/${sameLeagueOther}/${randomUUID()}.jpg`;
+      const add = (path: string) => sql(c, "INSERT INTO storage.objects(bucket_id,name) VALUES('player-images',$1)", [path]);
+      const read = (path: string) => sql(c, "SELECT name FROM storage.objects WHERE bucket_id='player-images' AND name=$1", [path]);
+      const remove = (path: string) => sql(c, "DELETE FROM storage.objects WHERE bucket_id='player-images' AND name=$1", [path]);
+      const photo = (path: string | null) => sql(c, "UPDATE players SET photo_url=$2 WHERE id=$1 RETURNING photo_url", [playerId, path]);
+      await setAuthUid(c, userAId);
+      for (const p of [playerId, sameLeagueOther]) await sql(c, "INSERT INTO players(id,league_id,full_name,position,created_by) VALUES($1,$2,$3,'DEF',$4)", [p, leagueAId, `Photo ${p}`, userAId]);
+      await expect(photo(`player-images/${key}`)).rejects.toMatchObject({ code: "22023" });
+      await expect(add(`${leagueBId}/${playerId}/${randomUUID()}.jpg`)).rejects.toMatchObject({ code: "42501" });
+      await expect(add(`${leagueAId}/${playerId}/not-a-photo.svg`)).rejects.toMatchObject({ code: "42501" });
+      await add(key); await add(otherKey); await add(nextKey);
+      await expect(photo(`player-images/${otherKey}`)).rejects.toMatchObject({ code: "22023" });
+      expect((await photo(`player-images/${key}`)).rows[0].photo_url).toBe(`player-images/${key}`);
+      expect((await remove(key)).rowCount).toBe(0);
+      expect((await sql(c, "UPDATE players SET full_name='Photo retained', team_id=NULL WHERE id=$1 RETURNING photo_url", [playerId])).rows[0].photo_url).toBe(`player-images/${key}`);
+      await setAuthUid(c, userCId);
+      expect((await read(key)).rowCount).toBe(1);
+      expect((await read(nextKey)).rowCount).toBe(0);
+      expect((await remove(key)).rowCount).toBe(0);
+      await expect(add(`${leagueAId}/${playerId}/${randomUUID()}.jpg`)).rejects.toMatchObject({ code: "42501" });
+      await setAuthUid(c, outsider);
+      expect((await read(key)).rowCount).toBe(0);
+      await setAuthUid(c, null);
+      expect((await read(key)).rowCount).toBe(0);
+      await setAuthUid(c, userAId);
+      await photo(`player-images/${nextKey}`);
+      expect((await remove(key)).rowCount).toBe(1);
+      expect((await remove(nextKey)).rowCount).toBe(0);
+      await photo(null);
+      expect((await remove(nextKey)).rowCount).toBe(1);
+      await remove(otherKey);
+    } finally { c.release(); }
+  });
+});

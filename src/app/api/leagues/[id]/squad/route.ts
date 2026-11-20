@@ -1,3 +1,4 @@
+import { playerPhotoUrl } from "@/lib/player-photo";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
@@ -20,9 +21,9 @@ function squadDto(row: SavedSquad): NonNullable<SquadResponse["squad"]> {
   return { id: row.id, formation: row.formation, captainId: row.captain_id,
     viceCaptainId: row.vice_captain_id, completedAt: row.completed_at, updatedAt: row.updated_at };
 }
-function entryDto(row: PlayerRow, entry: Entry): SquadEntry {
+function entryDto(row: PlayerRow, entry: Entry, leagueId: string): SquadEntry {
   return { id: row.id, name: row.full_name, position: row.position as Position, slot: entry.slot, order: entry.order,
-    photoUrl: row.photo_url, shirtNumber: row.shirt_number, availability: row.availability, status: row.status, teamId: row.team_id };
+    photoUrl: playerPhotoUrl(row.photo_url, leagueId, row.id), shirtNumber: row.shirt_number, availability: row.availability, status: row.status, teamId: row.team_id };
 }
 
 export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
@@ -38,7 +39,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     player_id: string; slot: Entry["slot"]; order: number; players: PlayerRow | null }[] }) | null;
   const players = (row?.fantasy_squad_players ?? []).map((e) => {
     if (!e.players || e.players.id !== e.player_id) throw new ApiError("A saved squad player could not be loaded", 409);
-    return entryDto(e.players, { playerId: e.player_id, slot: e.slot, order: e.order });
+    return entryDto(e.players, { playerId: e.player_id, slot: e.slot, order: e.order }, id);
   });
   return Response.json({ squad: row ? squadDto(row) : null, players,
     rules: leagueRules(membership.league), vicePolicy: membership.league.vice_policy } satisfies SquadResponse);
@@ -75,7 +76,7 @@ export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {
   const players = input.entries.map((e) => {
     const p = byId.get(e.playerId)!;
     if (p.status !== "active") throw new ApiError(`${p.full_name} is archived and cannot be selected`, 422);
-    return entryDto(p, e);
+    return entryDto(p, e, id);
   });
   const complete = players.length === rules.squadSize;
   const validation = (complete ? validateSquad : validateSquadDraft)(rules, players, {

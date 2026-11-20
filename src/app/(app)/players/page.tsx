@@ -4,6 +4,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { Archive, Pencil, Plus, ShieldAlert, UserSquare2 } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import {
+  Avatar,
   Badge,
   Button,
   EmptyState,
@@ -20,6 +21,8 @@ import {
 } from "@/components/ui";
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
 import { api, assertConfirmed, useApi } from "@/lib/client/api";
+import { KEEP_PHOTO, PlayerPhotoField, type PhotoChange } from "@/components/PlayerPhotoField";
+import { notifyLeagueContentChanged } from "@/lib/client/league-updates";
 import { AVAILABILITY, POSITIONS, type Position } from "@/lib/domain";
 
 type Player = {
@@ -75,6 +78,9 @@ export default function PlayersPage() {
   const [teamId, setTeamId] = useState("ALL");
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [photoChange, setPhotoChange] = useState<PhotoChange>(KEEP_PHOTO);
+  const [photoPreparing, setPhotoPreparing] = useState(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [teamModal, setTeamModal] = useState(false);
   const [teamName, setTeamName] = useState("");
@@ -104,47 +110,63 @@ export default function PlayersPage() {
     return { ...old, players, total: players.length };
   });
 
+  function closeEditor() {
+    setDraft(null); setEditingId(null); setEditorError(null); setPhotoChange(KEEP_PHOTO); setPhotoPreparing(false);
+  }
+
+  function editPlayer(player: Player) {
+    setEditingId(player.id); setEditorError(null); setPhotoChange(KEEP_PHOTO); setPhotoPreparing(false);
+    setDraft({ fullName: player.fullName, position: player.position, teamId: player.teamId ?? "",
+      shirtNumber: player.shirtNumber ? String(player.shirtNumber) : "", photoUrl: player.photoUrl ?? "",
+      availability: player.availability, description: player.description ?? "" });
+  }
+
   const savePlayer = async () => {
-    if (!league || !draft) return;
-    setSaving(true);
+    if (!league || !draft || saving || photoPreparing) return;
+    setSaving(true); setEditorError(null);
+    let metadataSaved = false;
     try {
+      if (photoChange.kind === "link" && !/^https?:\/\//i.test(photoChange.url.trim())) throw new Error("Enter an http or https image link, or choose a photo instead.");
       const body = {
-        fullName: draft.fullName.trim(),
-        position: draft.position,
-        teamId: draft.teamId || null,
+        fullName: draft.fullName.trim(), position: draft.position, teamId: draft.teamId || null,
         shirtNumber: draft.shirtNumber ? Number(draft.shirtNumber) : null,
-        photoUrl: draft.photoUrl.trim() || null,
-        availability: draft.availability,
-        description: draft.description.trim() || null,
+        ...(photoChange.kind === "link" ? { photoUrl: photoChange.url.trim() } : {}),
+        availability: draft.availability, description: draft.description.trim() || null,
       };
-      const route = `/api/leagues/${league.id}/players${editingId ? `/${editingId}` : ""}`;
-      const res = await api<{ player: Player }>(route, { method: editingId ? "PATCH" : "POST", body, idempotent: !editingId });
-      const saved = assertConfirmed(res?.player, "The saved player could not be confirmed", league.id);
+      const base = `/api/leagues/${league.id}/players`;
+      const res = await api<{ player: Player }>(editingId ? `${base}/${editingId}` : base,
+        { method: editingId ? "PATCH" : "POST", body, idempotent: !editingId });
+      let saved = assertConfirmed(res?.player, "The saved player could not be confirmed", league.id);
       if (editingId && saved.id !== editingId) throw new Error("The saved player ID did not match");
+      if (photoChange.kind === "link" && saved.photoUrl !== body.photoUrl) throw new Error("The saved photo link could not be confirmed");
+      metadataSaved = true;
       updatePlayer(saved);
+      notifyLeagueContentChanged(league.id);
       if (!editingId) {
         setQuery(""); setPosition("ALL"); setTeamId("ALL"); setVisible(PLAYER_BATCH); setJustCreated(saved.id);
       }
+      if (photoChange.kind === "upload" || (photoChange.kind === "remove" && saved.photoUrl)) {
+        // A failed upload must not recreate a player on retry. Keep the real
+        // player ID and the selected image in this open editor.
+        setEditingId(saved.id);
+        const photoRoute = `${base}/${encodeURIComponent(saved.id)}/photo`;
+        const form = new FormData();
+        if (photoChange.kind === "upload") form.append("photo", photoChange.blob, "player.jpg");
+        const result = await api<{ player: Player }>(photoRoute, photoChange.kind === "upload" ? { method: "POST", body: form } : { method: "DELETE" });
+        const withPhoto = assertConfirmed(result?.player, "The player photo change could not be confirmed", league.id);
+        if (withPhoto.id !== saved.id || (photoChange.kind === "upload" ? !withPhoto.photoUrl?.startsWith(`${photoRoute}?v=`) : withPhoto.photoUrl !== null)) {
+          throw new Error("The player photo change could not be confirmed");
+        }
+        saved = withPhoto;
+        updatePlayer(saved);
+        notifyLeagueContentChanged(league.id);
+      }
       setToast({ message: editingId ? "Player updated" : "Player added", tone: "ok" });
-      setDraft(null);
-      setEditingId(null);
+      closeEditor();
     } catch (err) {
-      const details = (err as { details?: unknown }).details;
-      setToast({
-        message: Array.isArray(details)
-          ? (details as unknown[])
-              .map((d) =>
-                typeof d === "string" ? d : Object.values(d as Record<string, string[]>).flat().join(" "),
-              )
-              .join(" ")
-          : err instanceof Error
-            ? err.message
-            : "Could not save player",
-        tone: "error",
-      });
-    } finally {
-      setSaving(false);
-    }
+      const message = err instanceof Error ? err.message : "Could not save player";
+      setEditorError(metadataSaved ? `Player details were saved, but the photo change was not confirmed. ${message}` : message);
+    } finally { setSaving(false); }
   };
 
   const archive = async (player: Player) => {
@@ -223,6 +245,7 @@ export default function PlayersPage() {
               {!!data?.teams.length && <Button variant="outline" onClick={() => setManagingTeams(true)}>Manage teams</Button>}
               <Button
                 onClick={() => {
+                  setEditorError(null); setPhotoChange(KEEP_PHOTO); setPhotoPreparing(false);
                   setDraft({ ...EMPTY });
                   setEditingId(null);
                 }}
@@ -296,14 +319,7 @@ export default function PlayersPage() {
                 p.status === "archived" ? "border-line bg-pitch-900 opacity-60" : "border-line bg-pitch-850 hover:border-green-dim"
               }`}
             >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-pitch-900 font-display text-[15px] font-bold text-green">
-                {p.photoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img loading="lazy" decoding="async" src={p.photoUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  p.fullName.slice(0, 1)
-                )}
-              </span>
+              <Avatar name={p.fullName} url={p.photoUrl} size={40} decorative />
               <button onClick={() => setDetail(p)} className="min-w-0 flex-1 text-left">
                 <div className="truncate text-[14.5px] font-semibold text-chalk">{p.fullName}</div>
                 <div className="num mt-0.5 flex flex-wrap gap-2 text-[11.5px] uppercase tracking-[0.1em] text-sage-dim">
@@ -319,18 +335,7 @@ export default function PlayersPage() {
               {isLeader && (
                 <div className="flex gap-1.5">
                   <button
-                    onClick={() => {
-                      setEditingId(p.id);
-                      setDraft({
-                        fullName: p.fullName,
-                        position: p.position,
-                        teamId: p.teamId ?? "",
-                        shirtNumber: p.shirtNumber ? String(p.shirtNumber) : "",
-                        photoUrl: p.photoUrl ?? "",
-                        availability: p.availability,
-                        description: p.description ?? "",
-                      });
-                    }}
+                    onClick={() => editPlayer(p)}
                     className="rounded border border-line p-1.5 text-sage transition-colors hover:border-green hover:text-green"
                     aria-label="Edit player"
                   >
@@ -359,11 +364,12 @@ export default function PlayersPage() {
       {/* player editor */}
       <Modal
         open={Boolean(draft)}
-        onClose={() => setDraft(null)}
+        onClose={() => { if (!saving) closeEditor(); }}
         title={editingId ? "Edit player" : "Add player"}
       >
         {draft && (
-          <div className="space-y-4">
+          <fieldset className="min-w-0 space-y-4" disabled={saving}>
+            {editorError && <div role="alert"><ErrorNote message={editorError} /></div>}
             <Field label="Full name">
               <TextInput
                 value={draft.fullName}
@@ -420,13 +426,8 @@ export default function PlayersPage() {
                 </Select>
               </Field>
             </div>
-            <Field label="Photo URL" hint="Optional. A crest-style initial is used when empty.">
-              <TextInput
-                value={draft.photoUrl}
-                onChange={(e) => setDraft({ ...draft, photoUrl: e.target.value })}
-                placeholder="https://…"
-              />
-            </Field>
+            <PlayerPhotoField name={draft.fullName} current={draft.photoUrl || null} change={photoChange}
+              onChange={setPhotoChange} disabled={saving} onPreparing={setPhotoPreparing} />
             <Field label="Description" hint="Optional note shown in the player panel.">
               <TextInput
                 value={draft.description}
@@ -435,14 +436,14 @@ export default function PlayersPage() {
               />
             </Field>
             <div className="flex justify-end gap-2.5 pt-1">
-              <Button variant="ghost" onClick={() => setDraft(null)}>
+              <Button variant="ghost" onClick={closeEditor}>
                 Cancel
               </Button>
-              <Button onClick={savePlayer} loading={saving} disabled={draft.fullName.trim().length < 2}>
+              <Button onClick={savePlayer} loading={saving} disabled={draft.fullName.trim().length < 2 || photoPreparing}>
                 {editingId ? "Save changes" : "Add player"}
               </Button>
             </div>
-          </div>
+          </fieldset>
         )}
       </Modal>
 
@@ -477,14 +478,7 @@ export default function PlayersPage() {
           <button className="absolute inset-0 cursor-default" aria-label="Close" onClick={() => setDetail(null)} />
           <div className="animate-rise relative w-full max-w-md rounded-t-2xl border border-line bg-pitch-850 p-5 sm:rounded-xl">
             <div className="flex items-center gap-4">
-              <span className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-green-dim bg-pitch-900 font-display text-2xl font-bold text-green">
-                {detail.photoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img loading="lazy" decoding="async" src={detail.photoUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  detail.fullName.slice(0, 1)
-                )}
-              </span>
+              <Avatar name={detail.fullName} url={detail.photoUrl} size={64} ring decorative />
               <div className="min-w-0">
                 <h2 className="truncate text-2xl text-chalk">{detail.fullName}</h2>
                 <div className="num mt-1 flex gap-3 text-[12px] uppercase tracking-[0.1em]">
@@ -520,16 +514,7 @@ export default function PlayersPage() {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    setEditingId(detail.id);
-                    setDraft({
-                      fullName: detail.fullName,
-                      position: detail.position,
-                      teamId: detail.teamId ?? "",
-                      shirtNumber: detail.shirtNumber ? String(detail.shirtNumber) : "",
-                      photoUrl: detail.photoUrl ?? "",
-                      availability: detail.availability,
-                      description: detail.description ?? "",
-                    });
+                    editPlayer(detail);
                     setDetail(null);
                   }}
                 >

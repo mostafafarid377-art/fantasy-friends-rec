@@ -114,7 +114,8 @@ export async function api<T = unknown>(route: string, options: RequestOptions = 
 async function requestJson<T>(route: string, options: RequestOptions): Promise<T> {
   const method = options.method ?? "GET";
   const actor = options.recoveryActor ?? actorId;
-  const operationId = options.idempotent && method === "POST" && isReplayable(route)
+  const multipart = options.body instanceof FormData ? options.body : null;
+  const operationId = !multipart && options.idempotent && method === "POST" && isReplayable(route)
     ? options.operationId ?? newOperationId() : undefined;
   const queued = actor && operationId && options.body !== undefined;
   if (queued) {
@@ -128,11 +129,11 @@ async function requestJson<T>(route: string, options: RequestOptions): Promise<T
     response = await fetch(route, {
       method, cache: "no-store", credentials: "same-origin", signal: options.signal,
       headers: {
-        "Content-Type": "application/json",
+        ...(!multipart ? { "Content-Type": "application/json" } : {}),
         ...(operationId ? { "x-operation-id": operationId } : {}),
         ...(options.recoveryActor ? { "x-ff-recovery-actor": options.recoveryActor } : {}),
       },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: multipart ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
     });
   } catch (err) {
     if (options.signal?.aborted) throw err;

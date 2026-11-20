@@ -44,7 +44,7 @@ const createSchema = z.object({
   position: z.enum(POSITIONS),
   teamId: z.string().nullable().optional(),
   shirtNumber: z.number().int().min(1).max(99).nullable().optional(),
-  photoUrl: z.string().url().nullable().optional().or(z.literal("").transform(() => null)),
+  photoUrl: z.url({ protocol: /^https?$/ }).nullable().optional().or(z.literal("").transform(() => null)),
   availability: z.enum(["available", "doubt", "injured", "suspended"]).default("available"),
   description: z.string().max(400).nullable().optional(),
 });

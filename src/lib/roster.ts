@@ -1,3 +1,4 @@
+import { playerPhotoUrl } from "@/lib/player-photo";
 import type { Position } from "@/lib/domain";
 
 export const PLAYER_FIELDS = "id,league_id,team_id,full_name,photo_url,position,shirt_number,availability,status,description";
@@ -12,7 +13,7 @@ type PlayerRow = {
 export function playerDto(p: PlayerRow) {
   return {
     id: p.id, leagueId: p.league_id, teamId: p.team_id, fullName: p.full_name,
-    photoUrl: p.photo_url, position: p.position as Position, shirtNumber: p.shirt_number,
+    photoUrl: playerPhotoUrl(p.photo_url, p.league_id, p.id), position: p.position as Position, shirtNumber: p.shirt_number,
     availability: p.availability, status: p.status, description: p.description,
   };
 }
