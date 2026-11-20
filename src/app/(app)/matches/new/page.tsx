@@ -24,20 +24,23 @@ export default function NewMatchPage() {
   const [teamA, setTeamA] = useState("");
   const [teamB, setTeamB] = useState("");
   const [kickOff, setKickOff] = useState("");
+  const [duration, setDuration] = useState("90");
   const [fixtureId, setFixtureId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
 
   const teamList = teams.data?.teams ?? [];
-  const valid = title.trim().length >= 3 && teamA && teamB && teamA !== teamB && kickOff;
+  const durationMinutes = Number(duration);
+  const validDuration = /^\d{1,3}$/.test(duration) && durationMinutes >= 1 && durationMinutes <= 200;
+  const valid = title.trim().length >= 3 && teamA && teamB && teamA !== teamB && kickOff && validDuration;
 
   const create = async () => {
-    if (!league || !canOrganize) return;
+    if (!league || !canOrganize || !valid || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await api<{ match: { id: string } }>("/api/matches", {
+      const res = await api<{ match: { id: string; duration_minutes: number } }>("/api/matches", {
         method: "POST",
         body: {
           leagueId: league.id,
@@ -45,11 +48,13 @@ export default function NewMatchPage() {
           teamBId: teamB,
           title: title.trim(),
           kickOff: new Date(kickOff).toISOString(),
+          durationMinutes,
           fixtureId: fixtureId || null,
         },
         idempotent: true,
       });
       const match = assertConfirmed(res?.match, "The saved match could not be confirmed");
+      if (match.duration_minutes !== durationMinutes) throw new Error("The saved match duration could not be confirmed");
       setToast({ message: "Match created — set the line-ups", tone: "ok" });
       router.push(`/matches/${match.id}`);
     } catch (err) {
@@ -138,6 +143,9 @@ export default function NewMatchPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Kick-off">
               <TextInput type="datetime-local" value={kickOff} onChange={(e) => setKickOff(e.target.value)} />
+            </Field>
+            <Field label="Match duration (minutes)" hint="For example, 60 or 90 minutes." error={duration && !validDuration ? "Enter a whole number from 1 to 200." : undefined}>
+              <TextInput type="number" min={1} max={200} step={1} inputMode="numeric" required value={duration} onChange={(e) => setDuration(e.target.value)} />
             </Field>
             <Field label="Attach to fixture" hint="Optional">
               <Select value={fixtureId} onChange={(e) => setFixtureId(e.target.value)}>

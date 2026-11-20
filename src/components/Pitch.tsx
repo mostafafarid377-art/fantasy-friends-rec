@@ -111,7 +111,7 @@ function Token({
     <TokenElement
       {...(onClick ? { type: "button" as const, onClick, disabled } : { role: "img" })}
       aria-label={label}
-      aria-description={showPoints ? `Latest game: ${game?.points == null ? "no recorded points" : formatPlayerPoints(game.points)}` : undefined}
+      aria-description={showPoints ? `Latest game: ${game?.points == null ? "no recorded points" : formatPlayerPoints(game.points)}${game?.captainPoints == null ? "" : `; ${game.captainPoints} fantasy points as captain`}` : undefined}
       title={label}
       className="group absolute z-10 rounded focus-visible:outline focus-visible:outline-green -translate-x-1/2 -translate-y-1/2 flex flex-col items-center text-center transition-[left,top,transform] motion-reduce:transition-none duration-[380ms] ease-[cubic-bezier(.2,.8,.2,1)] disabled:cursor-default"
       style={{ left: `${x}%`, top: `${y}%`, width: `${width}%` }}
@@ -138,8 +138,8 @@ function Token({
         <span className={`${compact ? "mt-0.5 text-[10px]" : "mt-0.5 text-[10.5px]"} block max-w-[min(100%,100px)] truncate rounded bg-black/60 px-1 py-0.5 font-semibold leading-tight text-chalk backdrop-blur`}>
           {player.name}
         </span>
-        {showPoints && <PlayerPointsLabel game={game} />}
-        <span className="num block leading-tight text-[9px] uppercase tracking-[0.1em] text-green-glow/80">
+        {showPoints && <PlayerPointsLabel game={game} onPitch />}
+        <span className={`num block leading-tight text-[9px] uppercase tracking-[0.1em] text-green-glow/80 ${game?.captainPoints != null ? "absolute right-1/2 top-1 mr-4 rounded bg-pitch-950/90 px-0.5" : ""}`}>
           {player.position}
         </span>
       </span>

@@ -53,7 +53,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       id: match.id, title: match.title, status: match.status, version: match.version,
       homeScore: match.home_score ?? null, awayScore: match.away_score ?? null,
       leagueId: match.league_id, teamAId: match.team_a_id, teamBId: match.team_b_id,
-      kickOff: match.kick_off, organizerId: match.organizer_id, fixtureId: match.fixture_id,
+      kickOff: match.kick_off, durationMinutes: match.duration_minutes ?? null, organizerId: match.organizer_id, fixtureId: match.fixture_id,
       submittedBy: match.submitted_by, submittedAt: match.submitted_at, decidedBy: match.decided_by,
       decidedAt: match.decided_at, rejectionReason: match.rejection_reason,
       teamAName: teamName.get(match.team_a_id) ?? "Team A",

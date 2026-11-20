@@ -39,6 +39,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     league: leagueDto(membership.league),
     role: membership.role,
     isLeader: membership.role === "leader",
+    canDelete: membership.league.created_by === membership.profileId,
     members,
     standings: (standings.data ?? []).map((s: any) => ({
       profileId: s.profile_id,
@@ -103,4 +104,21 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
   const updated = confirmedRow(data, error, "Could not update league settings");
 
   return Response.json({ league: leagueDto(updated) });
+});
+
+const deleteSchema = z.object({ confirmation: z.string().min(1).max(60) });
+
+export const DELETE = handler(async (req: NextRequest, ctx: Ctx) => {
+  const { id } = await ctx.params;
+  const sb = await getSupabase();
+  const membership = await requireMember(id, sb);
+  if (membership.league.created_by !== membership.profileId) throw new ApiError("Only the league creator can delete this league", 403);
+  const input = deleteSchema.safeParse(await req.json().catch(() => null));
+  if (!input.success || input.data.confirmation !== membership.league.name) {
+    throw new ApiError("Type the current league name exactly to confirm deletion", 422);
+  }
+  const result = await sb.rpc("delete_owned_league", { p_league: id, p_confirmation: input.data.confirmation });
+  checkDb(result.error, "Could not delete league");
+  if (result.data !== id) throw new ApiError("League deletion could not be confirmed. Refresh your league list before retrying.", 409);
+  return Response.json({ deletedId: id });
 });

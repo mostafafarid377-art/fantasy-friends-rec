@@ -15,9 +15,10 @@ export function useLatestPlayerGames(leagueId: string, players: SquadEntry[]) {
   return result;
 }
 
-export function PlayerPointsLabel({ game }: { game: LatestPlayerGame | undefined }) {
+export function PlayerPointsLabel({ game, onPitch = false }: { game: LatestPlayerGame | undefined; onPitch?: boolean }) {
   return <span className={`num block leading-tight text-[11px] font-bold ${game?.points == null ? "text-sage" : "text-green-glow"}`}>
     {formatPlayerPoints(game?.points)}
+    {game?.captainPoints != null && <span className={`${onPitch ? "block text-[10px]" : "ml-1 inline-block"} text-card-y`} title="Fantasy contribution with the captain multiplier">{onPitch ? `C: ${game.captainPoints} pts` : `${game.captainPoints} pts (C ×2)`}</span>}
   </span>;
 }
 
@@ -39,6 +40,7 @@ export function PlayerPerformanceDialog({ leagueId, entry, latest, onClose, acti
   const next = pages.length ? pages[pages.length - 1].next : history.data?.next;
   const player = history.data?.player;
   const last = history.data ? history.data.games[0] : latest;
+  const latestWithCaptain = last && latest?.matchId === last.matchId ? { ...last, captainPoints: latest.captainPoints } : last;
   const name = player?.name ?? entry.name;
 
   async function loadMore() {
@@ -60,7 +62,7 @@ export function PlayerPerformanceDialog({ leagueId, entry, latest, onClose, acti
       <Avatar name={name} url={player ? player.photoUrl : entry.photoUrl} size={48} decorative />
       <div className="min-w-0 break-words">
         <div className="text-sm text-chalk">{player?.position ?? entry.position}{player?.team ? ` · ${player.team}` : ""}</div>
-        <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-sage">Latest game <PlayerPointsLabel game={last} /></div>
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-sage">Latest game <PlayerPointsLabel game={latestWithCaptain} /></div>
       </div>
     </div>
     {actions && <div className="mb-5 border-b border-line pb-4">{actions}</div>}

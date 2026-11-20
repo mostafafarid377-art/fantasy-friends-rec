@@ -53,6 +53,7 @@ type MatchData = {
     homeScore: number | null;
     awayScore: number | null;
     kickOff: string;
+    durationMinutes: number | null;
     teamAId: string;
     teamBId: string;
     teamAName: string;
@@ -384,7 +385,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
           minute: "2-digit",
         })} · v${m.version}`}
         title={`${teamName(m.teamAId)} v ${teamName(m.teamBId)}`}
-        subtitle={m.title}
+        subtitle={m.durationMinutes == null ? m.title : `${m.title} · ${m.durationMinutes} min`}
         actions={<Badge tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Badge>}
       />
 

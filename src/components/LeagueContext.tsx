@@ -20,6 +20,7 @@ type LeagueContextValue = {
   setUnread: (count: number) => void;
   loading: boolean;
   selectLeague: (id: string) => void;
+  forgetLeague: (id: string) => void;
   refresh: () => Promise<SessionPayload>;
   logout: () => Promise<void>;
   recovered: number;
@@ -36,7 +37,7 @@ export function AppProvider({ children, initialSession }: { children: ReactNode;
   const [ready, setReady] = useState(false);
   const [recovered, setRecovered] = useState(0);
   const actor = session.user?.id ?? null;
-  const { refresh } = session;
+  const { refresh, forgetLeague: discard } = session;
 
   useEffect(() => {
     try { setActiveId(window.localStorage.getItem(ACTIVE_KEY)); } catch { /* storage unavailable */ }
@@ -76,13 +77,19 @@ export function AppProvider({ children, initialSession }: { children: ReactNode;
     }
   }, []);
 
+  const forgetLeague = useCallback((id: string) => {
+    discard(id);
+    setActiveId((current) => current === id ? null : current);
+    try { if (window.localStorage.getItem(ACTIVE_KEY) === id) window.localStorage.removeItem(ACTIVE_KEY); } catch { /* storage unavailable */ }
+  }, [discard]);
+
   const league = ready ? session.leagues.find((l) => l.id === activeId) ?? session.leagues[0] ?? null : null;
   const value = useMemo<LeagueContextValue>(() => ({
     user: session.user, leagues: session.leagues, league, unread: session.unread, setUnread: session.setUnread,
-    loading: !ready, selectLeague, refresh, logout: session.logout, recovered,
+    loading: !ready, selectLeague, forgetLeague, refresh, logout: session.logout, recovered,
     isLeader: league?.role === "leader",
     canOrganize: league?.role === "leader" || league?.role === "organizer",
-  }), [session.user, session.leagues, session.unread, session.setUnread, league, ready, selectLeague, refresh, session.logout, recovered]);
+  }), [session.user, session.leagues, session.unread, session.setUnread, league, ready, selectLeague, forgetLeague, refresh, session.logout, recovered]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

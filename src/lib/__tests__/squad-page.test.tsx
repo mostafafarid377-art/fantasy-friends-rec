@@ -265,7 +265,7 @@ it("shows individual latest points on starters and bench, opens history on deman
   saved.set(a.id, { ...empty(a), squad: { id: "s-a", formation: "1-2-1", captainId: "gk-a", viceCaptainId: null, completedAt: null, updatedAt: "2026-11-01T12:00:00Z" },
     players: [{ ...pool[0], slot: "starter", name: pool[0].fullName, order: 0 }, { ...pool[1], slot: "sub", name: pool[1].fullName, order: 0 },
       { ...pool[4], slot: "starter", name: pool[4].fullName, order: 1 }] });
-  latest["gk-a"] = { matchId: "match-8", points: 8 };
+  latest["gk-a"] = { matchId: "match-8", points: 8, captainPoints: 16 };
   latest["gk-b"] = { matchId: "match-9", points: null };
   histories.set("gk-a", { player: { name: "Ada Keeper", position: "GK", team: "Reds", photoUrl: "https://example.com/keeper.jpg" }, next: null, games: [
     { matchId: "match-8", kickOff: "2026-11-19T10:00:00Z", title: "Cup match", gameweek: 8, opponent: "Blues", participation: "played", points: 8,
@@ -278,6 +278,7 @@ it("shows individual latest points on starters and bench, opens history on deman
   const page = renderInShell();
   const starter = await screen.findByRole("button", { name: "Ada Keeper, GK, captain" });
   expect(await within(starter).findByText("8 pts")).toBeTruthy();
+  expect(within(starter).getByText("C: 16 pts")).toBeTruthy();
   const bench = screen.getByRole("button", { name: /Zed Keeper/ });
   expect(within(bench).getByText("—")).toBeTruthy();
   expect(fetch.mock.calls.filter(([url]) => url.includes("/player-performance?"))).toHaveLength(1);
@@ -289,6 +290,7 @@ it("shows individual latest points on starters and bench, opens history on deman
     .toEqual([expect.stringContaining("Cup match"), expect.stringContaining("Opening match")]);
   expect(history.getByText("0 pts")).toBeTruthy();
   expect(dialog().getByText("GK · Reds")).toBeTruthy();
+  expect(dialog().getByText("16 pts (C ×2)")).toBeTruthy();
   const cupSummary = history.getByText("Cup match · GW 8").closest("summary")!;
   fireEvent.click(cupSummary);
   expect(cupSummary.closest("details")?.open).toBe(true);

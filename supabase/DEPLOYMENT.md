@@ -16,6 +16,8 @@ missing forward migrations, in order:
 5. `0009_bench_lineups_scoring.sql` (bench, match lineup and scoring release)
 6. `0010_player_performance.sql` (individual points and finalized match history)
 7. `0011_recorded_match_results.sql` (recorded scores and automatic clean sheets)
+8. `0012_captain_visibility_and_league_deletion.sql` (captain contribution and creator-only league deletion)
+9. `0013_match_duration.sql` (planned match duration)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -81,7 +83,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0011_recorded_match_results.sql`. The
+`0001_schema.sql` to `0013_match_duration.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -230,3 +232,27 @@ On staging, verify a 2–0 and a 0–0 result, a named substitute who did not pl
 then correct a result from 2–0 to 2–1. Confirm the player and fantasy history,
 standings and match history agree. Retry the result and check that no ledger or
 history entry is duplicated.
+
+## Captain contribution and league deletion
+
+Apply `0012` before releasing the matching app. It does not recalculate
+historical results or delete any existing data on deployment.
+
+- The pitch keeps the raw player score and shows a separate captain total where
+  your finalized manager ledger applied the multiplier for that same match.
+  This includes an applied vice-captain fallback. Saving a captain after
+  approval does not change historical points.
+- Only a league creator who is still a member can delete it. Use **Settings →
+  Delete league** and type the exact current name. The operation permanently
+  deletes the league’s database data in one transaction, without deleting
+  accounts or any other league. Previously uploaded private Storage blobs
+  become inaccessible through the app; physical storage cleanup is separate
+  and must use the Storage API, not SQL deletes on `storage.objects`.
+
+## Match duration
+
+Apply `0013` before deploying the duration field. It adds a nullable whole-minute
+field (1–200) and extends the match creation RPC with an optional trailing
+argument so legacy clients and queued requests still work. Older matches stay
+unspecified. Duration is scheduled match information; it does not change
+scoring, clean-sheet eligibility or the range allowed for recording match events.
