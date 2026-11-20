@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, Plus, Save } from "lucide-react";
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
 import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "./PlayerPerformance";
+import { countdown, useKickoffClock } from "@/lib/match-deadline";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from "./ui";
 import { notifyLeagueContentChanged, useLeagueContentUpdates } from "@/lib/client/league-updates";
@@ -53,7 +54,22 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   const [message, setMessage] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const editing = initialMode || edit !== null;
+  const deadline = squad.data?.deadline;
+  const remaining = useKickoffClock(deadline?.serverNow, deadline?.kickOff);
+  const hasDeadline = Boolean(deadline);
+  const locked = Boolean(deadline?.locked || remaining === 0);
+  const editing = !locked && (initialMode || edit !== null);
+  useEffect(() => {
+    if (!hasDeadline) return;
+    const refresh = () => { if (document.visibilityState === "visible") void squad.reload(); };
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener("focus", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [hasDeadline, squad.reload]);
+  useEffect(() => {
+    if (!locked) return;
+    setEdit(null); setInitialMode(false); setPick(null); setMoving(null);
+  }, [locked]);
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
   const scores = useLatestPlayerGames(leagueId, edit?.players ?? squad.data?.players ?? []);
@@ -64,12 +80,12 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   if (squad.error && !squad.data) return <div className="mx-auto max-w-5xl p-5"><ErrorNote message={squad.error} onRetry={() => void squad.reload()} /></div>;
   if (!squad.data) return <div className="mx-auto max-w-5xl space-y-4 p-5"><Skeleton className="h-24" /><Skeleton className="h-80" /></div>;
   const stored = squad.data;
-  const current = edit ?? snapshot(stored);
+  const current = (editing ? edit : null) ?? snapshot(stored);
   const { formation, captainId, viceId } = current;
   // Refresh photo presentation without touching the unsaved slot choices or
   // the revision guarding concurrent squad edits.
   const photos = new Map([...stored.players, ...(pool.data?.players ?? [])].map((p) => [p.id, p.photoUrl]));
-  const players = edit ? current.players.map((p) => photos.has(p.id) ? { ...p, photoUrl: photos.get(p.id) ?? null } : p) : current.players;
+  const players = editing && edit ? current.players.map((p) => photos.has(p.id) ? { ...p, photoUrl: photos.get(p.id) ?? null } : p) : current.players;
   const { rules } = stored;
   const caps = squadCaps(rules);
   const shape = findFormation(formation, rules.format) ?? FORMATIONS[rules.format][0];
@@ -83,6 +99,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   const savedComplete = Boolean(stored.squad?.completedAt) && complete && validation.ok && archived.length === 0;
 
   function begin() {
+    if (locked) return;
     setEdit(current);
     setMessage(null);
     setNotice(null);
@@ -91,6 +108,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
     setEdit(null); setInitialMode(false); setMessage(null); setConflict(false); setPick(null); setPlayerId(null); setMoving(null);
   }
   function openPicker(target: PickTarget) {
+    if (locked) return;
     if (!editing) begin();
     setPick(target); setPlayerId(null); setMoving(null);
   }
@@ -117,7 +135,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
     changePlayers(next, pick.replace ? formation : candidate.label);
   }
   async function save() {
-    if (saving || conflict || !validation.ok || archived.length) return;
+    if (locked || saving || conflict || !validation.ok || archived.length) return;
     setSaving(true); setMessage(null); setNotice(null);
     try {
       const result = await api<SquadResponse & { state: string }>(route, { method: "PUT", body: {
@@ -125,13 +143,14 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         entries: players.map((p) => ({ playerId: p.id, slot: p.slot, order: p.order })),
       } });
       if (result.state !== "applied" || !result.squad?.id || !result.squad.updatedAt) throw new ApiRequestError("Save was not confirmed. Reload before retrying.", 409);
-      squad.setData({ ...result, recentSubs: stored.recentSubs });
+      squad.setData((previous) => ({ ...result, deadline: previous?.deadline, recentSubs: previous?.recentSubs }));
       notifyLeagueContentChanged(leagueId);
       cancel();
       setNotice(result.squad.completedAt ? "Squad saved." : "Squad draft saved.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not save squad. Reload before retrying.");
       setConflict(err instanceof ApiRequestError && (err.status === 409 || err.status === 0));
+      if (err instanceof ApiRequestError && err.message.includes("Squad Locked")) void squad.reload();
     } finally { setSaving(false); }
   }
   function assign(role: "captain" | "vice", p: SquadEntry) {
@@ -159,7 +178,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   </button>;
   const priorityButton = "grid min-h-10 min-w-10 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-40";
   const addStarter = (position: Position) => openPicker({ slot: "starter", position });
-  const pickActions = editing ? <>
+  const pickActions = locked ? null : editing ? <>
     <Button variant="outline" onClick={cancel} disabled={saving}>Cancel</Button>
     <Button onClick={save} loading={saving} disabled={conflict || !validation.ok || archived.length > 0 || (!players.length && !current.revision)}>
       <Save className="h-4 w-4" /> {complete ? "Save squad" : "Save draft"}
@@ -174,6 +193,8 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         subtitle={editing ? "Tap a pitch slot to pick, or tap a player for their performance and squad actions. Changes only count after saving."
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
         actions={<>{pickActions}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
+      {locked ? <p role="status" className="mb-4 rounded border border-line p-3 text-sm text-chalk"><strong>Squad Locked.</strong> {deadline?.title ?? "The match"} has started. Your saved squad stays unchanged until the match is finalized.</p>
+        : remaining != null && <p className="mb-4 text-sm text-chalk">{deadline?.title} kicks off in <span className="num text-green">{countdown(remaining)}</span>.</p>}
       {(message || squad.error) && <div className="mb-4" role="alert">
         <ErrorNote message={message ?? squad.error!} onRetry={squad.error ? () => void squad.reload() : undefined} />
         {conflict && <Button variant="outline" className="mt-2" onClick={() => { cancel(); void squad.reload(); }}>Discard changes & reload</Button>}
@@ -190,7 +211,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             </select> : <Badge>{shape.label}</Badge>}
           </div>
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
-            disabled={saving} latest={latest} onAdd={addStarter} onSelect={setPlayerId} />
+            disabled={saving} latest={latest} onAdd={locked ? undefined : addStarter} onSelect={setPlayerId} />
           {scores.error ? <ErrorNote message={scores.error} onRetry={() => void scores.reload()} /> : scores.loading && <p role="status" className="text-xs text-sage">Loading latest player points…</p>}
           {!!unplaced.length && <Panel className="p-3">
             <p className="mb-2 text-sm text-card-y">Some saved starters no longer fit. Move, replace or remove them to repair the lineup.</p>
@@ -200,7 +221,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             <h2 className="mb-2 text-lg text-chalk">Bench <span className="num text-sm text-sage">{bench.length}/{caps.sub}</span></h2>
             <p className="mb-2 text-xs text-sage">Goalkeeper first. Outfield priorities are checked from 1 down.</p>
             <ol className="space-y-2">
-              <li className="flex">{keeper ? benchRow(keeper, "GK") : <Button size="sm" variant="outline" disabled={saving || players.length >= rules.squadSize || bench.length >= caps.sub}
+              <li className="flex">{keeper ? benchRow(keeper, "GK") : <Button size="sm" variant="outline" disabled={locked || saving || players.length >= rules.squadSize || bench.length >= caps.sub}
                 onClick={() => openPicker({ slot: "sub", position: "GK" })}>Pick bench goalkeeper</Button>}</li>
               {bench.filter((p) => p.position === "GK" && p !== keeper).map((p) => <li key={p.id} className="flex">{benchRow(p, "Extra GK")}</li>)}
               {outfield.map((p, index) => <li key={p.id} className="flex items-stretch gap-1">
@@ -209,7 +230,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
                   <button type="button" className={priorityButton} aria-label={`Lower ${p.name} priority`} disabled={saving || index === outfield.length - 1} onClick={() => shiftBench(index, 1)}><ArrowDown aria-hidden="true" className="h-4 w-4" /></button></>}
               </li>)}
             </ol>
-            {outfield.length < caps.sub - 1 && bench.length < caps.sub && players.length < rules.squadSize && <Button size="sm" variant="outline" className="mt-2" disabled={saving}
+            {outfield.length < caps.sub - 1 && bench.length < caps.sub && players.length < rules.squadSize && <Button size="sm" variant="outline" className="mt-2" disabled={locked || saving}
               onClick={() => openPicker({ slot: "sub" })}><Plus className="h-4 w-4" /> Add outfield sub</Button>}
           </Panel>}
         </section>
@@ -229,7 +250,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             return <Panel key={slot} className="p-4">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="text-xl text-chalk">{LABEL[slot]} <span className="num text-sm text-sage">{group.length}/{caps[slot]}</span></h2>
-                {group.length < caps[slot] && players.length < rules.squadSize && <Button size="sm" variant="outline" disabled={saving}
+                {group.length < caps[slot] && players.length < rules.squadSize && <Button size="sm" variant="outline" disabled={locked || saving}
                   onClick={() => openPicker({ slot })}><Plus className="h-4 w-4" /> Add reserve</Button>}
               </div>
               {group.length ? <ul className="space-y-1">{group.map((p) => <li key={p.id}><button type="button" onClick={() => setPlayerId(p.id)} disabled={saving}
@@ -249,7 +270,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
           {editing && <div className="flex flex-wrap gap-2 lg:hidden">{pickActions}</div>}
         </div>
       </div>
-      {pick && <SquadPicker title={pick.replace ? `Replace ${pick.replace.name}` : pick.position ? `Pick a ${pick.position}` : pick.slot === "sub" ? "Pick a substitute" : "Pick a reserve"}
+      {editing && pick && <SquadPicker title={pick.replace ? `Replace ${pick.replace.name}` : pick.position ? `Pick a ${pick.position}` : pick.slot === "sub" ? "Pick a substitute" : "Pick a reserve"}
         replacement={Boolean(pick.replace)} allowed={eligiblePositions(pick)} selected={new Set(players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()}
         onPick={pickPlayer} onClose={() => setPick(null)} />}
       {selected && !moving && <PlayerPerformanceDialog key={selected.id} leagueId={leagueId} entry={selected}
@@ -265,9 +286,9 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
           </Button>)}
           <Button variant="outline" onClick={() => openPicker({ slot: selected.slot, replace: selected })}>Replace player</Button>
           <Button variant="danger" onClick={() => changePlayers(players.filter((p) => p.id !== selected.id))}>Remove player</Button>
-        </div> : <Button onClick={begin}>Edit squad</Button>}
+        </div> : !locked && <Button onClick={begin}>Edit squad</Button>}
       </>} />}
-      {selected && moving && <MoveDialog player={selected} destination={moving} rules={rules} players={players} formation={shape.label}
+      {editing && selected && moving && <MoveDialog player={selected} destination={moving} rules={rules} players={players} formation={shape.label}
         onMove={changePlayers} onBack={() => setMoving(null)} />}
       {notice && !editing && <Toast message={notice} onClose={() => setNotice(null)} />}
     </div>

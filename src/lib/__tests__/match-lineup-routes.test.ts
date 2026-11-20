@@ -63,3 +63,11 @@ it("never confirms a rejected mutation, unreadable result, or a mismatched read-
   expect(mismatch.status).toBe(409);
   expect((await mismatch.json()).lineups).toBeUndefined();
 });
+
+it("returns a conflict instead of pretending a direct lineup request after kickoff saved", async () => {
+  db.rpc.mockResolvedValueOnce({ data: null, error: { code: "P0001", message: "Lineup Locked: the match has started" } });
+  const result = await put();
+  expect(result.status).toBe(409);
+  expect((await result.json()).error).toContain("Lineup Locked");
+  expect(db.from).not.toHaveBeenCalledWith("match_lineups");
+});

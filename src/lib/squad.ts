@@ -1,3 +1,4 @@
+import type { SquadDeadline } from "./match-deadline";
 import type { LeagueRules, Position, SquadPlayer } from "./domain";
 import type { playerDto, teamDto } from "./roster";
 
@@ -12,6 +13,7 @@ export type SquadResponse = {
   players: SquadEntry[];
   rules: LeagueRules;
   vicePolicy: string;
+  deadline?: SquadDeadline;
   recentSubs?: AutoSubReport[];
 };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { RealTeamName } from "./TeamLogo";
 import { ClipboardCheck } from "lucide-react";
 import { Button, Field, Panel, Slate, TextInput } from "./ui";
 
@@ -9,12 +10,15 @@ type Props = {
   match: { status: string; homeScore: number | null; awayScore: number | null };
   home: string;
   away: string;
+  homeLogo?: string | null;
+  awayLogo?: string | null;
   canManage: boolean;
   busy: boolean;
+  unsavedStatistics?: boolean;
   onSave: (action: "submit" | "correct", score: MatchScore, reason?: string) => Promise<boolean>;
 };
 
-export function MatchResult({ match, home, away, canManage, busy, onSave }: Props) {
+export function MatchResult({ match, home, away, homeLogo, awayLogo, canManage, busy, unsavedStatistics, onSave }: Props) {
   const [homeScore, setHomeScore] = useState(match.homeScore?.toString() ?? "");
   const [awayScore, setAwayScore] = useState(match.awayScore?.toString() ?? "");
   const [correcting, setCorrecting] = useState(false);
@@ -29,13 +33,13 @@ export function MatchResult({ match, home, away, canManage, busy, onSave }: Prop
   return <section aria-label="Match result"><Panel className="mb-5 space-y-3 p-4">
     <Slate>Match result</Slate>
     {recorded && <p className="flex flex-wrap items-baseline gap-x-2 break-words text-sm text-chalk">
-      <span>{home}</span><strong className="num text-lg text-green">{match.homeScore}–{match.awayScore}</strong><span>{away}</span>
+      <RealTeamName name={home} logo={homeLogo} /><strong className="num text-lg text-green">{match.homeScore}–{match.awayScore}</strong><RealTeamName name={away} logo={awayLogo} />
     </p>}
     {!recorded && !form && <p className="text-sm text-sage">No final score recorded.</p>}
     {canCorrect && !correcting && <Button variant="outline" size="sm" disabled={busy} onClick={() => setCorrecting(true)}>Correct score</Button>}
     {form && <form className="space-y-3" onSubmit={async (event) => {
       event.preventDefault();
-      if (busy || !valid || (correcting && (!changed || !reason.trim()))) return;
+      if (busy || unsavedStatistics || !valid || (correcting && (!changed || !reason.trim()))) return;
       const applied = await onSave(correcting ? "correct" : "submit", { homeScore: Number(homeScore), awayScore: Number(awayScore) }, correcting ? reason.trim() : undefined);
       if (applied) { setCorrecting(false); setReason(""); }
     }}>
@@ -45,8 +49,9 @@ export function MatchResult({ match, home, away, canManage, busy, onSave }: Prop
       </div>
       <p className="text-xs text-sage">{correcting ? "This updates clean sheets and any configured win or draw points. Recorded goals, assists and other events stay unchanged." : "Enter the final on-field score. Clean-sheet points are calculated automatically on approval."}</p>
       {correcting && <Field label="Correction reason"><TextInput required maxLength={400} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} /></Field>}
+      {unsavedStatistics && <p className="text-sm text-card-y">Save or discard your statistics and bonus changes first.</p>}
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" loading={busy} disabled={!valid || (correcting && (!changed || !reason.trim()))}>
+        <Button type="submit" loading={busy} disabled={unsavedStatistics || !valid || (correcting && (!changed || !reason.trim()))}>
           <ClipboardCheck className="h-4 w-4" /> {correcting ? "Save score correction" : "Submit for review"}
         </Button>
         {correcting && <Button variant="ghost" disabled={busy} onClick={() => {

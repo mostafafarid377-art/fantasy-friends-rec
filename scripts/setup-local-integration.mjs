@@ -7,6 +7,9 @@ const url = new URL(process.env.DATABASE_URL ?? "postgresql://localhost/unspecif
 if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || !/^\/ff_test\w*$/.test(url.pathname)) {
   throw new Error("DATABASE_URL must point to an empty local ff_test database");
 }
+// Optional cutoff for testing an incremental migration on existing rows.
+const through = process.argv[2] ?? "9999";
+if (!/^\d{4}$/.test(through) || process.argv.length > 3) throw new Error("Provide at most one four-digit migration cutoff");
 const db = new Client({ connectionString: url.href });
 await db.connect();
 try {
@@ -28,10 +31,10 @@ try {
     ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
     GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO anon, authenticated;
     CREATE TABLE auth.users (id uuid PRIMARY KEY, email text, email_confirmed_at timestamptz,
-      raw_user_meta_data jsonb, created_at timestamptz, updated_at timestamptz);
+      raw_user_meta_data jsonb, raw_app_meta_data jsonb, created_at timestamptz, updated_at timestamptz);
   `);
   const dir = new URL("../supabase/migrations/", import.meta.url);
-  for (const name of (await readdir(dir)).filter((name) => name.endsWith(".sql")).sort()) {
+  for (const name of (await readdir(dir)).filter((name) => name.endsWith(".sql") && name.slice(0, 4) <= through).sort()) {
     await db.query(await readFile(new URL(name, dir), "utf8"));
     console.log(`Applied ${name}`);
   }

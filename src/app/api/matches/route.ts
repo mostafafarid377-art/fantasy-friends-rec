@@ -1,3 +1,4 @@
+import { teamLogoUrl } from "@/lib/team-logo";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
@@ -21,7 +22,7 @@ export const GET = handler(async (req: NextRequest) => {
   const membership = await requireMember(leagueId, supabase);
   const canApprove = membership.role === "leader";
   let query = supabase.from("real_matches").select(
-    "id,title,status,home_score,away_score,duration_minutes,kick_off,organizer_id,rejection_reason,teamA:teams!real_matches_team_a_id_teams_id_fk(name),teamB:teams!real_matches_team_b_id_teams_id_fk(name),match_events(count)",
+    "id,title,status,home_score,away_score,duration_minutes,kick_off,organizer_id,rejection_reason,teamA:teams!real_matches_team_a_id_teams_id_fk(id,name,crest_url),teamB:teams!real_matches_team_b_id_teams_id_fk(id,name,crest_url),match_events(count)",
     approved ? { count: "exact" } : {},
   ).eq("league_id", leagueId);
   if (approved) query = query.eq("status", "approved");
@@ -40,6 +41,7 @@ export const GET = handler(async (req: NextRequest) => {
       id: r.id, title: r.title, status: r.status, kickOff: r.kick_off, homeScore: r.home_score, awayScore: r.away_score, durationMinutes: r.duration_minutes ?? null,
       organizerId: r.organizer_id, rejectionReason: r.rejection_reason,
       teamAName: r.teamA?.name ?? "Team A", teamBName: r.teamB?.name ?? "Team B",
+      teamALogo: teamLogoUrl(r.teamA?.crest_url, leagueId, r.teamA?.id), teamBLogo: teamLogoUrl(r.teamB?.crest_url, leagueId, r.teamB?.id),
       eventCount: r.match_events?.[0]?.count ?? 0,
     })),
     canApprove, total: matches.count, hasMore: (matches.data?.length ?? 0) > PAGE_SIZE,

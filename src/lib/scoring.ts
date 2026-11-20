@@ -52,6 +52,9 @@ const LABELS: Record<string, string> = {
   clean_sheet: "Clean sheet",
   win: "Match win",
   draw: "Match draw",
+  goalkeeper_saves: "Goalkeeper saves (groups of 3)",
+  defensive_contributions: "Defensive contributions (completed groups)",
+  match_bonus: "Match bonus",
 };
 
 export function categoryLabel(category: string): string {

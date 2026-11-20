@@ -1,3 +1,4 @@
+import { TEAM_FIELDS, teamDto } from "@/lib/roster";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
@@ -24,16 +25,18 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     approvalsResp,
     teamRowsResp,
     rosterResp,
+    statisticsResp,
   ] = await Promise.all([
     supabase.from("match_lineups").select("*").eq("match_id", id).order("order", { ascending: true }),
     supabase.from("match_events").select("*").eq("match_id", id).order("minute", { ascending: true }),
     supabase.from("match_substitutions").select("*").eq("match_id", id).order("minute", { ascending: true }),
     supabase.from("match_approvals").select("*").eq("match_id", id).order("created_at", { ascending: true }),
-    supabase.from("teams").select("id,name").eq("league_id", match.league_id).in("id", [match.team_a_id, match.team_b_id]),
+    supabase.from("teams").select(TEAM_FIELDS).eq("league_id", match.league_id).in("id", [match.team_a_id, match.team_b_id]),
     supabase.from("players").select(PLAYER_FIELDS).eq("league_id", match.league_id),
+    supabase.from("match_player_statistics").select("player_id,position,saves,defensive_contributions,bonus_rank").eq("match_id", id),
   ]);
 
-  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp]) {
+  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp, statisticsResp]) {
     checkDb(result.error, "Could not load match details");
   }
   const lineups = lineupsResp.data ?? [];
@@ -59,6 +62,9 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       teamAName: teamName.get(match.team_a_id) ?? "Team A",
       teamBName: teamName.get(match.team_b_id) ?? "Team B",
     },
+    serverNow: new Date().toISOString(),
+    statistics: (statisticsResp.data ?? []).map((r) => ({ playerId: r.player_id, position: r.position, saves: r.saves,
+      defensiveContributions: r.defensive_contributions, bonusRank: r.bonus_rank })),
     rules: leagueRules(membership.league),
     role: membership.role,
     canOrganize: authorized,
@@ -67,7 +73,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       (match.status === "draft" || match.status === "rejected"),
     canApprove: authorized,
     lineups: (lineups ?? []).map((l: any) => ({
-      id: l.id, playerId: l.player_id, teamId: l.team_id, slot: l.slot, order: l.order,
+      id: l.id, playerId: l.player_id, teamId: l.team_id, slot: l.slot, order: l.order, matchPosition: l.match_position ?? playerById.get(l.player_id)?.position,
       player: playerById.get(l.player_id) ?? null,
     })),
     events: (events ?? []).map((e: any) => ({
@@ -85,13 +91,13 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       reason: a.reason, version: a.version, createdAt: a.created_at,
       scoreChange: a.action === "corrected" ? a.snapshot : null })),
     roster: roster.filter((p) => p.status === "active" || linePlayerIds.has(p.id)),
-    teams: teamRows ?? [],
+    teams: teamRows.map(teamDto),
   });
 });
 
 const patchSchema = z.object({
   title: z.string().trim().min(3).max(80).optional(),
-  kickOff: z.string().datetime().optional(),
+  kickOff: z.iso.datetime({ offset: true }).optional(),
   teamAId: z.string().optional(),
   teamBId: z.string().optional(),
   fixtureId: z.string().nullable().optional(),

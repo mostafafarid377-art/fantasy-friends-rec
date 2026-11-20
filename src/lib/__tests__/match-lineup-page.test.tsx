@@ -7,7 +7,7 @@ vi.mock("@/components/LeagueContext", () => ({ useActiveLeague: () => ({ league:
 vi.mock("@/components/AppShell", () => ({ PageHeader: ({ title }: { title: string }) => <h1>{title}</h1> }));
 const params = Promise.resolve({ id: "m" });
 const players = ["GK","DEF","MID","MID","FWD","DEF"].map((position,i)=>({ id:`p${i}`, fullName:`Player ${i}`, position, teamId:"home", photoUrl:null, status:"active", availability:"available" }));
-const teams = [{ id:"home",name:"Home" },{ id:"away",name:"Away" }];
+const teams = [{ id:"home",name:"Home",crestUrl:"/home.webp" },{ id:"away",name:"Away",crestUrl:"/away.webp" }];
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("submits ordered entries, does not show success on DB failure, and uses persisted rows on reopen", async () => {
@@ -84,6 +84,9 @@ it("records a 2–0 result, approves it, and reopens the corrected score and his
   expect(screen.getByRole("option", { name:"Goal" })).toBeTruthy();
   fireEvent.click(submit);
   expect(await screen.findByText("2–0")).toBeTruthy();
+  for (const area of [screen.getByRole("heading", {level:1}), screen.getByRole("region", {name:"Match result"})]) {
+    expect(Array.from(area.querySelectorAll("img")).map((img) => img.getAttribute("src"))).toEqual(["/home.webp","/away.webp"]);
+  }
   const approve = await screen.findByRole("button", { name:"Approve" });
   fireEvent.click(approve);
   fireEvent.click(await screen.findByRole("button", { name:"Correct score" }));

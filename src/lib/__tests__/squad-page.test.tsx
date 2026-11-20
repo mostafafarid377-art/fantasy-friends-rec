@@ -289,7 +289,7 @@ it("shows individual latest points on starters and bench, opens history on deman
   expect(history.getAllByRole("listitem").filter((li) => li.parentElement?.tagName === "OL").map((li) => li.querySelector("summary")?.textContent))
     .toEqual([expect.stringContaining("Cup match"), expect.stringContaining("Opening match")]);
   expect(history.getByText("0 pts")).toBeTruthy();
-  expect(dialog().getByText("GK · Reds")).toBeTruthy();
+  expect(dialog().getByText("Reds")).toBeTruthy();
   expect(dialog().getByText("16 pts (C ×2)")).toBeTruthy();
   const cupSummary = history.getByText("Cup match · GW 8").closest("summary")!;
   fireEvent.click(cupSummary);
@@ -338,4 +338,17 @@ it("loads older history only on demand and retries without losing the latest gam
   const url = new URL(fetch.mock.calls.filter(([url]) => url.includes("before=")).at(-1)![0], "http://local.test");
   expect(url.searchParams.get("before")).toBe(first.kickOff);
   expect(url.searchParams.get("match")).toBe(first.matchId);
+});
+
+it("shows a countdown, locks at kickoff, and disables edit actions without sending a write", async () => {
+  const { saved, put } = fixture();
+  const serverNow = "2026-11-19T18:00:00.000Z";
+  saved.set(a.id, { ...empty(a), deadline: { serverNow, kickOff: "2026-11-19T18:00:00.900Z", locked: false, title: "Cup match", matchId: "cup" } });
+  renderInShell(<SquadScreen editInitially />);
+  expect(await screen.findByText("00:00:01")).toBeTruthy();
+  expect(await screen.findByText("Squad Locked.", {}, { timeout: 3000 })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /^Save draft$/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Add GK/ })).toBeNull();
+  expect((screen.getByRole("button", { name: "Pick bench goalkeeper" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(put).not.toHaveBeenCalled();
 });

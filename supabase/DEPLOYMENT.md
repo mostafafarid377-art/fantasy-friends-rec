@@ -18,6 +18,10 @@ missing forward migrations, in order:
 7. `0011_recorded_match_results.sql` (recorded scores and automatic clean sheets)
 8. `0012_captain_visibility_and_league_deletion.sql` (captain contribution and creator-only league deletion)
 9. `0013_match_duration.sql` (planned match duration)
+10. `0014_match_deadlines.sql` (kickoff guards and lineup positions)
+11. `0015_match_statistics_and_bonuses.sql` (match-only totals, bonus ranks and scoring corrections)
+12. `0016_team_logos.sql` (private real-team logos and history reads)
+13. `0017_google_profile_names.sql` (first-login profile names)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -83,7 +87,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0013_match_duration.sql`. The
+`0001_schema.sql` to `0017_google_profile_names.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -256,3 +260,35 @@ field (1–200) and extends the match creation RPC with an optional trailing
 argument so legacy clients and queued requests still work. Older matches stay
 unspecified. Duration is scheduled match information; it does not change
 scoring, clean-sheet eligibility or the range allowed for recording match events.
+
+## Match deadlines, statistics, team logos and Google profile names
+
+- Apply `0014`–`0017` in order **on staging first**, after all earlier migrations
+  are present. Do not run the fresh-database script against a populated project.
+  Deploy the app only after the migrations are verified. The migration creates
+  the private `team-logos` bucket, so no manual bucket creation or service-role
+  key is needed. If the bucket already exists, verify it is private and permits
+  WebP with a 1 MiB size limit. The authenticated app only serves linked logos
+  to members; unattached blobs are not visible to ordinary league members.
+- Fantasy squads are still shared within a league. A started, unfinalized
+  match keeps the squad locked even if another match is upcoming. Review old
+  unfinished drafts before rollout: those with past kickoff times also lock the
+  squad. Locking never rewrites a squad. A real lineup cannot be changed after
+  kickoff, including when a result is sent back for correction. For new
+  lineups the saved match position is used for the new statistics. Old lineups
+  without a recorded position use the current roster position when stats are
+  first entered; previous official points are not recalculated by migration.
+- Approving a result applies the new match-only additions to the official
+  ledger. Finalized bonus selections are immutable. Explicit corrections to
+  approved stat totals require a reason and preserve the original fantasy
+  picks and multipliers. Legacy scoreless results are not eligible for this
+  correction path. No league rule rows or previous receipts are backfilled.
+- Google names are initialized only when a Google user is first created.
+  Existing profile names are not migrated, and OAuth sign-in does not overwrite
+  edits. No Google Cloud or Supabase Auth setting change is needed if Google
+  sign-in is already configured. For a new environment, use the existing
+  Google setup instructions and add that environment's callback allowlist.
+- On staging, exercise a Google sign-in with a new account and another sign-in
+  after changing its display name; confirm password login still works. Test
+  actual Supabase Storage upload, replacement/removal, cross-league access and
+  mobile camera/gallery in addition to the automated PostgreSQL policy tests.

@@ -3,11 +3,14 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
+  unique,
   text,
   timestamp,
   uniqueIndex,
@@ -294,6 +297,7 @@ export const fantasySquadPlayers = pgTable(
     playerId: text("player_id")
       .notNull()
       .references(() => players.id, { onDelete: "restrict" }),
+    matchPosition: text("match_position"),
     slot: text("slot").notNull(), // starter | sub | reserve
     /** back-to-front order on the pitch for starters; bench order for subs */
     order: integer("order").notNull().default(0),
@@ -384,6 +388,7 @@ export const realMatches = pgTable(
   (t) => [
     index("matches_league_idx").on(t.leagueId),
     index("matches_status_idx").on(t.status),
+    index("ff_open_match_deadline_idx").on(t.leagueId, t.kickOff, t.id).where(sql`status <> 'approved'`),
     check(
       "matches_status_ck",
       sql`status in ('draft','pending','approved','rejected')`,
@@ -418,9 +423,28 @@ export const matchLineups = pgTable(
   (t) => [
     uniqueIndex("lineup_match_player_uq").on(t.matchId, t.playerId),
     index("lineup_match_team_idx").on(t.matchId, t.teamId),
+    check("match_lineups_match_position_check", sql`match_position in ('GK','DEF','MID','FWD')`),
     check("lineup_slot_ck", sql`slot in ('starter','sub')`),
   ],
 );
+
+export const matchPlayerStatistics = pgTable("match_player_statistics", {
+  matchId: text("match_id").notNull(),
+  playerId: text("player_id").notNull(),
+  position: text("position").notNull(),
+  saves: integer("saves").notNull().default(0),
+  defensiveContributions: integer("defensive_contributions").notNull().default(0),
+  bonusRank: integer("bonus_rank"),
+}, (t) => [
+  primaryKey({ name: "match_player_statistics_pkey", columns: [t.matchId, t.playerId] }),
+  unique("match_player_statistics_match_id_bonus_rank_key").on(t.matchId, t.bonusRank),
+  foreignKey({ name: "match_player_statistics_match_id_player_id_fkey", columns: [t.matchId, t.playerId],
+    foreignColumns: [matchLineups.matchId, matchLineups.playerId] }).onDelete("cascade"),
+  check("match_player_statistics_position_check", sql`position in ('GK','DEF','MID','FWD')`),
+  check("match_player_statistics_check", sql`saves between 0 and 999 and (saves=0 or position='GK')`),
+  check("match_player_statistics_defensive_contributions_check", sql`defensive_contributions between 0 and 999`),
+  check("match_player_statistics_bonus_rank_check", sql`bonus_rank between 1 and 3`),
+]);
 
 export const matchEvents = pgTable(
   "match_events",
