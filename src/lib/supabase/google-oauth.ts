@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 export const GOOGLE_CALLBACK = "/auth/callback/google";
 export const GOOGLE_FLOW_COOKIE = "ff-google-flow";
@@ -19,8 +19,31 @@ export function googleAppOrigin(): string | null {
   }
 }
 
+const stableProductionOrigin = "https://fantasy-friends-rec.vercel.app";
+
+/** Select only a known browser-facing host. Host identifies the request target,
+ * not its initiator. Neither Origin nor X-Forwarded-* can nominate a callback. */
+export function googleRequestOrigin(request: NextRequest, configured: string): string | null {
+  const allowed = process.env.VERCEL_ENV === "production" ? [configured, stableProductionOrigin] : [configured];
+  const host = (request.headers.get("host") ?? request.nextUrl.host).toLowerCase();
+  return allowed.find((origin) => new URL(origin).host === host) ?? null;
+}
+
+/** A no-referrer policy can serialize a native POST navigation's Origin as
+ * `null`. Allow that case only with browser-controlled same-origin navigation
+ * metadata. A foreign Origin is never allowed, even with conflicting metadata. */
+export function isGoogleStartFromApp(request: NextRequest, targetOrigin: string): boolean {
+  const origin = request.headers.get("origin");
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin") return false;
+  if (origin !== null && origin !== "null") return origin === targetOrigin;
+  return site === "same-origin" && request.headers.get("sec-fetch-mode") === "navigate"
+    && request.headers.get("sec-fetch-dest") === "document";
+}
+
 export function googleCookieOptions(origin: string, maxAge: number) {
-  return { path: GOOGLE_CALLBACK, maxAge, httpOnly: true, sameSite: "lax" as const, secure: origin.startsWith("https:") };
+  return { path: GOOGLE_CALLBACK, maxAge, ...(maxAge === 0 ? { expires: new Date(0) } : {}),
+    httpOnly: true, sameSite: "lax" as const, secure: origin.startsWith("https:") };
 }
 
 // Relative Locations keep the callback on the browser's origin, including behind a proxy.

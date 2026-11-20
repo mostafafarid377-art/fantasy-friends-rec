@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { safeAuthPath } from "@/lib/auth-redirect";
-import { authRedirect, GOOGLE_FLOW_COOKIE, googleAppOrigin, googleCookieOptions, googleError, googleFlowId } from "@/lib/supabase/google-oauth";
+import { authRedirect, GOOGLE_FLOW_COOKIE, googleAppOrigin, googleCookieOptions, googleError, googleFlowId, googleRequestOrigin } from "@/lib/supabase/google-oauth";
 
 export async function GET(request: NextRequest) {
-  const origin = googleAppOrigin();
+  const configured = googleAppOrigin();
+  const origin = configured && googleRequestOrigin(request, configured);
   if (!origin) return googleError("google_unavailable", "/dashboard");
 
   const pending = request.cookies.get(GOOGLE_FLOW_COOKIE)?.value ?? "";

@@ -27,19 +27,22 @@ service-role key, Google client-side library, or Google refresh-token setup.
 1. In **Hagz-fantasy → Authentication → URL Configuration**, check that **Site
    URL** is the canonical production app URL. **Append** an exact Redirect URL
    for each environment where Google sign-in is enabled, for example:
-   - `https://YOUR-PRODUCTION-DOMAIN/auth/callback/google`
+   - `https://fantasy-friends-rec.vercel.app/auth/callback/google`
    - `http://localhost:3000/auth/callback/google` (only for local development)
 
    Keep existing email confirmation and password recovery redirects, including
    `/auth/callback?next=/dashboard` and `/auth/callback?next=/reset`. No new
    wildcard is needed. Use a stable, exact preview domain if testing a preview.
 2. In the app deployment, set the server-only `GOOGLE_OAUTH_APP_ORIGIN` to that
-   deployment’s exact browser origin (e.g. `https://YOUR-PRODUCTION-DOMAIN` or
+   deployment’s exact browser origin (e.g. `https://fantasy-friends-rec.vercel.app` or
    `http://localhost:3000` in `.env.local`). No path, query or hash. Use HTTPS
    except for local development. Leave the existing
    `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in place.
-   If the deployment has multiple hostnames, redirect aliases to the canonical
-   hostname; Google start requests from other origins are intentionally rejected.
+   On a Vercel production deployment (`VERCEL_ENV=production`), the app also
+   recognizes the pinned `fantasy-friends-rec.vercel.app` host once Google is
+   opted in. Preview and local deployments accept only the configured origin.
+   Redirect other aliases to the canonical hostname. Forwarded host headers
+   cannot add a callback URL.
 3. Deploy/restart the app. If `GOOGLE_OAUTH_APP_ORIGIN` is unset, the Google
    option is hidden and password auth remains available. Enable the env setting
    only after Google and the redirect allowlist are configured. To pause Google
@@ -64,3 +67,27 @@ attempt in that browser).
   Check Google sign-in from `/login?next=%2Fteam` returns to `/team`.
 - Verify existing password sign-in, sign-up confirmation, password reset and
   sign-out. Verify signed-out requests still cannot open protected pages.
+
+## Troubleshooting the initiation request
+
+1. Open `https://fantasy-friends-rec.vercel.app/login?next=%2Fteam` directly in
+   a browser tab and enable **Preserve log** in DevTools → Network.
+2. Click **Continue with Google**. The form sends a same-origin, URL-encoded
+   `POST /api/auth/google`. It does not need an existing session, a client-side
+   PKCE verifier, or a hidden CSRF token. The endpoint validates the request
+   before issuing PKCE cookies. An exact `Origin` is accepted; if the browser
+   sends no origin or `Origin: null`, it must also send `Sec-Fetch-Site:
+   same-origin`, `Sec-Fetch-Mode: navigate`, and `Sec-Fetch-Dest: document`.
+   Cross-site, same-site (different origin), or unproven requests return 403.
+3. Expect a **303** to Supabase `/auth/v1/authorize`, then Google's chooser.
+   The `redirect_to` parameter should be exactly
+   `https://fantasy-friends-rec.vercel.app/auth/callback/google`. In the initiation
+   response, the `ff-google-flow` cookie should have path `/auth/callback/google`;
+   the Supabase PKCE verifier cookies have path `/`. Both are host-only,
+   `HttpOnly`, `SameSite=Lax`, and `Secure` on HTTPS. Do not share their values
+   or the OAuth code when reporting a failure.
+4. Finish Google sign-in and check that `/auth/callback/google` returns a **303**
+   to `/team`. Refresh, confirm the session persists, then sign out and confirm
+   password sign-in still works. Repeat locally using `http://localhost:3000`
+   and the matching env setting and allowlist entry. HTTP localhost cookies
+   intentionally omit `Secure`.

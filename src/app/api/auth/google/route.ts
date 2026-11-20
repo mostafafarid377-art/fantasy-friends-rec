@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabasePublicConfig } from "@/lib/supabase/config";
 import { safeAuthPath } from "@/lib/auth-redirect";
-import { authRedirect, GOOGLE_CALLBACK, GOOGLE_FLOW_COOKIE, googleAppOrigin, googleCookieOptions, googleError, googleFlowId } from "@/lib/supabase/google-oauth";
+import { authRedirect, GOOGLE_CALLBACK, GOOGLE_FLOW_COOKIE, googleAppOrigin, googleCookieOptions, googleError, googleFlowId, googleRequestOrigin, isGoogleStartFromApp } from "@/lib/supabase/google-oauth";
 
 export async function POST(request: NextRequest) {
-  const origin = googleAppOrigin();
-  if (!origin) return googleError("google_unavailable", "/dashboard");
-  if (request.headers.get("origin") !== origin) {
+  const configured = googleAppOrigin();
+  if (!configured) return googleError("google_unavailable", "/dashboard");
+  const origin = googleRequestOrigin(request, configured);
+  if (!origin || !isGoogleStartFromApp(request, origin)) {
     return new NextResponse("Start Google sign-in from the Fantasy Friends sign-in page.", {
       status: 403, headers: { "Cache-Control": "no-store" },
     });
