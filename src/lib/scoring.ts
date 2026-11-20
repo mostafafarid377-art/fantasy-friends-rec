@@ -24,7 +24,7 @@ export type LineupEntry = {
   slot: "starter" | "sub";
 };
 
-export type MatchResult = { teamAId: string; teamBId: string };
+export type MatchResult = { teamAId: string; teamBId: string; homeScore?: number | null; awayScore?: number | null };
 
 export type BreakdownLine = {
   category: string;
@@ -99,6 +99,8 @@ export type ComputeInput = {
 export function computePlayerPoints(input: ComputeInput): PlayerPoints[] {
   const rules = usableRules(input.rules);
   const out: PlayerPoints[] = [];
+  const { teamAId, teamBId, homeScore, awayScore } = input.result;
+  const recorded = homeScore != null && awayScore != null;
 
   for (const entry of input.lineup) {
     const { playerId, position, teamId } = entry;
@@ -120,7 +122,8 @@ export function computePlayerPoints(input: ComputeInput): PlayerPoints[] {
 
     push("appearance", 1);
 
-    const conceded = goalsConceded(teamId, input.events);
+    const home = teamId === teamAId;
+    const conceded = recorded ? (home ? awayScore : homeScore) : goalsConceded(teamId, input.events);
     if (conceded === 0 && entry.slot === "starter") push("clean_sheet", 1);
 
     const own = input.events.filter(
@@ -156,7 +159,7 @@ export function computePlayerPoints(input: ComputeInput): PlayerPoints[] {
       input.events.filter((e) => e.playerId === playerId && e.eventType === "penalty_missed").length,
     );
 
-    const scored = goalsConceded(teamId === input.result.teamAId ? input.result.teamBId : input.result.teamAId, input.events);
+    const scored = recorded ? (home ? homeScore : awayScore) : goalsConceded(home ? teamBId : teamAId, input.events);
     push("win", Number(scored > conceded));
     push("draw", Number(scored === conceded));
 

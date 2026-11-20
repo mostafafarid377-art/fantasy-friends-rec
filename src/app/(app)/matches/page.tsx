@@ -12,6 +12,8 @@ type Match = {
   id: string;
   title: string;
   status: string;
+  homeScore: number | null;
+  awayScore: number | null;
   kickOff: string;
   teamAName: string;
   teamBName: string;
@@ -128,7 +130,7 @@ export default function MatchesPage() {
                     </span>
                   </div>
                   <div className="mt-2 font-display text-[21px] font-bold uppercase leading-tight text-chalk">
-                    {m.teamAName} <span className="text-green">v</span> {m.teamBName}
+                    {m.teamAName} <span className="text-green">{m.homeScore != null && m.awayScore != null ? `${m.homeScore}–${m.awayScore}` : "v"}</span> {m.teamBName}
                   </div>
                   <div className="mt-0.5 truncate text-[13px] text-sage">{m.title}</div>
                   {m.status === "rejected" && m.rejectionReason && (

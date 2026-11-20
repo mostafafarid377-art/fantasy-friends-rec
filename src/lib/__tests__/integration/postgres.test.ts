@@ -366,7 +366,7 @@ describe("PostgreSQL integration: match management", () => {
       }
       await sql(cA, "INSERT INTO public.scoring_rules(id,league_id,position,event_type,points,status,approved_by) VALUES($1,$2,'DEF','goal',4,'approved',$3)",
         [randomUUID(), leagueAId, userAId]);
-      await sql(cA, "SELECT public.submit_match($1)", [matchId]);
+      await sql(cA, "SELECT public.submit_match($1,1,1,0)", [matchId]);
       await expect(sql(cA, "SELECT public.approve_match($1,1)", [matchId])).rejects.toThrow(/changed/i);
       await sql(cA, "SELECT public.approve_match($1,2)", [matchId]);
       const refreshed = await sql(cA, "SELECT status FROM public.real_matches WHERE id=$1", [matchId]);
@@ -883,7 +883,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
         await persistLineup(c,match,league.away,matchEntries(away));
         return match;
       };
-      const approve = async (match: string) => { await sql(c,"SELECT public.submit_match($1)",[match]); await sql(c,"SELECT public.approve_match($1,2)",[match]); };
+      const approve = async (match: string, home = 0, away = 0) => { await sql(c,"SELECT public.submit_match($1,1,$2,$3)",[match,home,away]); await sql(c,"SELECT public.approve_match($1,2)",[match]); };
       const eventMatch = await create();
       const eventTypes = ["goal","own_goal","assist","yellow_card","red_card","penalty_saved","penalty_missed"];
       for (const playerId of home.slice(0,4)) for (const eventType of eventTypes) {
@@ -891,7 +891,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
         const statement = "SELECT public.write_match_event($1,$2,'event',$3)";
         await sql(c,statement,args); await sql(c,statement,args); // request retry must not duplicate points
       }
-      await approve(eventMatch);
+      await approve(eventMatch,4,4);
       const ledger = (await sql(c,"SELECT * FROM player_match_points WHERE match_id=$1",[eventMatch])).rows;
       for (const [i,id] of home.slice(0,4).entries()) {
         const row = ledger.find((r)=>r.player_id===id);
@@ -923,7 +923,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
       expect(draw.every((r)=>r.breakdown.some((line: {category: string; points: number})=>line.category==='draw' && line.points===3))).toBe(true);
       const winMatch = await create();
       await sql(c,"SELECT public.write_match_event($1,$2,'event',$3)",[winMatch,randomUUID(),JSON.stringify({teamId:league.home,playerId:home[3],eventType:'goal',minute:6})]);
-      await approve(winMatch);
+      await approve(winMatch,1);
       const win = (await sql(c,"SELECT player_id,breakdown FROM player_match_points WHERE match_id=$1",[winMatch])).rows;
       expect(win.filter((r)=>r.breakdown.some((line: {category: string; points: number})=>line.category==='win' && line.points===2))
         .map((r)=>r.player_id).sort()).toEqual(home.slice(0,5).sort());
@@ -945,7 +945,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
       const match = await league.makeMatch();
       await persistLineup(c,match,league.home,matchEntries(home));
       await persistLineup(c,match,league.away,matchEntries(away));
-      await sql(c,"SELECT public.submit_match($1)",[match]);
+      await sql(c,"SELECT public.submit_match($1,1,0,0)",[match]);
       const approve = () => sql(c,"SELECT public.approve_match($1,2)",[match]);
       await sql(admin,`CREATE FUNCTION public.ff_test_fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN RAISE EXCEPTION 'Injected receipt failure'; END; $$;
@@ -990,7 +990,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
       await persistLineup(c,match,league.home,matchEntries(home.slice(0,5),home.slice(5)));
       await persistLineup(c,match,league.away,matchEntries(away));
       for (const [i,id] of home.slice(5).entries()) await sql(c,"SELECT public.write_match_event($1,$2,'substitution',$3)",[match,randomUUID(),JSON.stringify({teamId:league.home,playerId:id,otherId:home[i+1],minute:19})]);
-      await sql(c,"SELECT public.submit_match($1)",[match]);
+      await sql(c,"SELECT public.submit_match($1,1,0,0)",[match]);
       const official = (await sql(c,"SELECT public.approve_match($1,2) as result",[match])).rows[0].result;
       await setAuthUid(c,userAId);
       const scores = () => sql(c,"SELECT id,points,breakdown,computed_at FROM manager_points WHERE match_id=$1 AND profile_id=$2",[match,userAId]);
@@ -1006,7 +1006,7 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
       const reordered = picks.map((e)=>e.slot==='sub' && e.order > 0 ? {...e,order:3-e.order}:e);
       await save(squad.squad.updated_at,reordered);
       expect((await sql(c,"SELECT public.calculate_match_points($1) as result",[match])).rows[0].result).toEqual(official);
-      await expect(sql(c,"SELECT public.approve_match($1,2)",[match])).rejects.toThrow(/not pending/);
+      expect((await sql(c,"SELECT public.approve_match($1,2) as result",[match])).rows[0].result).toEqual(official);
       expect((await scores()).rows).toEqual([saved]);
       expect((await sql(c,"SELECT points FROM fantasy_points_history WHERE match_id=$1 AND profile_id=$2",[match,userAId])).rows).toEqual([{points:saved.points}]);
       expect((await sql(c,"SELECT matches_played,total_points FROM league_standings WHERE league_id=$1 AND profile_id=$2",[league.id,userAId])).rows).toEqual([{matches_played:1,total_points:saved.points}]);
@@ -1043,8 +1043,8 @@ describe("individual player performance (real PostgreSQL)", () => {
         await persistLineup(c, id, league.away, matchEntries(away));
         return id;
       };
-      const finalize = async (id: string) => {
-        await sql(c, "SELECT public.submit_match($1)", [id]);
+      const finalize = async (id: string, home = 0) => {
+        await sql(c, "SELECT public.submit_match($1,1,$2,0)", [id, home]);
         await sql(c, "SELECT public.approve_match($1,2)", [id]);
       };
       // Approve out of kickoff order; history follows the match date, not the recording date.
@@ -1054,13 +1054,13 @@ describe("individual player performance (real PostgreSQL)", () => {
         await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [latest, randomUUID(), JSON.stringify({ teamId: league.home, playerId, eventType: "goal", minute: 10 })]);
       }
       await sql(c, "SELECT public.write_match_event($1,$2,'substitution',$3)", [latest, randomUUID(), JSON.stringify({ teamId: league.home, playerId: subbedOn, otherId: home[1], minute: 16 })]);
-      await finalize(latest);
+      await finalize(latest, 2);
       const earlier = await makeMatch("2026-11-01T19:00:00Z", [unused, ...home.slice(1, 5)]);
       await finalize(earlier);
       const unrelated = await makeMatch("2026-11-09T19:00:00Z", [home[0], subbedOn, ...home.slice(2, 5)]);
       await finalize(unrelated);
       const pending = await makeMatch("2026-11-11T19:00:00Z", [unused, ...home.slice(1, 5)]);
-      await sql(c, "SELECT public.submit_match($1)", [pending]);
+      await sql(c, "SELECT public.submit_match($1,1,0,0)", [pending]);
       // A stale-version score must not be exposed as the latest player's game.
       await sql(admin, `INSERT INTO player_match_points(id,league_id,match_id,player_id,match_version,points,breakdown)
         VALUES($1,$2,$3,$4,1,83,'[]'),($5,$2,$6,$4,2,99,'[]')`, [randomUUID(), league.id, unrelated, home[1], randomUUID(), pending]);
@@ -1112,7 +1112,7 @@ describe("individual player performance (real PostgreSQL)", () => {
         await persistLineup(c, match, l.home, matchEntries(home));
         await persistLineup(c, match, l.away, matchEntries(away));
         await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(), JSON.stringify({ teamId: l.home, playerId: home[2], eventType: "goal", minute: 10 })]);
-        await sql(c, "SELECT public.submit_match($1)", [match]);
+        await sql(c, "SELECT public.submit_match($1,1,1,0)", [match]);
         await sql(c, "SELECT public.approve_match($1,2)", [match]);
         return { id: l.id, player: home[2], match };
       }
@@ -1131,4 +1131,164 @@ describe("individual player performance (real PostgreSQL)", () => {
       expect((await sql(admin, "SELECT has_function_privilege('anon','public.latest_player_games(text,text[])','execute') AS allowed")).rows).toEqual([{ allowed: false }]);
     } finally { c.release(); }
   });
+});
+
+const submitScore = (c: PoolClient, match: string, home: number | null, away: number | null, version = 1) =>
+  sql(c, "SELECT public.submit_match($1,$2,$3,$4) AS result", [match, version, home, away]);
+const approveScore = (c: PoolClient, match: string, version = 2) =>
+  sql(c, "SELECT public.approve_match($1,$2) AS result", [match, version]);
+const correctScore = (c: PoolClient, match: string, home: number, away: number, version: number, reason = "Verified with the referee") =>
+  sql(c, "SELECT public.correct_match_result($1,$2,$3,$4,$5) AS result", [match, version, home, away, reason]);
+const hasCleanSheet = (row: { breakdown: { category: string }[] }) => row.breakdown.some((b) => b.category === "clean_sheet");
+
+async function recordedResultFixture(c: PoolClient, setup?: (id: string) => Promise<unknown>) {
+  const league = await releaseLeague(c, 5);
+  const positions = ["GK", "DEF", "MID", "MID", "FWD"];
+  const home = await Promise.all([...positions, "DEF", "GK"].map((pos, i) => league.makePlayer(pos, league.home, `Home ${i}`)));
+  const away = await Promise.all(positions.map((pos, i) => league.makePlayer(pos, league.away, `Away ${i}`)));
+  await setup?.(league.id);
+  await sql(c, "UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1", [league.id, userAId]);
+  const match = await league.makeMatch();
+  await persistLineup(c, match, league.home, matchEntries(home.slice(0,5), home.slice(5)));
+  await persistLineup(c, match, league.away, matchEntries(away));
+  return { league, match, home, away };
+}
+
+describe("automatic scoring from the recorded final result", () => {
+  it.each([[2,0],[0,0],[2,1],[3,0],[0,3]])("scores %i–%i from the official score, not a count of events", async (homeScore, awayScore) => {
+    const c = await freshClient();
+    try {
+      const { league, match, home, away } = await recordedResultFixture(c);
+      await sql(c, "SELECT public.write_match_event($1,$2,'substitution',$3)", [match, randomUUID(),
+        JSON.stringify({ teamId: league.home, playerId: home[5], otherId: home[1], minute: 5 })]);
+      // In 2–1 the starter left before the goal. In 3–0 this logged event
+      // deliberately disagrees with the scoreboard; only individual goal points follow it.
+      if (awayScore > 0 || homeScore === 3) {
+        await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(),
+          JSON.stringify({ teamId: league.away, playerId: away[4], eventType: "goal", minute: 50 })]);
+      }
+      expect((await submitScore(c, match, homeScore, awayScore)).rows[0].result)
+        .toMatchObject({ status: "pending", home_score: homeScore, away_score: awayScore, version: 2 });
+      expect((await submitScore(c, match, homeScore, awayScore)).rows[0].result.version).toBe(2);
+      expect((await sql(c, "SELECT id FROM player_match_points WHERE match_id=$1", [match])).rowCount).toBe(0);
+      const result = (await approveScore(c, match)).rows[0].result;
+      expect((await approveScore(c, match)).rows[0].result).toEqual(result);
+      const { rows } = await sql(c, "SELECT player_id,points,breakdown FROM player_match_points WHERE match_id=$1", [match]);
+      expect(rows).toHaveLength(11);
+      expect(rows.filter(hasCleanSheet).map((row) => row.player_id).sort()).toEqual([
+        ...(awayScore === 0 ? home.slice(0,4) : []), ...(homeScore === 0 ? away.slice(0,4) : []),
+      ].sort());
+      for (const row of rows.filter(hasCleanSheet)) {
+        const pos = home.includes(row.player_id) ? home.indexOf(row.player_id) : away.indexOf(row.player_id);
+        expect(row.breakdown.filter((b: {category: string}) => b.category === "clean_sheet"))
+          .toEqual([{ category: "clean_sheet", label: "Clean sheet", count: 1, pointsPer: pos < 2 ? 4 : 1, points: pos < 2 ? 4 : 1 }]);
+      }
+      expect(rows.find((r) => r.player_id === home[5])).toMatchObject({ breakdown: [{ category: "appearance", points: 1 }] });
+      expect(rows.some((r) => r.player_id === home[6])).toBe(false);
+      expect((await sql(c, "SELECT action FROM match_approvals WHERE match_id=$1 ORDER BY version", [match])).rows)
+        .toEqual([{ action: "submitted" }, { action: "approved" }]);
+    } finally { c.release(); }
+  });
+
+  it("corrects only score-derived points using the original rules and manager picks; retries and failures never duplicate points", async () => {
+    const c = await freshClient();
+    try {
+      const { league, match, home, away } = await recordedResultFixture(c, (id) =>
+        sql(c, `UPDATE scoring_rules SET points=CASE event_type WHEN 'win' THEN 2 WHEN 'draw' THEN 3 ELSE 6 END
+          WHERE league_id=$1 AND (event_type IN ('win','draw') OR (position='DEF' AND event_type='clean_sheet'))`, [id]));
+      await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(),
+        JSON.stringify({ teamId: league.home, playerId: home[1], eventType: "goal", minute: 33 })]);
+      await setAuthUid(c, userAId);
+      const save = (captain: string, revision: string | null) => sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS result",
+        [league.id, captain, home[2], revision, JSON.stringify(matchEntries(home.slice(0,5), [home[6]]))]);
+      const { rows: [{ result: originalSquad }] } = await save(home[1], null);
+      await setAuthUid(c, userBId);
+      await expect(submitScore(c, match, 2, 0)).rejects.toMatchObject({ code: "42501" });
+      await setAuthUid(c, userCId);
+      await expect(submitScore(c, match, 2, null)).rejects.toMatchObject({ code: "22023" });
+      await expect(submitScore(c, match, -1, 0)).rejects.toMatchObject({ code: "22023" });
+      await expect(submitScore(c, match, 2, 0, 3)).rejects.toMatchObject({ code: "40001" });
+      await expect(sql(c, "SELECT public.ff_submit_validated_match($1)", [match])).rejects.toMatchObject({ code: "42501" });
+      await expect(sql(c, "UPDATE real_matches SET home_score=99 WHERE id=$1", [match])).rejects.toMatchObject({ code: "42501" });
+      await expect(sql(c, `INSERT INTO real_matches(id,league_id,team_a_id,team_b_id,title,kick_off,organizer_id,status,home_score,away_score)
+        VALUES($1,$2,$3,$4,'Unvalidated result',now(),$5,'approved',2,0)`, [randomUUID(), league.id, league.home, league.away, userCId]))
+        .rejects.toMatchObject({ code: "42501" });
+      await expect(sql(c,"SELECT public.write_match_event($1,$2,'event',$3)",[match, randomUUID(),
+        JSON.stringify({ teamId: league.home, playerId: home[1], eventType: "clean_sheet", minute: 90 })])).rejects.toThrow();
+      await submitScore(c, match, 2, 0);
+      await approveScore(c, match);
+      const manager = async () => (await sql(c, "SELECT id,match_version,points,breakdown,computed_at FROM manager_points WHERE match_id=$1", [match])).rows[0];
+      const individual = (playerId: string) => sql(c, "SELECT id,match_version,points,breakdown FROM player_match_points WHERE match_id=$1 AND player_id=$2", [match, playerId]);
+      const standings = () => sql(c, "SELECT total_points,matches_played FROM league_standings WHERE league_id=$1 AND profile_id=$2", [league.id, userAId]);
+      await setAuthUid(c, userAId);
+      const original = await manager();
+      expect(original).toMatchObject({ points: "48.00", breakdown: { captainId: home[1] } });
+      const originalPlayer = (await individual(home[1])).rows[0];
+      await save(home[0], originalSquad.squad.updated_at);
+      await sql(c, "UPDATE scoring_rules SET points=40,status='draft' WHERE league_id=$1", [league.id]);
+      await sql(admin, "UPDATE players SET position='FWD' WHERE id=$1", [home[1]]);
+      await setAuthUid(c, userBId);
+      await expect(correctScore(c, match, 2, 1, 3)).rejects.toMatchObject({ code: "42501" });
+      await setAuthUid(c, userAId);
+      await expect(correctScore(c, match, 2, 1, 2)).rejects.toMatchObject({ code: "40001" });
+      // An audit write failure must roll back score, manager and individual points together.
+      await sql(admin, `CREATE FUNCTION public.ff_test_correction_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'Injected correction failure'; END; $$;
+        CREATE TRIGGER ff_test_correction_failure BEFORE INSERT ON public.match_approvals FOR EACH STATEMENT EXECUTE FUNCTION public.ff_test_correction_failure();`);
+      try {
+        await expect(correctScore(c, match, 2, 1, 3)).rejects.toThrow(/Injected correction failure/);
+        expect(await manager()).toEqual(original);
+        expect((await individual(home[1])).rows[0]).toEqual(originalPlayer);
+        expect((await standings()).rows[0]).toEqual({ total_points: "48.00", matches_played: 1 });
+      } finally {
+        await sql(admin, "DROP TRIGGER ff_test_correction_failure ON public.match_approvals; DROP FUNCTION public.ff_test_correction_failure()");
+      }
+      const corrected = (await correctScore(c, match, 2, 1, 3)).rows[0].result;
+      expect(corrected.version).toBe(4);
+      expect((await correctScore(c, match, 2, 1, 3)).rows[0].result).toEqual(corrected);
+      expect((await individual(home[1])).rows[0]).toMatchObject({ id: originalPlayer.id, points: "9.00", match_version: 4 });
+      expect(hasCleanSheet((await individual(home[1])).rows[0])).toBe(false);
+      expect(await manager()).toMatchObject({ id: original.id, points: "30.00", match_version: 4, computed_at: original.computed_at,
+        breakdown: { captainId: home[1], lines: expect.arrayContaining([{ playerId: home[1], base: 9, multiplier: 2, points: 18 }]) } });
+      expect((await standings()).rows[0]).toEqual({ total_points: "30.00", matches_played: 1 });
+      // The assigned organizer can correct too. A draw restores both sides' clean sheets.
+      await setAuthUid(c, userCId);
+      await correctScore(c, match, 0, 0, 4, "Corrected final score");
+      await setAuthUid(c, userAId);
+      const def = (await individual(home[1])).rows[0];
+      expect(def).toMatchObject({ points: "16.00", match_version: 5, breakdown: expect.arrayContaining([
+        expect.objectContaining({ category: "goal", points: 6 }), expect.objectContaining({ category: "clean_sheet", points: 6 }),
+        expect.objectContaining({ category: "draw", points: 3 }),
+      ]) });
+      expect(hasCleanSheet((await individual(away[0])).rows[0])).toBe(true);
+      expect((await standings()).rows[0]).toEqual({ total_points: "54.00", matches_played: 1 });
+      expect((await sql(c, "SELECT points FROM fantasy_points_history WHERE match_id=$1", [match])).rows).toEqual([{ points: "54.00" }]);
+      expect((await sql(c, playerHistorySql, [league.id, home[1], 1, null, null])).rows[0]).toMatchObject({ points: "16.00", breakdown: def.breakdown });
+      expect((await sql(c, "SELECT home_score,away_score,status,version FROM real_matches WHERE id=$1", [match])).rows[0])
+        .toEqual({ home_score: 0, away_score: 0, status: "approved", version: 5 });
+      expect((await sql(c, "SELECT version,reason,snapshot FROM match_approvals WHERE action='corrected' AND match_id=$1 ORDER BY version", [match])).rows)
+        .toEqual([{ version: 4, reason: "Verified with the referee", snapshot: { previousHomeScore: 2, previousAwayScore: 0, homeScore: 2, awayScore: 1 } },
+          { version: 5, reason: "Corrected final score", snapshot: { previousHomeScore: 2, previousAwayScore: 1, homeScore: 0, awayScore: 0 } }]);
+    } finally { c.release(); }
+  });
+});
+
+it("leaves previously approved scoreless matches unchanged and requires resubmission of legacy pending matches", async () => {
+  const c = await freshClient();
+  try {
+    const { match } = await recordedResultFixture(c);
+    await sql(admin,"UPDATE real_matches SET status='pending',version=2 WHERE id=$1",[match]);
+    await expect(approveScore(c, match)).rejects.toThrow(/record both scores/);
+    await sql(c,"SELECT public.reject_match($1,'Record the score',2)",[match]);
+    expect((await submitScore(c, match, 0, 0, 3)).rows[0].result).toMatchObject({ version: 4, home_score: 0, away_score: 0 });
+    await approveScore(c, match, 4);
+    // This fixture models a result approved before score input existed.
+    const old = await recordedResultFixture(c);
+    await sql(admin,"UPDATE real_matches SET status='approved',version=3 WHERE id=$1",[old.match]);
+    await sql(c,"SELECT public.calculate_match_points($1)",[old.match]);
+    const before = (await sql(c,"SELECT id,points,breakdown FROM player_match_points WHERE match_id=$1 ORDER BY id",[old.match])).rows;
+    expect(before.some(hasCleanSheet)).toBe(true);
+    await expect(correctScore(c, old.match, 1, 1, 3)).rejects.toThrow(/recorded result/);
+    expect((await sql(c,"SELECT id,points,breakdown FROM player_match_points WHERE match_id=$1 ORDER BY id",[old.match])).rows).toEqual(before);
+  } finally {c.release();}
 });

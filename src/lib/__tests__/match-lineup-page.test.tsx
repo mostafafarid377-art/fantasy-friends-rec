@@ -48,3 +48,56 @@ it("submits ordered entries, does not show success on DB failure, and uses persi
   expect(within(last.closest("li")!).getByRole("button",{name:"Sub"}).getAttribute("aria-pressed")).toBe("true");
   expect(within(screen.getByText("Player 0").closest("li")!).getByRole("button",{name:"XI"}).getAttribute("aria-pressed")).toBe("true");
 });
+
+it("records a 2–0 result, approves it, and reopens the corrected score and history after refresh", async () => {
+  let match = { id:"m", leagueId:"league", title:"League match", status:"draft", homeScore:null as number | null, awayScore:null as number | null,
+    kickOff:"2026-11-19T18:00:00Z", teamAId:"home", teamBId:"away", version:1 };
+  const writes: object[] = [];
+  const approvals: object[] = [];
+  const fetch = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/flow")) {
+      const input = JSON.parse(String(init.body));
+      writes.push(input);
+      expect(input.version).toBe(match.version);
+      if (input.action === "correct") approvals.push({ id:"correction", action:"corrected", reason:input.reason, version:match.version+1,
+        createdAt:"2026-11-19T19:00:00Z", scoreChange:{ homeScore:input.homeScore, awayScore:input.awayScore,
+          previousHomeScore:match.homeScore, previousAwayScore:match.awayScore } });
+      match = { ...match, version:match.version+1, status: input.action === "submit" ? "pending" : "approved",
+        homeScore:input.homeScore ?? match.homeScore, awayScore:input.awayScore ?? match.awayScore };
+      return Response.json({ status:match.status, match:{ id:match.id, home_score:match.homeScore, away_score:match.awayScore, version:match.version } });
+    }
+    if (!url.endsWith("/m")) throw new Error(`Unexpected ${url}`);
+    return Response.json({match, rules:{format:"5v5",starters:5,subsCount:2,squadSize:10}, canOrganize:true, canApprove:true,
+      canEditEvents:match.status === "draft", teams, roster:players, lineups:[], events:[], substitutions:[], approvals });
+  });
+  vi.stubGlobal("fetch",fetch);
+  const page = render(<MatchPage params={params}/>);
+  const home = await screen.findByLabelText(/^Home score/);
+  const away = screen.getByLabelText(/^Away score/);
+  const submit = screen.getByRole("button", { name:"Submit for review" }) as HTMLButtonElement;
+  expect(submit.disabled).toBe(true);
+  fireEvent.change(home,{ target:{ value:"2" } });
+  expect(submit.disabled).toBe(true);
+  fireEvent.change(away,{ target:{ value:"0" } });
+  fireEvent.click(screen.getByRole("button", { name:/^Events/ }));
+  expect(screen.queryByRole("option", { name:/clean sheet/i })).toBeNull();
+  expect(screen.getByRole("option", { name:"Goal" })).toBeTruthy();
+  fireEvent.click(submit);
+  expect(await screen.findByText("2–0")).toBeTruthy();
+  const approve = await screen.findByRole("button", { name:"Approve" });
+  fireEvent.click(approve);
+  fireEvent.click(await screen.findByRole("button", { name:"Correct score" }));
+  fireEvent.change(screen.getByLabelText(/^Away score/), { target:{ value:"1" } });
+  const correct = screen.getByRole("button", { name:"Save score correction" }) as HTMLButtonElement;
+  expect(correct.disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Correction reason"), { target:{ value:"Confirmed by referee" } });
+  fireEvent.click(correct);
+  expect(await screen.findByText("2–1")).toBeTruthy();
+  expect(writes).toEqual([{ action:"submit", version:1, homeScore:2, awayScore:0 },
+    { action:"approve", version:2 }, { action:"correct", version:3, homeScore:2, awayScore:1, reason:"Confirmed by referee" }]);
+  page.unmount();
+  render(<MatchPage params={params}/>);
+  expect(await screen.findByText("2–1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name:/^History/ }));
+  expect(screen.getByText("2–0 corrected to 2–1")).toBeTruthy();
+});

@@ -51,6 +51,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   return Response.json({
     match: {
       id: match.id, title: match.title, status: match.status, version: match.version,
+      homeScore: match.home_score ?? null, awayScore: match.away_score ?? null,
       leagueId: match.league_id, teamAId: match.team_a_id, teamBId: match.team_b_id,
       kickOff: match.kick_off, organizerId: match.organizer_id, fixtureId: match.fixture_id,
       submittedBy: match.submitted_by, submittedAt: match.submitted_at, decidedBy: match.decided_by,
@@ -81,7 +82,8 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       playerOff: playerById.get(s.player_off_id) ?? null,
     })),
     approvals: approvals.map((a) => ({ id: a.id, action: a.action, actorId: a.actor_id,
-      reason: a.reason, version: a.version, createdAt: a.created_at })),
+      reason: a.reason, version: a.version, createdAt: a.created_at,
+      scoreChange: a.action === "corrected" ? a.snapshot : null })),
     roster: roster.filter((p) => p.status === "active" || linePlayerIds.has(p.id)),
     teams: teamRows ?? [],
   });

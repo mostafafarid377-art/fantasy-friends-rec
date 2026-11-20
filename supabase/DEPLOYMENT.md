@@ -15,6 +15,7 @@ missing forward migrations, in order:
 4. `0008_player_photos.sql` (dashboard pitch and photo release)
 5. `0009_bench_lineups_scoring.sql` (bench, match lineup and scoring release)
 6. `0010_player_performance.sql` (individual points and finalized match history)
+7. `0011_recorded_match_results.sql` (recorded scores and automatic clean sheets)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -80,7 +81,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0010_player_performance.sql`. The
+`0001_schema.sql` to `0011_recorded_match_results.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -199,3 +200,33 @@ needed. The existing fantasy manager's last-game total is unchanged.
   event breakdown, and reload. Check an unused substitute, a participating zero,
   and a player with no finalized games. Repeat on a narrow screen and check that
   a nonmember cannot read either endpoint.
+
+## Recorded results and automatic clean sheets
+
+Apply `0011` after `0010` on staging before releasing the matching app. Coordinate
+both changes in one rollout: the older app still calls the now-private scoreless
+submission path. No new environment variables or credentials are needed. The
+migration does not backfill scores or alter any existing points or scoring rules.
+
+- The assigned Match Organizer or League Leader enters both teams' final scores
+  on the match page before submitting for review. The recorded score, not the
+  list of goal events, determines clean sheets and any configured win/draw
+  points. Manual player events remain available and don't change the score.
+- Clean-sheet eligibility retains the league's existing starter-only rule:
+  a real starter can score a clean sheet if their team concedes zero over the
+  match. There is no minimum-minutes or on-pitch-only concession rule. A real
+  substitute who came on is eligible for appearance and their usual events,
+  but not a clean sheet. A named substitute who never played earns no points.
+- An authorized organizer or leader can correct a finalized recorded score
+  with a reason. The audit entry shows the old and new scores. Score-derived
+  player and fantasy points update in the same transaction as history and
+  standings. The correction preserves the original rules, effective fantasy
+  lineup, captain/vice multiplier, and individually recorded events.
+- Previously approved matches with no recorded score remain unchanged; this
+  feature does not retroactively assign them scores. Legacy pending matches
+  without scores must be sent back to enter a score and resubmit.
+
+On staging, verify a 2–0 and a 0–0 result, a named substitute who did not play,
+then correct a result from 2–0 to 2–1. Confirm the player and fantasy history,
+standings and match history agree. Retry the result and check that no ledger or
+history entry is duplicated.
