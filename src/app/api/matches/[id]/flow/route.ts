@@ -1,33 +1,46 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
-import { ApiError, checkDb, confirmedRow, handler, requireUser, canManageMatch } from "@/lib/server";
+import { ApiError, checkDb, confirmedRow, handler, requireIdentity, canManageMatch } from "@/lib/server";
 import { loadMatch } from "@/lib/matches";
 
 type Ctx = { params: Promise<{ id: string }> };
-const schema = z.object({
-  action: z.enum(["submit", "approve", "reject"]),
-  reason: z.string().trim().max(400).optional(),
-  version: z.number().int().min(1).optional(),
-});
+const revision = z.number().int().min(1).max(2147483647);
+const score = z.number().int().min(0).max(999);
+const scores = { homeScore: score, awayScore: score };
+const reason = z.string().trim().min(1).max(400);
+const schema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("submit"), version: revision, ...scores }),
+  z.object({ action: z.literal("approve"), version: revision.optional() }),
+  z.object({ action: z.literal("reject"), version: revision.optional(), reason }),
+  z.object({ action: z.literal("correct"), version: revision, ...scores, reason }),
+]);
 
 export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   const parsed = schema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) throw new ApiError("Invalid review action", 422, parsed.error.flatten().fieldErrors);
-  const { action, reason, version } = parsed.data;
-  const user = await requireUser();
-  const { match } = await canManageMatch(id, user.id);
+  if (!parsed.success) throw new ApiError("Invalid match review action. Check the scores, version, and any required reason.", 422, parsed.error.flatten().fieldErrors);
+  const input = parsed.data;
+  const { action, version } = input;
   const supabase = await getSupabase();
-  if (action === "reject" && !reason) throw new ApiError("A rejection reason is required", 422);
-  // The guarded functions check state after locking the match. They write
-  // the approval history in the same transaction (and points on approval).
-  const result = action === "submit" ? await supabase.rpc("submit_match", { p_match: id })
-    : action === "approve" ? await supabase.rpc("approve_match", { p_match: id, p_version: version ?? match.version })
-    : await supabase.rpc("reject_match", { p_match: id, p_reason: reason, p_version: version ?? match.version });
+  const user = await requireIdentity(supabase);
+  const { match } = await canManageMatch(id, user.id);
+  const result = action === "submit" ? await supabase.rpc("submit_match", {
+    p_match: id, p_version: input.version, p_home_score: input.homeScore, p_away_score: input.awayScore,
+  }) : action === "correct" ? await supabase.rpc("correct_match_result", {
+    p_match: id, p_version: input.version, p_home_score: input.homeScore, p_away_score: input.awayScore, p_reason: input.reason,
+  }) : action === "approve" ? await supabase.rpc("approve_match", { p_match: id, p_version: version ?? match.version })
+    : await supabase.rpc("reject_match", { p_match: id, p_reason: input.reason, p_version: version ?? match.version });
   checkDb(result.error, `Could not ${action} match`);
-  const status = action === "submit" ? "pending" : action === "approve" ? "approved" : "rejected";
-  const updated = confirmedRow(await loadMatch(id), null, `Could not confirm ${action} result`, match.league_id);
-  if (updated.status !== status || updated.version <= match.version) throw new ApiError("The match has changed; reload to see its current status", 409);
-  return Response.json({ match: updated, status, ...(action === "approve" ? { points: result.data } : {}) });
+  const status = action === "submit" ? "pending" : action === "reject" ? "rejected" : "approved";
+  const updated = confirmedRow(await loadMatch(id, supabase), null, `Could not confirm ${action} result`, match.league_id);
+  const writesScore = action === "submit" || action === "correct";
+  const scored = action === "approve" || action === "correct";
+  if (updated.id !== id || updated.status !== status || (action === "reject" && updated.version !== (version ?? match.version) + 1)
+      || (action === "submit" && (result.data?.id !== id || updated.version !== result.data?.version))
+      || (scored && (result.data?.matchId !== id || result.data?.version !== updated.version))
+      || (writesScore && (updated.home_score !== input.homeScore || updated.away_score !== input.awayScore))) {
+    throw new ApiError("The match result could not be confirmed; reload to see its current status", 409);
+  }
+  return Response.json({ match: updated, status, ...(scored ? { points: result.data } : {}) });
 });

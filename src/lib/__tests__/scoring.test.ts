@@ -252,3 +252,17 @@ describe("scoring parity edge cases", () => {
     expect(points.find((p) => p.playerId === "p_def")?.breakdown.find((b) => b.category === "own_goal")?.points).toBe(-2);
   });
 });
+
+it("uses recorded results for clean sheets without changing individual goal events", () => {
+  const entries = [
+    { playerId: "home-gk", teamId: "home", position: "GK", slot: "starter" },
+    { playerId: "away-def", teamId: "away", position: "DEF", slot: "starter" },
+  ] as const;
+  const result = computePlayerPoints({ rules, lineup: [...entries], participants: ["home-gk", "away-def"],
+    events: [{ playerId: "away-def", teamId: "away", eventType: "goal" }],
+    result: { teamAId: "home", teamBId: "away", homeScore: 2, awayScore: 0 } });
+  expect(result.find((p) => p.playerId === "home-gk")?.breakdown).toContainEqual(expect.objectContaining({ category: "clean_sheet", points: 3 }));
+  const away = result.find((p) => p.playerId === "away-def")!.breakdown;
+  expect(away).toContainEqual(expect.objectContaining({ category: "goal", points: 6 }));
+  expect(away.some((b) => b.category === "clean_sheet")).toBe(false);
+});

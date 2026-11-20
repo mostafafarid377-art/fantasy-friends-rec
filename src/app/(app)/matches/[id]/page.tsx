@@ -5,12 +5,12 @@ import Link from "next/link";
 import {
   ArrowLeft,
   CheckCircle2,
-  ClipboardCheck,
   Save,
   Timer,
   Trash2,
   XCircle,
 } from "lucide-react";
+import { MatchResult, type MatchScore } from "@/components/MatchResult";
 import { PageHeader } from "@/components/AppShell";
 import {
   Avatar,
@@ -50,6 +50,8 @@ type MatchData = {
     leagueId: string;
     title: string;
     status: string;
+    homeScore: number | null;
+    awayScore: number | null;
     kickOff: string;
     teamAId: string;
     teamBId: string;
@@ -90,7 +92,8 @@ type MatchData = {
     playerOn: Player | null;
     playerOff: Player | null;
   }[];
-  approvals: { id: string; action: string; actorId: string; reason: string | null; version: number; createdAt: string }[];
+  approvals: { id: string; action: string; actorId: string; reason: string | null; version: number; createdAt: string;
+    scoreChange?: (MatchScore & { previousHomeScore: number; previousAwayScore: number }) | null }[];
   roster: Player[];
   teams: { id: string; name: string }[];
 };
@@ -307,37 +310,37 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
     }
   };
 
-  const flow = async (action: "submit" | "approve" | "reject") => {
-    if (!matchId || !data) return;
+  const reviewing = useRef(false);
+  const flow = async (action: "submit" | "approve" | "reject" | "correct", score?: MatchScore, correctionReason?: string) => {
+    if (!matchId || !data || reviewing.current || busy) return false;
+    reviewing.current = true;
     setBusy(true);
     setFormError(null);
     try {
-      const res = await api<{ status: string; pointsError?: string | null }>(
-        `/api/matches/${matchId}/flow`,
-        {
-          method: "POST",
-          body: { action, reason: action === "reject" ? rejectReason : undefined, version: data.match.version },
-        },
+      const res = await api<{ status: string; match: { id: string; version: number; home_score: number; away_score: number } }>(
+        `/api/matches/${matchId}/flow`, { method: "POST", body: {
+          action, ...score, reason: action === "reject" ? rejectReason : correctionReason, version: data.match.version,
+        } },
       );
-      if (res?.status !== (action === "submit" ? "pending" : action === "approve" ? "approved" : "rejected")) throw new Error("The result could not be confirmed");
-      if (action === "approve" && res.pointsError) {
-        notify(`Approved, but points failed: ${res.pointsError}`, "error");
-      } else {
-        notify(
-          action === "submit"
-            ? "Submitted for approval"
-            : action === "approve"
-              ? "Approved — points calculated"
-              : "Sent back to the organizer",
-        );
+      const expected = action === "submit" ? "pending" : action === "reject" ? "rejected" : "approved";
+      if (res?.status !== expected || res.match?.id !== matchId || (score &&
+          (res.match.home_score !== score.homeScore || res.match.away_score !== score.awayScore))) {
+        throw new Error("The result could not be confirmed");
       }
-      if (action === "approve") notifyLeagueContentChanged(data.match.leagueId);
+      notify({ submit: "Submitted for approval", approve: "Approved — points calculated", reject: "Sent back to the organizer",
+        correct: "Score corrected — points and standings updated" }[action]);
+      if (action === "approve" || action === "correct") notifyLeagueContentChanged(data.match.leagueId);
       setShowReject(false);
       setRejectReason("");
-      reload();
+      await reload();
+      return true;
     } catch (err) {
-      notify(err instanceof Error ? err.message : "Action failed", "error");
+      const message = err instanceof Error ? err.message : "Action failed";
+      setFormError(message);
+      notify(message, "error");
+      return false;
     } finally {
+      reviewing.current = false;
       setBusy(false);
     }
   };
@@ -382,17 +385,11 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
         })} · v${m.version}`}
         title={`${teamName(m.teamAId)} v ${teamName(m.teamBId)}`}
         subtitle={m.title}
-        actions={
-          <>
-            <Badge tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Badge>
-            {data.canOrganize && (m.status === "draft" || m.status === "rejected") && (
-              <Button onClick={() => flow("submit")} loading={busy}>
-                <ClipboardCheck className="h-4 w-4" /> Submit for review
-              </Button>
-            )}
-          </>
-        }
+        actions={<Badge tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Badge>}
       />
+
+      <MatchResult key={`${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)}
+        canManage={data.canOrganize} busy={busy} onSave={flow} />
 
       {m.status === "rejected" && m.rejectionReason && (
         <div className="mb-5 rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3.5">
@@ -408,9 +405,9 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             <Timer className="h-4 w-4 shrink-0 text-card-y" />
             <span className="flex-1 text-[14px] text-chalk">
               Submitted {m.submittedAt ? new Date(m.submittedAt).toLocaleString() : ""} — awaiting your
-              decision. Approval calculates fantasy points and rebuilds the table.
+              decision. {m.homeScore == null ? "Send this match back so both scores can be recorded." : "Approval calculates fantasy points and rebuilds the table."}
             </span>
-            <Button variant="primary" onClick={() => flow("approve")} loading={busy}>
+            <Button variant="primary" onClick={() => flow("approve")} loading={busy} disabled={m.homeScore == null || m.awayScore == null}>
               <CheckCircle2 className="h-4 w-4" /> Approve
             </Button>
             <Button variant="danger" onClick={() => setShowReject((s) => !s)}>
@@ -777,8 +774,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             )}
 
             <p className="mt-4 border-t border-line pt-3 text-[12.5px] leading-relaxed text-sage-dim">
-              Points are calculated from these events only after the League Leader approves the
-              result, using this league&apos;s approved scoring rules.
+              Event points are calculated when the result is approved. Clean sheets come from the recorded final score and real participation, not a manual event.
             </p>
           </Panel>
         </div>
@@ -804,7 +800,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                     <Badge tone="neutral">v{a.version}</Badge>
                     <span className="num text-[11.5px] text-sage-dim">{new Date(a.createdAt).toLocaleString()}</span>
                   </div>
-                  {a.reason && <p className="mt-1 text-[13.5px] text-card-r">{a.reason}</p>}
+                  {a.scoreChange && <p className="mt-1 text-sm text-chalk">{a.scoreChange.previousHomeScore}–{a.scoreChange.previousAwayScore} corrected to {a.scoreChange.homeScore}–{a.scoreChange.awayScore}</p>}
+                  {a.reason && <p className="mt-1 text-[13.5px] text-sage">{a.reason}</p>}
                 </li>
               ))}
             </ol>

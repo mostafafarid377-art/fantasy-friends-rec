@@ -360,6 +360,8 @@ export const realMatches = pgTable(
       .references(() => teams.id, { onDelete: "restrict" }),
     title: text("title").notNull(),
     kickOff: timestamp("kick_off", { withTimezone: true }).notNull(),
+    homeScore: integer("home_score"),
+    awayScore: integer("away_score"),
     status: text("status").notNull().default("draft"),
     organizerId: text("organizer_id")
       .notNull()
@@ -373,7 +375,7 @@ export const realMatches = pgTable(
     }),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     rejectionReason: text("rejection_reason"),
-    /** increments on every resubmission — guards duplicate approvals */
+    /** Guards submissions, approval and score corrections against stale writes. */
     version: integer("version").notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -386,6 +388,8 @@ export const realMatches = pgTable(
       sql`status in ('draft','pending','approved','rejected')`,
     ),
     check("matches_teams_ck", sql`team_a_id <> team_b_id`),
+    check("real_matches_result_ck", sql`(home_score is null and away_score is null) or
+      (home_score is not null and away_score is not null and home_score between 0 and 999 and away_score between 0 and 999)`),
   ],
 );
 
@@ -494,7 +498,7 @@ export const matchApprovals = pgTable(
     matchId: text("match_id")
       .notNull()
       .references(() => realMatches.id, { onDelete: "cascade" }),
-    action: text("action").notNull(), // submitted | approved | rejected | reopened
+    action: text("action").notNull(), // submitted | approved | rejected | reopened | corrected
     actorId: text("actor_id")
       .notNull()
       .references(() => profiles.id, { onDelete: "restrict" }),
@@ -507,7 +511,7 @@ export const matchApprovals = pgTable(
     index("approvals_match_idx").on(t.matchId),
     check(
       "approvals_action_ck",
-      sql`action in ('submitted','approved','rejected','reopened')`,
+      sql`action in ('submitted','approved','rejected','reopened','corrected')`,
     ),
   ],
 );

@@ -20,7 +20,7 @@ export const GET = handler(async (req: NextRequest) => {
   const membership = await requireMember(leagueId, supabase);
   const canApprove = membership.role === "leader";
   let query = supabase.from("real_matches").select(
-    "id,title,status,kick_off,organizer_id,rejection_reason,teamA:teams!real_matches_team_a_id_teams_id_fk(name),teamB:teams!real_matches_team_b_id_teams_id_fk(name),match_events(count)",
+    "id,title,status,home_score,away_score,kick_off,organizer_id,rejection_reason,teamA:teams!real_matches_team_a_id_teams_id_fk(name),teamB:teams!real_matches_team_b_id_teams_id_fk(name),match_events(count)",
     approved ? { count: "exact" } : {},
   ).eq("league_id", leagueId);
   if (approved) query = query.eq("status", "approved");
@@ -36,7 +36,7 @@ export const GET = handler(async (req: NextRequest) => {
   checkDb(pending?.error ?? null, "Could not load pending reviews");
   return Response.json({
     matches: (matches.data ?? []).slice(0, PAGE_SIZE).map((r: any) => ({
-      id: r.id, title: r.title, status: r.status, kickOff: r.kick_off,
+      id: r.id, title: r.title, status: r.status, kickOff: r.kick_off, homeScore: r.home_score, awayScore: r.away_score,
       organizerId: r.organizer_id, rejectionReason: r.rejection_reason,
       teamAName: r.teamA?.name ?? "Team A", teamBName: r.teamB?.name ?? "Team B",
       eventCount: r.match_events?.[0]?.count ?? 0,
