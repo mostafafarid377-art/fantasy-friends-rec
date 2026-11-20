@@ -59,7 +59,7 @@ export function MatchStatistics({ matchId, version, started, status, correctable
     </details>
     <section aria-label="Match Bonus Points" className="space-y-2 border-t border-line pt-3">
       <h2 className="text-lg text-chalk">Match Bonus Points</h2>
-      <p className="text-sm text-sage">Bonuses are calculated automatically on approval from each participant’s points before bonus. Tied players share a rank, and the next ranks are skipped.</p>
+      {!finalized && <p className="text-sm text-sage">Bonuses are calculated on approval. Tied players share a rank.</p>}
       {finalized && (bonusAwards.length ? <ul className="space-y-1 text-sm text-chalk">
         {bonusAwards.map((award) => <li key={award.playerId} className="flex flex-wrap justify-between gap-x-3">
           <span>{award.rank == null ? "Historical award" : `Rank ${award.rank}`} · {known.get(award.playerId)?.name ?? "Player"}</span>
