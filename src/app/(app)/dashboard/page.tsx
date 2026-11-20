@@ -23,6 +23,7 @@ import {
   Slate,
 } from "@/components/ui";
 import { Pitch } from "@/components/Pitch";
+import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "@/components/PlayerPerformance";
 import { deriveFormation, FORMATIONS, orderedBench, type LeagueFormat } from "@/lib/domain";
 import type { SquadEntry } from "@/lib/squad";
 import { useLeagueContentUpdates } from "@/lib/client/league-updates";
@@ -225,7 +226,7 @@ export default function DashboardPage() {
 
         {/* ---- right rail ---- */}
         <div className="min-w-0 space-y-5">
-          <SquadPreview league={data.league} squad={data.squad} />
+          <SquadPreview key={data.league.id} league={data.league} squad={data.squad} />
 
           {/* fixtures */}
           <Panel className="p-4">
@@ -315,6 +316,10 @@ export default function DashboardPage() {
 
 function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">) {
   const players = squad?.players ?? [];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = players.find((p) => p.id === selectedId);
+  const scores = useLatestPlayerGames(league.id, players);
+  const latest = scores.data ?? {};
   const formation = deriveFormation(league, players, squad?.formation);
   const bench = orderedBench(players);
   const hasBenchKeeper = bench.some((p) => p.position === "GK");
@@ -325,7 +330,8 @@ function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">
         <Link href="/team" className="text-xs font-semibold text-green hover:text-green-glow">View Full Squad</Link>
       </div>
       <Pitch compact players={players} formation={formation ?? FORMATIONS[league.format][0]} format={league.format}
-        captainId={squad?.captainId ?? null} viceCaptainId={squad?.viceCaptainId ?? null} />
+        captainId={squad?.captainId ?? null} viceCaptainId={squad?.viceCaptainId ?? null} latest={latest} onSelect={setSelectedId} />
+      {scores.error ? <ErrorNote message={scores.error} onRetry={() => void scores.reload()} /> : scores.loading && <p role="status" className="mt-1 text-xs text-sage">Loading latest player points…</p>}
       {!squad ? <div className="mt-3 text-center">
         <p className="text-sm text-sage">You haven’t picked a squad in this league.</p>
         <Button href="/team/pick" size="sm" className="mt-2">Pick Your Squad <ChevronRight className="h-4 w-4" /></Button>
@@ -334,18 +340,21 @@ function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">
         {bench.length > 0 && <div className="mt-3 border-t border-line pt-2">
           <Slate>Bench</Slate>
           <ul className="mt-2 grid grid-cols-2 gap-1.5">
-            {bench.map((p, i) => <li key={p.id} className="flex min-w-0 items-center gap-1.5 rounded bg-pitch-900 px-1.5 py-1" title={p.name}>
+            {bench.map((p, i) => <li key={p.id} className="min-w-0"><button type="button" onClick={() => setSelectedId(p.id)}
+              className="flex min-h-10 w-full min-w-0 items-center gap-1.5 rounded bg-pitch-900 px-1.5 py-1 text-left hover:bg-pitch-800" title={p.name}>
               <span className="num text-[9px] text-green">{p.position === "GK" ? "GK" : i + (hasBenchKeeper ? 0 : 1)}</span>
               <Avatar name={p.name} url={p.photoUrl} size={23} decorative />
-              <span className="min-w-0 truncate text-xs text-chalk">{p.name}</span>
+              <span className="min-w-0 flex-1 text-xs text-chalk"><span className="block truncate">{p.name}</span><PlayerPointsLabel game={latest[p.id]} /></span>
               <span className="ml-auto text-[9px] text-sage">{p.position}</span>
-            </li>)}
+            </button></li>)}
           </ul>
         </div>}
         {!squad.complete && <Button href="/team/pick" size="sm" variant="outline" className="mt-3 w-full">
           Finish squad ({squad.size}/{league.squadSize})
         </Button>}
       </>}
+      {selected && <PlayerPerformanceDialog key={selected.id} leagueId={league.id} entry={selected}
+        latest={latest[selected.id]} onClose={() => setSelectedId(null)} />}
     </Panel>
   );
 }

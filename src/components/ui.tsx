@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -281,12 +281,14 @@ export function Modal({
   title,
   children,
   width = "max-w-lg",
+  manageFocus = false,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   width?: string;
+  manageFocus?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -299,15 +301,40 @@ export function Modal({
     };
   }, [open, onClose]);
 
+  const panel = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    if (!open || !manageFocus || !panel.current) return;
+    const root = panel.current;
+    const previous = document.activeElement;
+    root.focus();
+    function keepFocus(e: KeyboardEvent) {
+      if (e.key !== "Tab") return;
+      const items = [...root.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), summary, [tabindex='0']")]
+        .filter((item) => !item.closest("details:not([open])") || item.tagName === "SUMMARY");
+      const first = items[0], last = items.at(-1);
+      if (!root.contains(document.activeElement) || document.activeElement === root ||
+          (e.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      }
+    }
+    document.addEventListener("keydown", keepFocus);
+    return () => {
+      document.removeEventListener("keydown", keepFocus);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, [open, manageFocus]);
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-6">
-      <button className="absolute inset-0 cursor-default" aria-label="Close" onClick={onClose} />
-      <div role="dialog" aria-modal="true" aria-label={title}
+      <button className="absolute inset-0 cursor-default" aria-label="Close" tabIndex={manageFocus ? -1 : undefined} onClick={onClose} />
+      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={manageFocus ? -1 : undefined}
         className={`animate-rise relative w-full ${width} max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-line bg-pitch-850 p-5 shadow-2xl sm:rounded-xl sm:p-6`}
       >
         <div className="mb-5 flex items-start justify-between gap-4">
-          <h2 className="text-2xl text-chalk">{title}</h2>
+          <h2 id={titleId} className="min-w-0 break-words text-2xl text-chalk">{title}</h2>
           <button
             onClick={onClose}
             aria-label="Close dialog"

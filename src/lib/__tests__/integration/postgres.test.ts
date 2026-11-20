@@ -1018,3 +1018,117 @@ describe("bench, match lineups and final scoring (real PostgreSQL)", () => {
     } finally {c.release();}
   });
 });
+
+const playerHistorySql = "SELECT * FROM public.player_finalized_games($1,$2,$3,$4,$5)";
+const latestPlayerSql = "SELECT * FROM public.latest_player_games($1,$2)";
+
+describe("individual player performance (real PostgreSQL)", () => {
+  it("reads the official individual ledger and actual participation, ignoring pending, unrelated and stale results", async () => {
+    const c = await freshClient();
+    try {
+      const league = await releaseLeague(c, 5);
+      const shape = ["GK", "DEF", "MID", "MID", "FWD"];
+      const home = await Promise.all([...shape, "GK", "DEF", "MID"].map((pos, i) => league.makePlayer(pos, league.home, `Home ${i}`)));
+      const away = await Promise.all(shape.map((pos) => league.makePlayer(pos, league.away)));
+      const unused = home[5], subbedOn = home[6], neverNamed = home[7];
+      const fixture = randomUUID();
+      await sql(admin, "INSERT INTO fantasy_fixtures(id,league_id,gameweek,title) VALUES($1,$2,17,'GW 17')", [fixture, league.id]);
+      await sql(c, "UPDATE scoring_rules SET points=0 WHERE league_id=$1 AND position='FWD' AND event_type='appearance'", [league.id]);
+      await sql(c, "UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1", [league.id, userAId]);
+      await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)", [league.id, home[1], home[2], JSON.stringify(matchEntries(home.slice(0, 5), [unused]))]);
+      const makeMatch = async (date: string, starters = home.slice(0, 5), bench: string[] = []) => {
+        const id = await league.makeMatch();
+        await sql(admin, "UPDATE real_matches SET kick_off=$2 WHERE id=$1", [id, date]);
+        await persistLineup(c, id, league.home, matchEntries(starters, bench));
+        await persistLineup(c, id, league.away, matchEntries(away));
+        return id;
+      };
+      const finalize = async (id: string) => {
+        await sql(c, "SELECT public.submit_match($1)", [id]);
+        await sql(c, "SELECT public.approve_match($1,2)", [id]);
+      };
+      // Approve out of kickoff order; history follows the match date, not the recording date.
+      const latest = await makeMatch("2026-11-08T19:00:00Z", home.slice(0, 5), [unused, subbedOn]);
+      await sql(admin, "UPDATE real_matches SET title='Week 17 match',fixture_id=$2 WHERE id=$1", [latest, fixture]);
+      for (const playerId of [home[1], home[2]]) {
+        await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [latest, randomUUID(), JSON.stringify({ teamId: league.home, playerId, eventType: "goal", minute: 10 })]);
+      }
+      await sql(c, "SELECT public.write_match_event($1,$2,'substitution',$3)", [latest, randomUUID(), JSON.stringify({ teamId: league.home, playerId: subbedOn, otherId: home[1], minute: 16 })]);
+      await finalize(latest);
+      const earlier = await makeMatch("2026-11-01T19:00:00Z", [unused, ...home.slice(1, 5)]);
+      await finalize(earlier);
+      const unrelated = await makeMatch("2026-11-09T19:00:00Z", [home[0], subbedOn, ...home.slice(2, 5)]);
+      await finalize(unrelated);
+      const pending = await makeMatch("2026-11-11T19:00:00Z", [unused, ...home.slice(1, 5)]);
+      await sql(c, "SELECT public.submit_match($1)", [pending]);
+      // A stale-version score must not be exposed as the latest player's game.
+      await sql(admin, `INSERT INTO player_match_points(id,league_id,match_id,player_id,match_version,points,breakdown)
+        VALUES($1,$2,$3,$4,1,83,'[]'),($5,$2,$6,$4,2,99,'[]')`, [randomUUID(), league.id, unrelated, home[1], randomUUID(), pending]);
+      // Transfer after the games: historical opposition is based on the match's recorded team.
+      await sql(admin, "UPDATE players SET team_id=$2 WHERE id=$1", [home[1], league.away]);
+      await setAuthUid(c, userAId);
+      const summary = (await sql(c, latestPlayerSql, [league.id, [home[1], home[2], home[4], unused, neverNamed, home[1]]])).rows;
+      expect(summary).toHaveLength(4);
+      expect(summary).toContainEqual({ player_id: home[1], match_id: latest, points: "11.00" });
+      expect(summary).toContainEqual({ player_id: home[2], match_id: unrelated, points: "2.00" });
+      expect(summary).toContainEqual({ player_id: home[4], match_id: unrelated, points: "0.00" });
+      expect(summary).toContainEqual({ player_id: unused, match_id: latest, points: null });
+      const first = (await sql(c, playerHistorySql, [league.id, home[1], 10, null, null])).rows;
+      expect(first.map((row) => row.match_id)).toEqual([latest, earlier]);
+      expect(first[0]).toMatchObject({ title: "Week 17 match", kick_off: new Date("2026-11-08T19:00:00Z"), gameweek: 17,
+        opponent: "Away", participation: "played", points: "11.00", breakdown: expect.arrayContaining([
+          { category: "goal", label: "Goal", count: 1, pointsPer: 6, points: 6 },
+          { category: "clean_sheet", label: "Clean sheet", count: 1, pointsPer: 4, points: 4 },
+          { category: "appearance", label: "Appearance", count: 1, pointsPer: 1, points: 1 },
+        ]) });
+      expect((await sql(c, playerHistorySql, [league.id, home[1], 1, first[0].kick_off, latest])).rows).toEqual([first[1]]);
+      const mids = (await sql(c, playerHistorySql, [league.id, home[2], 10, null, null])).rows;
+      expect(mids.find((row) => row.match_id === latest)).toMatchObject({ points: "7.00", breakdown: expect.arrayContaining([expect.objectContaining({ category: "goal", points: 5 })]) });
+      expect((await sql(c, "SELECT breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2", [latest, userAId])).rows[0].breakdown.lines)
+        .toContainEqual({ playerId: home[1], base: 11, multiplier: 2, points: 22 });
+      expect((await sql(c, playerHistorySql, [league.id, neverNamed, 10, null, null])).rows).toEqual([]);
+      expect((await sql(c, playerHistorySql, [league.id, unused, 10, null, null])).rows).toMatchObject([
+        { match_id: latest, participation: "did_not_play", points: null }, { match_id: earlier, participation: "played", points: "5.00" },
+      ]);
+      expect((await sql(c, playerHistorySql, [league.id, home[4], 1, null, null])).rows[0]).toMatchObject({ participation: "played", points: "0.00" });
+      const benchHistory = (await sql(c, playerHistorySql, [league.id, subbedOn, 10, null, null])).rows;
+      expect(benchHistory.find((row) => row.match_id === latest)).toMatchObject({ participation: "played", points: "1.00" });
+      await setAuthUid(c, null);
+      expect((await sql(c, latestPlayerSql, [league.id, home])).rows).toEqual([]);
+    } finally { c.release(); }
+  });
+
+  it("uses each league's frozen scores and never returns foreign player IDs or nonmember history", async () => {
+    const c = await freshClient();
+    try {
+      async function score(goal: number) {
+        const l = await releaseLeague(c, 5);
+        await sql(c, "UPDATE scoring_rules SET points=$2 WHERE league_id=$1 AND position='MID' AND event_type='goal'", [l.id, goal]);
+        await sql(c, "UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1", [l.id, userAId]);
+        const shape = ["GK", "DEF", "MID", "MID", "FWD"];
+        const home = await Promise.all(shape.map((pos) => l.makePlayer(pos, l.home, "Same name")));
+        const away = await Promise.all(shape.map((pos) => l.makePlayer(pos, l.away)));
+        const match = await l.makeMatch();
+        await persistLineup(c, match, l.home, matchEntries(home));
+        await persistLineup(c, match, l.away, matchEntries(away));
+        await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(), JSON.stringify({ teamId: l.home, playerId: home[2], eventType: "goal", minute: 10 })]);
+        await sql(c, "SELECT public.submit_match($1)", [match]);
+        await sql(c, "SELECT public.approve_match($1,2)", [match]);
+        return { id: l.id, player: home[2], match };
+      }
+      const low = await score(2), high = await score(13);
+      await setAuthUid(c, userAId);
+      await sql(c, "UPDATE scoring_rules SET points=19 WHERE league_id=$1 AND position='MID' AND event_type='goal'", [low.id]);
+      for (const [current, other, expected] of [[low, high, "4.00"], [high, low, "15.00"]] as const) {
+        expect((await sql(c, latestPlayerSql, [current.id, [current.player, other.player]])).rows)
+          .toEqual([{ player_id: current.player, match_id: current.match, points: expected }]);
+        expect((await sql(c, playerHistorySql, [current.id, other.player, 10, null, null])).rows).toEqual([]);
+      }
+      await sql(admin, "DELETE FROM league_members WHERE league_id=$1 AND profile_id=$2", [high.id, userBId]);
+      await setAuthUid(c, userBId);
+      expect((await sql(c, playerHistorySql, [high.id, high.player, 10, null, null])).rows).toEqual([]);
+      expect((await sql(c, latestPlayerSql, [high.id, [high.player]])).rows).toEqual([]);
+      expect((await sql(admin, "SELECT has_function_privilege('anon','public.latest_player_games(text,text[])','execute') AS allowed")).rows).toEqual([{ allowed: false }]);
+    } finally { c.release(); }
+  });
+});

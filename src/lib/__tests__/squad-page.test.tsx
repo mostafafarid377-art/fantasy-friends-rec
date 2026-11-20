@@ -6,6 +6,7 @@ import { SquadScreen } from "@/components/SquadScreen";
 import { AppProvider } from "@/components/LeagueContext";
 import { AppShell } from "@/components/AppShell";
 import DashboardPage from "@/app/(app)/dashboard/page";
+import type { PlayerPerformance, LatestPlayerGames } from "@/lib/player-performance";
 import type { SquadResponse, PoolPlayer } from "@/lib/squad";
 import type { SessionLeague, SessionPayload } from "@/lib/client/api";
 
@@ -42,9 +43,22 @@ let sequence = 0;
 function fixture() {
   const saved = new Map([[a.id, empty(a)], [b.id, empty(b)]]);
   const put = vi.fn();
+  const latest: LatestPlayerGames = {};
+  const histories = new Map<string, PlayerPerformance>();
+  const historyError = new Set<string>();
+  const older = new Map<string, PlayerPerformance>();
   const fetch = vi.fn(async (url: string, options?: RequestInit) => {
     if (url === "/api/auth/session") return Response.json(session);
-    const [, leagueId, collection] = /\/leagues\/([^/]+)\/([^?]+)/.exec(url) ?? [];
+    const parsed = new URL(url, "http://local.test");
+    const [, , , leagueId, collection, playerId, action] = parsed.pathname.split("/");
+    if (collection === "player-performance") return Response.json(Object.fromEntries(parsed.searchParams.getAll("player")
+      .filter((id) => latest[id]).map((id) => [id, latest[id]])));
+    if (collection === "players" && action === "performance") {
+      if (historyError.has(playerId) || (parsed.searchParams.has("before") && historyError.has(`${playerId}:older`))) return Response.json({ error: "Could not load finalized games" }, { status: 500 });
+      if (parsed.searchParams.has("before")) return Response.json(older.get(playerId));
+      const p = pool.find((p) => p.id === playerId)!;
+      return Response.json(histories.get(playerId) ?? { player: { name: p.fullName, position: p.position, team: p.teamId === red.id ? red.name : null, photoUrl: p.photoUrl }, games: [], next: null });
+    }
     if (collection === "players") return Response.json(leagueId === a.id ? { players: pool, teams: [red,blue] } : { players: [], teams: [] });
     if (collection !== "squad") throw new Error(`Unexpected route ${url}`);
     const old = saved.get(leagueId)!;
@@ -63,7 +77,7 @@ function fixture() {
     return Response.json({ state: "applied", ...next });
   });
   vi.stubGlobal("fetch", fetch);
-  return { put, fetch, saved };
+  return { put, fetch, saved, latest, histories, historyError, older };
 }
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.unstubAllGlobals(); });
 
@@ -222,24 +236,104 @@ it("previews real starters, captaincy and substitutes, refreshes an edited squad
   let players = [make({ ...pool[0], photoUrl }, "starter", 0), make(pool[4], "starter", 1), make(pool[5], "sub", 0)];
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url === "/api/auth/session") return Response.json(session);
+    if (url.includes("/player-performance?")) return Response.json({ "gk-a": { matchId: "game-a", points: 8 } });
     const l = url.endsWith(b.id) ? b : a;
     return Response.json({ league: { ...l, squadSize: 9 }, squad: l === a ? { formation: "1-2-1", captainId: "gk-a", viceCaptainId: "def-a", players } : null,
       standings: [], myRank: null, lastGame: null, fixtures: [], matches: [], notifications: [], rulesApproved: true, emailVerified: true, memberCount: 1 });
   }));
   renderInShell(<DashboardPage />);
   const pitch = within(await screen.findByRole("region", { name: "5v5 football pitch, formation 1-2-1" }));
-  expect(pitch.getAllByRole("img")).toHaveLength(5);
-  expect(pitch.getByRole("img", { name: "Ada Keeper, GK, captain" }).querySelector("img")?.getAttribute("src")).toBe(photoUrl);
-  expect(pitch.getByRole("img", { name: "Dana Defender, DEF, vice-captain" }).textContent).toContain("VC");
+  expect(pitch.getAllByRole("img", { name: /^Empty/ })).toHaveLength(3);
+  expect(pitch.getByRole("button", { name: "Ada Keeper, GK, captain" }).querySelector("img")?.getAttribute("src")).toBe(photoUrl);
+  expect(pitch.getByRole("button", { name: "Dana Defender, DEF, vice-captain" }).textContent).toContain("VC");
+  expect(await pitch.findByText("8 pts")).toBeTruthy();
   expect(pitch.queryByText("Moe Midfielder")).toBeNull();
   expect(screen.getByText("Moe Midfielder")).toBeTruthy();
   expect(screen.getByRole("link", { name: "View Full Squad" }).getAttribute("href")).toBe("/team");
   players = [make(pool[1], "starter", 0), ...players.slice(1)];
   fireEvent(window, new StorageEvent("storage", { key: `ff:league-content-changed:${a.id}` }));
-  expect(await pitch.findByRole("img", { name: "Zed Keeper, GK" })).toBeTruthy();
+  expect(await pitch.findByRole("button", { name: "Zed Keeper, GK" })).toBeTruthy();
   expect(pitch.queryByText("Ada Keeper")).toBeNull();
   fireEvent.change(screen.getByRole("combobox", { name: "Active league" }), { target: { value: b.id } });
   const other = within(await screen.findByRole("region", { name: /7v7 football pitch/ }));
   expect(other.getAllByRole("img", { name: /^Empty/ })).toHaveLength(7);
   expect(screen.getByRole("link", { name: "Pick Your Squad" }).getAttribute("href")).toBe("/team/pick");
+});
+
+it("shows individual latest points on starters and bench, opens history on demand, and keeps results after refresh", async () => {
+  const { saved, fetch, latest, histories, historyError, put } = fixture();
+  saved.set(a.id, { ...empty(a), squad: { id: "s-a", formation: "1-2-1", captainId: "gk-a", viceCaptainId: null, completedAt: null, updatedAt: "2026-11-01T12:00:00Z" },
+    players: [{ ...pool[0], slot: "starter", name: pool[0].fullName, order: 0 }, { ...pool[1], slot: "sub", name: pool[1].fullName, order: 0 },
+      { ...pool[4], slot: "starter", name: pool[4].fullName, order: 1 }] });
+  latest["gk-a"] = { matchId: "match-8", points: 8 };
+  latest["gk-b"] = { matchId: "match-9", points: null };
+  histories.set("gk-a", { player: { name: "Ada Keeper", position: "GK", team: "Reds", photoUrl: "https://example.com/keeper.jpg" }, next: null, games: [
+    { matchId: "match-8", kickOff: "2026-11-19T10:00:00Z", title: "Cup match", gameweek: 8, opponent: "Blues", participation: "played", points: 8,
+      breakdown: [{ category: "penalty_saved", label: "Penalty saved", count: 1, pointsPer: 5, points: 5 }, { category: "assist", label: "Assist", count: 1, pointsPer: 3, points: 3 }] },
+    { matchId: "match-3", kickOff: "2026-11-03T10:00:00Z", title: "Opening match", gameweek: 3, opponent: null, participation: "played", points: 0, breakdown: [] },
+  ] });
+  histories.set("gk-b", { player: { name: "Zed Keeper", position: "GK", team: "Reds", photoUrl: null }, next: null, games: [
+    { matchId: "match-9", title: "Late match", kickOff: "2026-11-20T10:00:00Z", gameweek: null, opponent: null, points: null, participation: "did_not_play", breakdown: [] },
+  ] });
+  const page = renderInShell();
+  const starter = await screen.findByRole("button", { name: "Ada Keeper, GK, captain" });
+  expect(await within(starter).findByText("8 pts")).toBeTruthy();
+  const bench = screen.getByRole("button", { name: /Zed Keeper/ });
+  expect(within(bench).getByText("—")).toBeTruthy();
+  expect(fetch.mock.calls.filter(([url]) => url.includes("/player-performance?"))).toHaveLength(1);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/performance"))).toBe(false);
+  starter.focus(); fireEvent.click(starter);
+  const history = within(await screen.findByRole("region", { name: "Finalized match history" }));
+  expect(await history.findByText("Cup match · GW 8")).toBeTruthy();
+  expect(history.getAllByRole("listitem").filter((li) => li.parentElement?.tagName === "OL").map((li) => li.querySelector("summary")?.textContent))
+    .toEqual([expect.stringContaining("Cup match"), expect.stringContaining("Opening match")]);
+  expect(history.getByText("0 pts")).toBeTruthy();
+  expect(dialog().getByText("GK · Reds")).toBeTruthy();
+  const cupSummary = history.getByText("Cup match · GW 8").closest("summary")!;
+  fireEvent.click(cupSummary);
+  expect(cupSummary.closest("details")?.open).toBe(true);
+  expect(history.getByText("Penalty saved")).toBeTruthy();
+  click("Close dialog");
+  expect(document.activeElement).toBe(starter);
+  fireEvent.click(bench);
+  expect(await screen.findByText("Did not play")).toBeTruthy();
+  expect(dialog().queryByText("0 pts")).toBeNull();
+  click("Close dialog");
+  historyError.add("def-a");
+  click(/Dana Defender, DEF/);
+  expect(await screen.findByText("Could not load finalized games")).toBeTruthy();
+  historyError.delete("def-a");
+  click("Retry");
+  expect(await screen.findByText("No finalized games yet.")).toBeTruthy();
+  expect(put).not.toHaveBeenCalled();
+  page.unmount(); renderInShell();
+  expect(await screen.findByText("8 pts")).toBeTruthy();
+  click("Ada Keeper, GK, captain");
+  expect(await screen.findByText("Cup match · GW 8")).toBeTruthy();
+});
+
+
+it("loads older history only on demand and retries without losing the latest games", async () => {
+  const { saved, histories, historyError, older, fetch } = fixture();
+  saved.set(a.id, { ...empty(a), players: [{ ...pool[0], name: pool[0].fullName, slot: "starter", order: 0 }] });
+  const player = { name: pool[0].fullName, position: "GK" as const, team: null, photoUrl: null };
+  const first = { matchId: "latest", kickOff: "2026-11-19T12:34:56.123456+00:00", title: "Most recent game", gameweek: null,
+    opponent: null, participation: "played" as const, points: 5, breakdown: [] };
+  histories.set(pool[0].id, { player, games: [first], next: { matchId: first.matchId, kickOff: first.kickOff } });
+  older.set(pool[0].id, { player, next: null, games: [{ ...first, matchId: "old", title: "Older game", kickOff: "2026-11-02T12:00:00Z" }] });
+  historyError.add(`${pool[0].id}:older`);
+  renderInShell();
+  fireEvent.click(await screen.findByRole("button", { name: "Ada Keeper, GK" }));
+  expect(await screen.findByText("Most recent game")).toBeTruthy();
+  expect(fetch.mock.calls.some(([url]) => url.includes("before="))).toBe(false);
+  click("Load older games");
+  expect(await screen.findByRole("button", { name: "Retry older games" })).toBeTruthy();
+  expect(screen.getByText("Most recent game")).toBeTruthy();
+  historyError.delete(`${pool[0].id}:older`);
+  click("Retry older games");
+  expect(await screen.findByText("Older game")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Load older games" })).toBeNull();
+  const url = new URL(fetch.mock.calls.filter(([url]) => url.includes("before=")).at(-1)![0], "http://local.test");
+  expect(url.searchParams.get("before")).toBe(first.kickOff);
+  expect(url.searchParams.get("match")).toBe(first.matchId);
 });

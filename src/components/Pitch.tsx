@@ -1,11 +1,13 @@
 "use client";
 
+import { PlayerPointsLabel } from "./PlayerPerformance";
+import { formatPlayerPoints, type LatestPlayerGame, type LatestPlayerGames } from "@/lib/player-performance";
 import { Avatar } from "./ui";
 import { Plus, Shirt } from "lucide-react";
 import { layoutFormation, type Formation, type LeagueFormat, type Position } from "@/lib/domain";
 import type { SquadEntry } from "@/lib/squad";
 
-export function Pitch({ players, formation, format, captainId, viceCaptainId, onSelect, onAdd, disabled, compact = false }: {
+export function Pitch({ players, formation, format, captainId, viceCaptainId, onSelect, onAdd, disabled, latest, compact = false }: {
   players: SquadEntry[];
   formation: Formation;
   format: LeagueFormat;
@@ -15,6 +17,7 @@ export function Pitch({ players, formation, format, captainId, viceCaptainId, on
   onAdd?: (position: Position) => void;
   disabled?: boolean;
   compact?: boolean;
+  latest?: LatestPlayerGames;
 }) {
   const byId = new Map(players.map((p) => [p.id, p]));
   const slots = layoutFormation(players, formation);
@@ -22,7 +25,7 @@ export function Pitch({ players, formation, format, captainId, viceCaptainId, on
     <div className="relative" role="region" aria-label={`${format} football pitch, formation ${formation.label}`}>
       {/* turf */}
       <div
-        className={`relative w-full overflow-hidden rounded-lg border border-green-dim/35 ${compact ? "min-h-[252px] aspect-[6/5]" : "aspect-[3/4] min-h-[310px] sm:aspect-[4/5]"}`}
+        className={`relative w-full overflow-hidden rounded-lg border border-green-dim/35 ${compact ? "min-h-[286px] aspect-[6/5]" : "aspect-[3/4] min-h-[350px] sm:aspect-[4/5]"}`}
         style={{
           background:
             "repeating-linear-gradient(180deg,#0f2a1c 0 8.33%,#0c2318 8.33% 16.66%)",
@@ -51,7 +54,7 @@ export function Pitch({ players, formation, format, captainId, viceCaptainId, on
           if (player) return (
             <Token key={player.id} player={player} x={x} y={y} width={width}
               captain={captainId === player.id} vice={viceCaptainId === player.id}
-              disabled={disabled} compact={compact} onClick={onSelect ? () => onSelect(player.id) : undefined} />
+              disabled={disabled} compact={compact} showPoints={Boolean(latest)} game={latest?.[player.id]} onClick={onSelect ? () => onSelect(player.id) : undefined} />
           );
           const style = { left: `${x}%`, top: `${y}%`, width: `${width}%` };
           const slotClass = "absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center text-green-glow";
@@ -87,6 +90,8 @@ function Token({
   disabled,
   onClick,
   compact,
+  showPoints,
+  game,
 }: {
   player: SquadEntry;
   x: number;
@@ -97,6 +102,8 @@ function Token({
   disabled?: boolean;
   onClick?: () => void;
   compact: boolean;
+  showPoints: boolean;
+  game?: LatestPlayerGame;
 }) {
   const TokenElement = onClick ? "button" : "div";
   const label = `${player.name}, ${player.position}${captain ? ", captain" : vice ? ", vice-captain" : ""}`;
@@ -104,13 +111,14 @@ function Token({
     <TokenElement
       {...(onClick ? { type: "button" as const, onClick, disabled } : { role: "img" })}
       aria-label={label}
+      aria-description={showPoints ? `Latest game: ${game?.points == null ? "no recorded points" : formatPlayerPoints(game.points)}` : undefined}
       title={label}
-      className="group absolute z-10 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center text-center transition-[left,top,transform] motion-reduce:transition-none duration-[380ms] ease-[cubic-bezier(.2,.8,.2,1)] disabled:cursor-default"
+      className="group absolute z-10 rounded focus-visible:outline focus-visible:outline-green -translate-x-1/2 -translate-y-1/2 flex flex-col items-center text-center transition-[left,top,transform] motion-reduce:transition-none duration-[380ms] ease-[cubic-bezier(.2,.8,.2,1)] disabled:cursor-default"
       style={{ left: `${x}%`, top: `${y}%`, width: `${width}%` }}
     >
       <span className="relative flex w-full flex-col items-center" aria-hidden="true">
         <span className={`flex rounded-full ${captain ? "ring-1 ring-card-y" : vice ? "ring-1 ring-green-glow" : ""}`}>
-          <Avatar name={player.name} url={player.photoUrl} size={compact ? 28 : 40} decorative />
+          <Avatar name={player.name} url={player.photoUrl} size={compact ? 26 : 34} decorative />
         </span>
 
         {(captain || vice) && (
@@ -127,10 +135,11 @@ function Token({
           <span className="absolute right-1/2 -top-1 mr-3 h-2.5 w-2.5 rounded-full border border-pitch-950 bg-card-r" />
         )}
 
-        <span className={`${compact ? "mt-0.5 text-[10px]" : "mt-1.5 text-[10.5px]"} block max-w-[min(100%,100px)] truncate rounded bg-black/60 px-1 py-0.5 font-semibold leading-tight text-chalk backdrop-blur`}>
+        <span className={`${compact ? "mt-0.5 text-[10px]" : "mt-0.5 text-[10.5px]"} block max-w-[min(100%,100px)] truncate rounded bg-black/60 px-1 py-0.5 font-semibold leading-tight text-chalk backdrop-blur`}>
           {player.name}
         </span>
-        <span className="num mt-0.5 block text-[9.5px] uppercase tracking-[0.1em] text-green-glow/80">
+        {showPoints && <PlayerPointsLabel game={game} />}
+        <span className="num block leading-tight text-[9px] uppercase tracking-[0.1em] text-green-glow/80">
           {player.position}
         </span>
       </span>
