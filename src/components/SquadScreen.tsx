@@ -219,7 +219,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
               <h2 className="text-xl text-chalk">Squad <span className="num text-green">{players.length}/{rules.squadSize}</span></h2>
               <Badge tone={savedComplete && !editing ? "live" : "neutral"}>{editing ? "Editing" : savedComplete ? "Complete" : players.length ? "Saved draft" : "Not picked"}</Badge>
             </div>
-            <p className="mt-2 text-sm text-sage">Captain scores double. {stored.vicePolicy === "auto_captain" ? "If your captain doesn't play, an eligible vice-captain takes over." : "This league does not auto-promote the vice-captain."}</p>
+            <p className="mt-2 text-sm text-sage">A saved captain who plays scores double for your fantasy squad. Individual points stay unchanged; the captain contribution is shown separately. {stored.vicePolicy === "auto_captain" ? "If your captain doesn't play, an eligible vice-captain takes over." : "This league does not auto-promote the vice-captain."}</p>
             <p className="mt-2 text-sm text-chalk">Captain: {players.find((p) => p.id === captainId)?.name ?? "Not set"} · Vice: {players.find((p) => p.id === viceId)?.name ?? "Not set"}</p>
             {archived.length > 0 && <p className="mt-2 text-sm text-card-y">Replace or remove archived players before saving: {archived.map((p) => p.name).join(", ")}.</p>}
             {!validation.ok && <ul className="mt-2 space-y-1 text-sm text-card-y">{validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>}

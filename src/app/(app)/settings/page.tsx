@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { RefreshCw, ShieldCheck, Trash2, Wifi } from "lucide-react";
+import { DeleteLeague } from "@/components/DeleteLeague";
 import { PageHeader } from "@/components/AppShell";
 import { Badge, Button, ErrorNote, Field, Panel, Select, Skeleton, Slate, TextInput, Toast } from "@/components/ui";
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
@@ -20,6 +21,7 @@ type LeagueData = {
     inviteCode: string;
   };
   role: string;
+  canDelete: boolean;
 };
 
 export default function SettingsPage() {
@@ -191,6 +193,7 @@ export default function SettingsPage() {
         </div>
       </Panel>
 
+      {data?.canDelete && <DeleteLeague key={data.league.id} id={data.league.id} name={data.league.name} disabled={busy} />}
       <Slate className="mt-6 block">
         Format is permanent: {data?.league.format} · {league?.starters} starters
       </Slate>

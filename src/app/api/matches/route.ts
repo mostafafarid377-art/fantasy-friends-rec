@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 const PAGE_SIZE = 30;
 const createSchema = z.object({
   leagueId: z.string().min(1), teamAId: z.string().min(1), teamBId: z.string().min(1),
+  durationMinutes: z.number().int().min(1).max(200).optional(),
   title: z.string().trim().min(3).max(80), kickOff: z.string().datetime(), fixtureId: z.string().nullable().optional(),
 });
 
@@ -20,7 +21,7 @@ export const GET = handler(async (req: NextRequest) => {
   const membership = await requireMember(leagueId, supabase);
   const canApprove = membership.role === "leader";
   let query = supabase.from("real_matches").select(
-    "id,title,status,home_score,away_score,kick_off,organizer_id,rejection_reason,teamA:teams!real_matches_team_a_id_teams_id_fk(name),teamB:teams!real_matches_team_b_id_teams_id_fk(name),match_events(count)",
+    "id,title,status,home_score,away_score,duration_minutes,kick_off,organizer_id,rejection_reason,teamA:teams!real_matches_team_a_id_teams_id_fk(name),teamB:teams!real_matches_team_b_id_teams_id_fk(name),match_events(count)",
     approved ? { count: "exact" } : {},
   ).eq("league_id", leagueId);
   if (approved) query = query.eq("status", "approved");
@@ -36,7 +37,7 @@ export const GET = handler(async (req: NextRequest) => {
   checkDb(pending?.error ?? null, "Could not load pending reviews");
   return Response.json({
     matches: (matches.data ?? []).slice(0, PAGE_SIZE).map((r: any) => ({
-      id: r.id, title: r.title, status: r.status, kickOff: r.kick_off, homeScore: r.home_score, awayScore: r.away_score,
+      id: r.id, title: r.title, status: r.status, kickOff: r.kick_off, homeScore: r.home_score, awayScore: r.away_score, durationMinutes: r.duration_minutes ?? null,
       organizerId: r.organizer_id, rejectionReason: r.rejection_reason,
       teamAName: r.teamA?.name ?? "Team A", teamBName: r.teamB?.name ?? "Team B",
       eventCount: r.match_events?.[0]?.count ?? 0,
@@ -59,8 +60,11 @@ export const POST = handler(async (req: NextRequest) => {
   const { data, error } = await supabase.rpc("create_real_match", {
     p_id: id, p_league: input.leagueId, p_team_a: input.teamAId, p_team_b: input.teamBId,
     p_title: input.title, p_kickoff: input.kickOff, p_fixture: input.fixtureId ?? null,
+    p_duration_minutes: input.durationMinutes ?? null,
   });
   const match = confirmedRow(data, error, "Could not create match", input.leagueId);
-  if (match.id !== id) throw new ApiError("Match ID could not be confirmed", 409);
+  if (match.id !== id || (input.durationMinutes !== undefined && match.duration_minutes !== input.durationMinutes)) {
+    throw new ApiError("The saved match and duration could not be confirmed", 409);
+  }
   return Response.json({ match }, { status: 201 });
 });

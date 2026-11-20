@@ -15,6 +15,7 @@ type Match = {
   homeScore: number | null;
   awayScore: number | null;
   kickOff: string;
+  durationMinutes: number | null;
   teamAName: string;
   teamBName: string;
   organizerId: string;
@@ -118,7 +119,7 @@ export default function MatchesPage() {
                 className="group flex flex-col gap-3 rounded-xl border border-line bg-pitch-850 p-4 transition-all hover:border-green-dim sm:flex-row sm:items-center"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={TONE[m.status] ?? "neutral"}>{m.status}</Badge>
                     <span className="num text-[11.5px] uppercase tracking-[0.1em] text-sage-dim">
                       {new Date(m.kickOff).toLocaleString(undefined, {
@@ -128,6 +129,7 @@ export default function MatchesPage() {
                         minute: "2-digit",
                       })}
                     </span>
+                    {m.durationMinutes != null && <span className="num text-xs text-sage">{m.durationMinutes} min</span>}
                   </div>
                   <div className="mt-2 font-display text-[21px] font-bold uppercase leading-tight text-chalk">
                     {m.teamAName} <span className="text-green">{m.homeScore != null && m.awayScore != null ? `${m.homeScore}–${m.awayScore}` : "v"}</span> {m.teamBName}

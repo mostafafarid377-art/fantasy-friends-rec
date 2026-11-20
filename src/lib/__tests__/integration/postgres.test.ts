@@ -1292,3 +1292,91 @@ it("leaves previously approved scoreless matches unchanged and requires resubmis
     expect((await sql(c,"SELECT id,points,breakdown FROM player_match_points WHERE match_id=$1 ORDER BY id",[old.match])).rows).toEqual(before);
   } finally {c.release();}
 });
+
+it.each(["captain", "vice fallback"])("shows only the signed-in manager's applied %s contribution", async (scenario) => {
+  const c = await freshClient();
+  try {
+    const { league, match, home } = await recordedResultFixture(c);
+    const save = (starters: string[], captain: string, vice: string) => sql(c,
+      "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+      [league.id, captain, vice, JSON.stringify(matchEntries(starters, [home[6]]))]);
+    await setAuthUid(c, userAId);
+    await save(scenario === "captain" ? home.slice(0, 5) : [home[0], home[5], ...home.slice(2, 5)],
+      scenario === "captain" ? home[0] : home[5], scenario === "captain" ? home[2] : home[0]);
+    await setAuthUid(c, userBId);
+    await save(home.slice(0, 5), home[1], home[2]);
+    const latest = () => sql(c, "SELECT * FROM public.latest_squad_player_games($1,$2) ORDER BY player_id", [league.id, home]);
+    await setAuthUid(c, userCId);
+    await submitScore(c, match, 2, 0);
+    expect((await latest()).rows).toEqual([]); // pending scores are not captain contributions
+    await approveScore(c, match);
+    await setAuthUid(c, userAId);
+    const mine = (await latest()).rows;
+    expect(mine.find((row) => row.player_id === home[0])).toMatchObject({ match_id: match, points: "5.00", captain_points: "10.00" });
+    expect(mine.find((row) => row.player_id === home[1]).captain_points).toBeNull();
+    const history = await sql(c, playerHistorySql, [league.id, home[0], 1, null, null]);
+    expect(history.rows[0].points).toBe("5.00");
+    await setAuthUid(c, userBId);
+    const other = (await latest()).rows;
+    expect(other.find((row) => row.player_id === home[1])).toMatchObject({ points: "5.00", captain_points: "10.00" });
+    expect(other.find((row) => row.player_id === home[0]).captain_points).toBeNull();
+    await setAuthUid(c, userCId);
+    expect((await latest()).rows.every((row) => row.captain_points === null)).toBe(true);
+    await correctScore(c, match, 2, 1, 3);
+    await setAuthUid(c, userAId);
+    expect((await latest()).rows.find((row) => row.player_id === home[0])).toMatchObject({ points: "1.00", captain_points: "2.00" });
+  } finally { c.release(); }
+});
+
+it("deletes a populated league only for its confirmed creator, leaving profiles and other leagues intact", async () => {
+  const c = await freshClient();
+  try {
+    const { league, match, home } = await recordedResultFixture(c);
+    await setAuthUid(c, userAId);
+    await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+      [league.id, home[0], home[1], JSON.stringify(matchEntries(home.slice(0, 5), [home[6]]))]);
+    await submitScore(c, match, 2, 0);
+    await approveScore(c, match);
+    const other = await releaseLeague(c, 7);
+    const deleteLeague = (confirmation = "Release 5") => sql(c, "SELECT public.delete_owned_league($1,$2) AS deleted", [league.id, confirmation]);
+    await expect(sql(c, "DELETE FROM leagues WHERE id=$1", [league.id])).rejects.toMatchObject({ code: "42501" });
+    await sql(admin, "UPDATE league_members SET role='leader' WHERE profile_id=$1 AND league_id=$2", [userCId, league.id]);
+    await setAuthUid(c, userCId);
+    await expect(deleteLeague()).rejects.toMatchObject({ code: "42501" });
+    await setAuthUid(c, userBId);
+    await expect(deleteLeague()).rejects.toMatchObject({ code: "42501" });
+    await setAuthUid(c, userAId);
+    await expect(deleteLeague("release 5")).rejects.toMatchObject({ code: "22023" });
+    expect((await sql(c, "SELECT id FROM real_matches WHERE id=$1", [match])).rowCount).toBe(1);
+    expect((await deleteLeague()).rows).toEqual([{ deleted: league.id }]);
+    for (const table of ["league_members", "teams", "players", "real_matches", "fantasy_squads", "player_match_points", "manager_points", "fantasy_points_history", "league_standings", "scoring_rules"]) {
+      expect((await sql(admin, `SELECT 1 FROM ${table} WHERE league_id=$1`, [league.id])).rowCount).toBe(0);
+    }
+    expect((await sql(admin, "SELECT 1 FROM match_scoring_receipts WHERE match_id=$1", [match])).rowCount).toBe(0);
+    expect((await sql(admin, "SELECT id FROM leagues WHERE id=$1", [other.id])).rows).toEqual([{ id: other.id }]);
+    expect((await sql(admin, "SELECT id FROM profiles WHERE id=ANY($1)", [[userAId, userBId, userCId]])).rowCount).toBe(3);
+  } finally { c.release(); }
+});
+
+it("stores a match's chosen duration atomically, rejects invalid values, and leaves legacy duration unknown", async () => {
+  const c = await freshClient();
+  try {
+    const league = await releaseLeague(c, 5);
+    const legacy = await league.makeMatch();
+    const id60 = randomUUID(), id90 = randomUUID(), invalid = randomUUID();
+    const create = (id: string, minutes: number) => sql(c,
+      "SELECT public.create_real_match($1,$2,$3,$4,'Timed match',now(),null,$5) AS result",
+      [id, league.id, league.home, league.away, minutes]);
+    await expect(create(invalid, 0)).rejects.toMatchObject({ code: "22023" });
+    await expect(create(invalid, 201)).rejects.toMatchObject({ code: "22023" });
+    expect((await create(id60, 60)).rows[0].result).toMatchObject({ id: id60, duration_minutes: 60 });
+    expect((await create(id60, 60)).rows[0].result.duration_minutes).toBe(60);
+    await expect(create(id60, 90)).rejects.toMatchObject({ code: "40001" });
+    await create(id90, 90);
+    await setAuthUid(c, userBId);
+    expect((await sql(c, "SELECT id,duration_minutes FROM real_matches WHERE league_id=$1", [league.id])).rows)
+      .toEqual(expect.arrayContaining([{ id: legacy, duration_minutes: null }, { id: id60, duration_minutes: 60 }, { id: id90, duration_minutes: 90 }]));
+    await expect(create(invalid, 60)).rejects.toMatchObject({ code: "42501" });
+    expect((await sql(c, "SELECT id FROM real_matches WHERE id=$1", [invalid])).rowCount).toBe(0);
+  } finally { c.release(); }
+});

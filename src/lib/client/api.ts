@@ -208,7 +208,11 @@ export function useSession(initial: SessionPayload) {
     router.replace("/login");
   }, [router]);
   const setUnread = useCallback((count: number) => setData((old) => old.unread === count ? old : { ...old, unread: count }), []);
-  return { ...data, refresh, logout, setUnread };
+  const forgetLeague = useCallback((id: string) => {
+    generation.current++;
+    setData((old) => ({ ...old, leagues: old.leagues.filter((league) => league.id !== id) }));
+  }, []);
+  return { ...data, refresh, logout, setUnread, forgetLeague };
 }
 
 export function useApi<T>(route: string | null, deps: unknown[] = [], options: { refreshKey?: number } = {}) {

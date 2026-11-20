@@ -13,9 +13,10 @@ export const GET = handler(async (req: NextRequest, ctx: { params: Promise<{ id:
   await requireMember(id, sb);
   const players = playerIds.safeParse(req.nextUrl.searchParams.getAll("player"));
   if (!players.success) throw new ApiError("Invalid player selection", 422);
-  const result = await sb.rpc("latest_player_games", { p_league: id, p_players: [...new Set(players.data)] });
+  const result = await sb.rpc("latest_squad_player_games", { p_league: id, p_players: [...new Set(players.data)] });
   checkDb(result.error, "Could not load latest player points");
-  const latest: LatestPlayerGames = Object.fromEntries((result.data ?? []).map((r: { player_id: string; match_id: string; points: number | string | null }) =>
-    [r.player_id, { matchId: r.match_id, points: r.points == null ? null : Number(r.points) }]));
+  const latest: LatestPlayerGames = Object.fromEntries((result.data ?? []).map((r: { player_id: string; match_id: string; points: number | string | null; captain_points: number | string | null }) =>
+    [r.player_id, { matchId: r.match_id, points: r.points == null ? null : Number(r.points),
+      ...(r.captain_points == null ? {} : { captainPoints: Number(r.captain_points) }) }]));
   return Response.json(latest, { headers: { "Cache-Control": "private, no-store" } });
 });
