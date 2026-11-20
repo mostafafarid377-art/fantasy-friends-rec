@@ -22,6 +22,7 @@ missing forward migrations, in order:
 11. `0015_match_statistics_and_bonuses.sql` (match-only totals, bonus ranks and scoring corrections)
 12. `0016_team_logos.sql` (private real-team logos and history reads)
 13. `0017_google_profile_names.sql` (first-login profile names)
+14. `0018_automatic_match_bonus.sql` (automatic competition ranking for bonuses)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -87,7 +88,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0017_google_profile_names.sql`. The
+`0001_schema.sql` to `0018_automatic_match_bonus.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -278,11 +279,15 @@ scoring, clean-sheet eligibility or the range allowed for recording match events
   lineups the saved match position is used for the new statistics. Old lineups
   without a recorded position use the current roster position when stats are
   first entered; previous official points are not recalculated by migration.
-- Approving a result applies the new match-only additions to the official
-  ledger. Finalized bonus selections are immutable. Explicit corrections to
-  approved stat totals require a reason and preserve the original fantasy
-  picks and multipliers. Legacy scoreless results are not eligible for this
-  correction path. No league rule rows or previous receipts are backfilled.
+- Apply `0018` before deploying the automatic bonus UI. Approval and explicit
+  corrections rank only participating players by pre-bonus points within each
+  match. Ties share a rank (for example, `1, 1, 3`), and ranks 1/2/3 earn
+  +3/+2/+1 respectively. The old manual write signature is no longer callable
+  by app users. Legacy manual selections on unfinished matches are ignored on
+  approval; existing finalized scores and receipts are left unchanged unless
+  an authorized user corrects the match. Explicit stat corrections require a
+  reason and preserve the original fantasy picks and multipliers. Legacy
+  scoreless results are not eligible for this correction path.
 - Google names are initialized only when a Google user is first created.
   Existing profile names are not migrated, and OAuth sign-in does not overwrite
   edits. No Google Cloud or Supabase Auth setting change is needed if Google

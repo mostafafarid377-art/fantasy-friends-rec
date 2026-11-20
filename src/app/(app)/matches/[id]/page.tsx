@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { RealTeamName } from "@/components/TeamLogo";
 import { useKickoffClock } from "@/lib/match-deadline";
-import { MatchStatistics, type MatchStat } from "@/components/MatchStatistics";
+import { MatchStatistics, type MatchStat, type MatchBonusAward } from "@/components/MatchStatistics";
 import { MatchResult, type MatchScore } from "@/components/MatchResult";
 import { PageHeader } from "@/components/AppShell";
 import {
@@ -72,6 +72,7 @@ type MatchData = {
   };
   serverNow?: string;
   statistics?: MatchStat[];
+  bonusAwards?: MatchBonusAward[];
   rules: LeagueRules;
   role: string;
   canOrganize: boolean;
@@ -432,7 +433,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
       </div>}
       {data.statistics && <MatchStatistics key={`${m.id}:${m.version}`} matchId={m.id} version={m.version} status={m.status}
         started={started} correctable={m.homeScore != null && m.awayScore != null} canManage={data.canOrganize}
-        players={participants} saved={data.statistics} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={async () => {
+        players={participants} saved={data.statistics} bonusAwards={data.bonusAwards} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={async () => {
           await reload(); notify("Match statistics saved");
         }} />}
       <MatchResult key={`${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)} homeLogo={logoOf(m.teamAId)} awayLogo={logoOf(m.teamBId)}

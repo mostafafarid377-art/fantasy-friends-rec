@@ -26,6 +26,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     teamRowsResp,
     rosterResp,
     statisticsResp,
+    pointsResp,
   ] = await Promise.all([
     supabase.from("match_lineups").select("*").eq("match_id", id).order("order", { ascending: true }),
     supabase.from("match_events").select("*").eq("match_id", id).order("minute", { ascending: true }),
@@ -33,10 +34,12 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     supabase.from("match_approvals").select("*").eq("match_id", id).order("created_at", { ascending: true }),
     supabase.from("teams").select(TEAM_FIELDS).eq("league_id", match.league_id).in("id", [match.team_a_id, match.team_b_id]),
     supabase.from("players").select(PLAYER_FIELDS).eq("league_id", match.league_id),
-    supabase.from("match_player_statistics").select("player_id,position,saves,defensive_contributions,bonus_rank").eq("match_id", id),
+    supabase.from("match_player_statistics").select("player_id,position,saves,defensive_contributions").eq("match_id", id),
+    match.status === "approved" ? supabase.from("player_match_points").select("player_id,breakdown")
+      .eq("league_id", match.league_id).eq("match_id", id).eq("match_version", match.version) : { data: [], error: null },
   ]);
 
-  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp, statisticsResp]) {
+  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp, statisticsResp, pointsResp]) {
     checkDb(result.error, "Could not load match details");
   }
   const lineups = lineupsResp.data ?? [];
@@ -48,6 +51,10 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const teamName = new Map(teamRows.map((t) => [t.id, t.name]));
   const playerById = new Map(roster.map((p) => [p.id, p]));
   const linePlayerIds = new Set(lineups.map((l) => l.player_id));
+  const bonusAwards = (pointsResp.data ?? []).flatMap((p) => {
+    const line = Array.isArray(p.breakdown) && p.breakdown.find((b: { category?: string }) => b?.category === "match_bonus");
+    return line && typeof line.points === "number" ? [{ playerId: p.player_id, rank: typeof line.rank === "number" ? line.rank : null, points: line.points }] : [];
+  }).sort((a, b) => (a.rank ?? 4) - (b.rank ?? 4) || b.points - a.points || a.playerId.localeCompare(b.playerId));
   const authorized = membership.role === "leader" ||
       (membership.role === "organizer" && match.organizer_id === membership.profileId);
 
@@ -64,7 +71,8 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     },
     serverNow: new Date().toISOString(),
     statistics: (statisticsResp.data ?? []).map((r) => ({ playerId: r.player_id, position: r.position, saves: r.saves,
-      defensiveContributions: r.defensive_contributions, bonusRank: r.bonus_rank })),
+      defensiveContributions: r.defensive_contributions })),
+    bonusAwards,
     rules: leagueRules(membership.league),
     role: membership.role,
     canOrganize: authorized,
