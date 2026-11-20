@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -392,12 +392,15 @@ export function Avatar({
   url,
   size = 36,
   ring = false,
+  decorative = false,
 }: {
   name: string;
   url?: string | null;
   size?: number;
   ring?: boolean;
+  decorative?: boolean;
 }) {
+  const [failed, setFailed] = useState<string | null>(null);
   const initials = name
     .split(/\s+/)
     .slice(0, 2)
@@ -405,15 +408,15 @@ export function Avatar({
     .join("")
     .toUpperCase();
   return (
-    <span
+    <span aria-hidden={decorative || undefined}
       className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border ${
         ring ? "border-green/60" : "border-line"
       } bg-pitch-800 font-display font-bold text-green`}
       style={{ width: size, height: size, fontSize: Math.max(10, size * 0.36) }}
     >
-      {url ? (
+      {url && failed !== url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img loading="lazy" decoding="async" src={url} alt={name} className="h-full w-full object-cover" />
+        <img loading="lazy" decoding="async" src={url} alt={decorative ? "" : name} onError={() => setFailed(url)} className="h-full w-full object-cover" />
       ) : (
         initials
       )}

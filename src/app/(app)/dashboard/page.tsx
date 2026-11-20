@@ -15,25 +15,30 @@ import {
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
 import { PageHeader } from "@/components/AppShell";
 import {
-  Badge,
+  Avatar,
   Button,
   EmptyState,
   ErrorNote,
   Panel,
   Slate,
 } from "@/components/ui";
+import { Pitch } from "@/components/Pitch";
+import { deriveFormation, FORMATIONS, type LeagueFormat } from "@/lib/domain";
+import type { SquadEntry } from "@/lib/squad";
+import { useLeagueContentUpdates } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
 
 type DashboardData = {
-  league: { id: string; name: string; format: string; starters: number; squadSize: number; inviteCode: string; role: string };
+  league: { id: string; name: string; format: LeagueFormat; starters: number; subsCount: number; squadSize: number; inviteCode: string; role: string };
   squad: {
     formation: string;
     captainId: string | null;
+    viceCaptainId: string | null;
     size: number;
     starters: number;
     subs: number;
     complete: boolean;
-    players: { playerId: string; slot: string; fullName: string; position: string }[];
+    players: SquadEntry[];
   } | null;
   standings: {
     profileId: string;
@@ -62,6 +67,7 @@ export default function DashboardPage() {
     [league?.id],
   );
 
+  useLeagueContentUpdates(league?.id, reload);
   useEffect(() => {
     const onFocus = () => { void reload(); };
     window.addEventListener("focus", onFocus);
@@ -141,7 +147,7 @@ export default function DashboardPage() {
         <Stat label="Squad" value={`${data.squad?.size ?? 0}/${data.league.squadSize}`} />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1.35fr_1fr]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         {/* ---- league table (hero) ---- */}
         <Panel className="overflow-hidden">
           <div className="flex items-center justify-between border-b border-line px-4 py-3.5">
@@ -164,13 +170,13 @@ export default function DashboardPage() {
               />
             </div>
           ) : (
-            <table className="w-full border-collapse">
+            <table className="w-full table-fixed border-collapse">
               <thead>
                 <tr className="border-b border-line-soft">
-                  <th className="slate px-4 py-2.5 text-left">#</th>
+                  <th className="slate w-16 px-4 py-2.5 text-left">#</th>
                   <th className="slate px-2 py-2.5 text-left">Manager</th>
-                  <th className="slate px-2 py-2.5 text-right">MP</th>
-                  <th className="slate px-4 py-2.5 text-right">Pts</th>
+                  <th className="slate w-11 px-2 py-2.5 text-right">MP</th>
+                  <th className="slate w-[60px] px-4 py-2.5 text-right">Pts</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-soft">
@@ -218,56 +224,8 @@ export default function DashboardPage() {
         </Panel>
 
         {/* ---- right rail ---- */}
-        <div className="space-y-5">
-          {/* squad snapshot */}
-          <Panel className="p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <Slate>Your squad</Slate>
-              <Link href="/team" className="text-[13px] text-sage hover:text-green">
-                View squad
-              </Link>
-            </div>
-            {!data.squad ? (
-              <div className="rounded-lg border border-dashed border-line p-4 text-center">
-                <p className="text-[14px] text-sage">You have not built a squad yet.</p>
-                <Button href="/team/pick" size="sm" className="mt-3">
-                  Pick your squad <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-end justify-between">
-                  <div>
-                    <div className="num text-3xl font-semibold text-green">{data.squad.formation}</div>
-                    <div className="slate mt-1">Formation</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="num text-3xl font-semibold text-chalk">
-                      {data.squad.starters}/{data.league.starters}
-                    </div>
-                    <div className="slate mt-1">Starters</div>
-                  </div>
-                </div>
-                <div className="mt-4 space-y-1.5">
-                  {data.squad.players
-                    .filter((p) => p.slot === "starter")
-                    .slice(0, data.league.starters)
-                    .map((p) => (
-                      <div key={p.playerId} className="flex items-center gap-2 text-[13.5px]">
-                        <span className="num w-9 text-[11px] text-green-glow/80">{p.position}</span>
-                        <span className="truncate text-chalk">{p.fullName}</span>
-                        {p.playerId === data.squad?.captainId && <Badge tone="warn">C</Badge>}
-                      </div>
-                    ))}
-                </div>
-                {!data.squad.complete && (
-                  <Button href="/team/pick" size="sm" variant="outline" className="mt-4 w-full">
-                    Finish squad ({data.squad.size}/{data.league.squadSize})
-                  </Button>
-                )}
-              </>
-            )}
-          </Panel>
+        <div className="min-w-0 space-y-5">
+          <SquadPreview league={data.league} squad={data.squad} />
 
           {/* fixtures */}
           <Panel className="p-4">
@@ -352,6 +310,41 @@ export default function DashboardPage() {
         )}
       </Panel>
     </div>
+  );
+}
+
+function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">) {
+  const players = squad?.players ?? [];
+  const formation = deriveFormation(league, players, squad?.formation);
+  const bench = players.filter((p) => p.slot === "sub");
+  return (
+    <Panel className="min-w-0 p-3 sm:p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <Slate>Your squad</Slate>
+        <Link href="/team" className="text-xs font-semibold text-green hover:text-green-glow">View Full Squad</Link>
+      </div>
+      <Pitch compact players={players} formation={formation ?? FORMATIONS[league.format][0]} format={league.format}
+        captainId={squad?.captainId ?? null} viceCaptainId={squad?.viceCaptainId ?? null} />
+      {!squad ? <div className="mt-3 text-center">
+        <p className="text-sm text-sage">You haven’t picked a squad in this league.</p>
+        <Button href="/team/pick" size="sm" className="mt-2">Pick Your Squad <ChevronRight className="h-4 w-4" /></Button>
+      </div> : <>
+        {!formation && <p className="mt-2 text-xs text-card-y">Some starters no longer fit. Review the full squad to fix the lineup.</p>}
+        {bench.length > 0 && <div className="mt-3 border-t border-line pt-2">
+          <Slate>Substitutes</Slate>
+          <ul className="mt-2 grid grid-cols-2 gap-1.5">
+            {bench.map((p) => <li key={p.id} className="flex min-w-0 items-center gap-1.5 rounded bg-pitch-900 px-1.5 py-1" title={p.name}>
+              <Avatar name={p.name} url={p.photoUrl} size={23} decorative />
+              <span className="min-w-0 truncate text-xs text-chalk">{p.name}</span>
+              <span className="ml-auto text-[9px] text-sage">{p.position}</span>
+            </li>)}
+          </ul>
+        </div>}
+        {!squad.complete && <Button href="/team/pick" size="sm" variant="outline" className="mt-3 w-full">
+          Finish squad ({squad.size}/{league.squadSize})
+        </Button>}
+      </>}
+    </Panel>
   );
 }
 

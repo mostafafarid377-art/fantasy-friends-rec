@@ -91,3 +91,62 @@ describe("player and team creation UI", () => {
     expect(screen.queryByText("Team added")).toBeNull();
   });
 });
+
+it("opens gallery and camera inputs, previews a compressed photo, and retries upload without duplicating the player", async () => {
+  const objectUrl = vi.fn(() => "blob:photo-preview"), revoke = vi.fn();
+  vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: objectUrl, revokeObjectURL: revoke }));
+  vi.stubGlobal("Image", class { decode = async () => {}; naturalWidth = 1800; naturalHeight = 1200; });
+  const draw = vi.fn();
+  const ctx = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: draw, fillRect: () => {} } as unknown as CanvasRenderingContext2D);
+  const toBlob = vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((done) => done(new Blob(["compressed"], { type: "image/jpeg" })));
+  const photoUrl = `/api/leagues/league-a/players/${player.id}/photo?v=version-2.jpg`;
+  let attempts = 0, saved: typeof player | null = null;
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "GET") return Response.json({ teams: [team], players: saved ? [saved] : [], total: saved ? 1 : 0 });
+    if (url.endsWith("/photo")) {
+      if (init?.method === "DELETE") {
+        saved = player;
+        return Response.json({ player: saved });
+      }
+      expect(init?.body).toBeInstanceOf(FormData);
+      expect((init!.body as FormData).get("photo")).toMatchObject({ type: "image/jpeg", name: "player.jpg" });
+      expect(init?.headers).not.toHaveProperty("Content-Type");
+      if (++attempts === 1) return Response.json({ error: "Upload failed" }, { status: 502 });
+      saved = { ...player, photoUrl } as unknown as typeof player;
+    } else if (init?.method === "POST") saved = player;
+    else expect(JSON.parse(String(init?.body))).not.toHaveProperty("photoUrl");
+    return Response.json({ player: saved });
+  });
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const view = render(<PlayersPage />);
+    const editor = await openPlayer();
+    const gallery = editor.getByLabelText("Choose from gallery");
+    expect(gallery.getAttribute("accept")).toBe("image/*");
+    expect(gallery.hasAttribute("capture")).toBe(false);
+    expect(editor.getByLabelText("Take photo").getAttribute("capture")).toBe("environment");
+    fireEvent.change(gallery, { target: { files: [new File(["bad"], "bad.svg", { type: "image/svg+xml" })] } });
+    expect(await editor.findByRole("alert")).toBeTruthy();
+    fireEvent.change(gallery, { target: { files: [new File(["original"], "image.png", { type: "image/png" })] } });
+    expect(await editor.findByText(/Photo selected/)).toBeTruthy();
+    expect((await editor.findByRole("img")).getAttribute("src")).toBe("blob:photo-preview");
+    expect(draw.mock.calls[0].slice(-2)).toEqual([384, 384]);
+    fireEvent.click(editor.getByRole("button", { name: "Add player" }));
+    expect(await editor.findByText(/Player details were saved, but the photo change was not confirmed/)).toBeTruthy();
+    expect(screen.queryByText("Player added")).toBeNull();
+    fireEvent.click(editor.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Player updated")).toBeTruthy();
+    expect(fetch.mock.calls.filter(([url, init]) => url.endsWith("/players") && init?.method === "POST")).toHaveLength(1);
+    expect(document.querySelector(`img[src="${photoUrl}"]`)).toBeTruthy();
+    view.unmount();
+    render(<PlayersPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit player" }));
+    const existing = within(screen.getByRole("dialog"));
+    expect(existing.getByRole("img").getAttribute("src")).toBe(photoUrl);
+    fireEvent.click(existing.getByRole("button", { name: "Remove photo" }));
+    fireEvent.click(existing.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Player updated")).toBeTruthy();
+    expect(document.querySelector(`img[src="${photoUrl}"]`)).toBeNull();
+    expect(revoke).toHaveBeenCalledWith("blob:photo-preview");
+  } finally { ctx.mockRestore(); toBlob.mockRestore(); }
+});
