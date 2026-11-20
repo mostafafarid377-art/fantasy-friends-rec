@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { RefreshCw, ShieldCheck, Trash2, Wifi } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
-import { Badge, Button, Field, Panel, Select, Skeleton, Slate, TextInput, Toast } from "@/components/ui";
+import { Badge, Button, ErrorNote, Field, Panel, Select, Skeleton, Slate, TextInput, Toast } from "@/components/ui";
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
 import { api, pendingCount, recoverPendingOperations, useApi } from "@/lib/client/api";
 
@@ -13,6 +13,8 @@ type LeagueData = {
     name: string;
     description: string | null;
     subsCount: number;
+    squadSize: number;
+    starters: number;
     vicePolicy: string;
     format: string;
     inviteCode: string;
@@ -23,10 +25,11 @@ type LeagueData = {
 export default function SettingsPage() {
   const { league, loading: leagueLoading } = useActiveLeague();
   const { refresh, recovered } = useLeague();
-  const { data, loading, setData } = useApi<LeagueData>(league ? `/api/leagues/${league.id}` : null, [league?.id]);
+  const { data, loading, error, reload, setData } = useApi<LeagueData>(league ? `/api/leagues/${league.id}` : null, [league?.id]);
 
   const [name, setName] = useState<string | null>(null);
   const [description, setDescription] = useState<string | null>(null);
+  const [squadSize, setSquadSize] = useState<string | null>(null);
   const [subs, setSubs] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -35,7 +38,8 @@ export default function SettingsPage() {
   const value = {
     name: name ?? data?.league.name ?? "",
     description: description ?? data?.league.description ?? "",
-    subs: subs ?? String(data?.league.subsCount ?? 5),
+    subs: subs ?? String(data?.league.subsCount ?? ""),
+    squadSize: squadSize ?? String(data?.league.squadSize ?? ""),
   };
 
   const save = async () => {
@@ -47,12 +51,13 @@ export default function SettingsPage() {
         body: {
           name: value.name.trim(),
           description: value.description.trim() || null,
-          subsCount: Number(value.subs) || 5,
+          subsCount: Number(value.subs),
+          squadSize: Number(value.squadSize),
         },
       });
       if (saved?.league?.id !== league.id) throw new Error("League settings update could not be confirmed");
       setData((old) => old ? { ...old, league: saved.league } : old);
-      setName(null); setDescription(null); setSubs(null);
+      setName(null); setDescription(null); setSubs(null); setSquadSize(null);
       setToast({ message: "League settings saved", tone: "ok" });
       void refresh().catch((error) => console.warn("[session refresh]", error));
     } catch (err) {
@@ -79,6 +84,8 @@ export default function SettingsPage() {
         <Skeleton className="h-72 rounded-xl" />
       </div>
     );
+
+  if (error) return <div className="mx-auto max-w-3xl p-5"><ErrorNote message={error} onRetry={reload} /></div>;
 
   const isLeader = data?.role === "leader";
 
@@ -110,7 +117,11 @@ export default function SettingsPage() {
               />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Substitutes per team" hint="1–10. Starters are fixed by the format.">
+              <Field label="Fantasy squad size" hint={`${data?.league.starters ?? 0} starters plus substitutes; max 15. Existing squads may need rebalancing.`}>
+                <TextInput type="number" min={(data?.league.starters ?? 0) + 1} max={15} value={value.squadSize}
+                  onChange={(e) => setSquadSize(e.target.value)} />
+              </Field>
+              <Field label="Substitutes per team" hint="Must fit alongside starters within the squad size.">
                 <TextInput
                   type="number"
                   min={1}

@@ -60,7 +60,7 @@ export default function LandingPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-green animate-pulse-dot" />
                 Private leagues only
               </Badge>
-              <Slate>5-a-side · 7-a-side · 15-player squads</Slate>
+              <Slate>5-a-side · 7-a-side · League-sized squads</Slate>
             </div>
 
             <h1 className="text-[clamp(3rem,11vw,7rem)] leading-[0.86] text-chalk">

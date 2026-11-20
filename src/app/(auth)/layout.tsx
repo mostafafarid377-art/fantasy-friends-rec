@@ -24,7 +24,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
               Your table.
             </h2>
             <p className="mt-5 max-w-sm text-[14.5px] leading-relaxed text-sage">
-              15-player squads, five or seven a side, real matches recorded and approved before
+              League-sized squads, five or seven a side, real matches recorded and approved before
               a single point is awarded.
             </p>
           </div>

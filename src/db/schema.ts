@@ -139,7 +139,7 @@ export const leagues = pgTable(
     uniqueIndex("leagues_invite_uq").on(t.inviteCode),
     check("leagues_format_ck", sql`format in ('5v5','7v7')`),
     check("leagues_starters_ck", sql`starters in (5,7)`),
-    check("leagues_squad_ck", sql`squad_size = 15`),
+    check("leagues_squad_ck", sql`squad_size >= starters + subs_count and squad_size <= 15`),
     check("leagues_subs_ck", sql`subs_count >= 1 and subs_count <= 10`),
   ],
 );

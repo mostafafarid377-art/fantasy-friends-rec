@@ -1,71 +1,26 @@
 "use client";
 
-import { useMemo } from "react";
-import {
-  findFormation,
-  layoutFormation,
-  type LeagueFormat,
-  type SquadPlayer,
-} from "@/lib/domain";
+import { Plus } from "lucide-react";
+import { layoutFormation, type Formation, type LeagueFormat, type Position } from "@/lib/domain";
+import type { SquadEntry } from "@/lib/squad";
 
-export type PitchPlayer = SquadPlayer & {
-  photoUrl?: string | null;
-  shirtNumber?: number | null;
-  availability?: string;
-};
-
-type Props = {
-  players: PitchPlayer[];
-  formation: string;
+export function Pitch({ players, formation, format, captainId, viceCaptainId, onSelect, onAdd, disabled }: {
+  players: SquadEntry[];
+  formation: Formation;
   format: LeagueFormat;
-  captainId?: string | null;
-  viceCaptainId?: string | null;
-  selectedId?: string | null;
-  benchId?: string | null;
-  onSelect?: (id: string) => void;
+  captainId: string | null;
+  viceCaptainId: string | null;
+  onSelect: (id: string) => void;
+  onAdd: (position: Position) => void;
   disabled?: boolean;
-};
-
-/**
- * FPL-style vertical pitch. Tokens keep their DOM identity and only their
- * coordinates change, so a formation recalculation physically re-forms the
- * team instead of re-rendering it.
- */
-export function Pitch({
-  players,
-  formation,
-  format,
-  captainId,
-  viceCaptainId,
-  selectedId,
-  benchId,
-  onSelect,
-  disabled,
-}: Props) {
-  const starters = useMemo(
-    () => players.filter((p) => p.slot === "starter"),
-    [players],
-  );
-  const shape = findFormation(formation, format);
-
-  const { slots, keeper } = useMemo(() => {
-    const outfield = starters.filter((p) => p.position !== "GK");
-    const gk = starters.find((p) => p.position === "GK") ?? null;
-    const lines = shape?.lines ?? [outfield.length];
-    const laid = layoutFormation(outfield, {
-      label: shape?.label ?? formation,
-      lines,
-    });
-    return { slots: laid.slots, keeper: gk };
-  }, [starters, shape, formation]);
-
+}) {
   const byId = new Map(players.map((p) => [p.id, p]));
-
+  const slots = layoutFormation(players, formation);
   return (
     <div className="relative">
       {/* turf */}
       <div
-        className="relative aspect-[3/4] w-full overflow-hidden rounded-lg border border-green-dim/35 sm:aspect-[4/5]"
+        className="relative aspect-[3/4] min-h-[310px] w-full overflow-hidden rounded-lg border border-green-dim/35 sm:aspect-[4/5]"
         style={{
           background:
             "repeating-linear-gradient(180deg,#0f2a1c 0 8.33%,#0c2318 8.33% 16.66%)",
@@ -85,42 +40,27 @@ export function Pitch({
 
         <div className="absolute left-1/2 top-2 -translate-x-1/2">
           <span className="rounded bg-black/45 px-2 py-1 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-green-glow backdrop-blur">
-            {shape?.label ?? formation} · {format}
+            {formation.label} · {format}
           </span>
         </div>
 
-        {/* goalkeeper */}
-        {keeper && (
-          <Token
-            key={keeper.id}
-            player={keeper}
-            x={50}
-            y={92}
-            captain={captainId === keeper.id}
-            vice={viceCaptainId === keeper.id}
-            active={selectedId === keeper.id}
-            target={benchId != null}
-            disabled={disabled}
-            onClick={() => onSelect?.(keeper.id)}
-          />
-        )}
-
-        {slots.map((slot) => {
-          const player = byId.get(slot.playerId);
-          if (!player) return null;
+        {slots.map(({ playerId, position, index, x, y, width }) => {
+          const player = playerId ? byId.get(playerId) : null;
+          if (player) return (
+            <Token key={player.id} player={player} x={x} y={y} width={width}
+              captain={captainId === player.id} vice={viceCaptainId === player.id}
+              disabled={disabled} onClick={() => onSelect(player.id)} />
+          );
           return (
-            <Token
-              key={slot.playerId}
-              player={player}
-              x={slot.x}
-              y={slot.y}
-              captain={captainId === player.id}
-              vice={viceCaptainId === player.id}
-              active={selectedId === player.id}
-              target={benchId != null}
-              disabled={disabled}
-              onClick={() => onSelect?.(player.id)}
-            />
+            <button key={`${position}-${index}`} type="button" aria-label={`Add ${position} ${index + 1}`}
+              disabled={disabled} onClick={() => onAdd(position)}
+              className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center text-green-glow hover:text-white disabled:opacity-50"
+              style={{ left: `${x}%`, top: `${y}%`, width: `${width}%` }}>
+              <span className="flex h-10 w-10 items-center justify-center rounded-full border border-dashed border-green-glow/80 bg-pitch-950/90 sm:h-12 sm:w-12">
+                <Plus className="h-5 w-5" />
+              </span>
+              <span className="mt-1 rounded bg-black/60 px-1 text-[10px] font-bold">{position}</span>
+            </button>
           );
         })}
       </div>
@@ -134,46 +74,37 @@ function Token({
   y,
   captain,
   vice,
-  active,
-  target,
+  width,
   disabled,
   onClick,
 }: {
-  player: PitchPlayer;
+  player: SquadEntry;
   x: number;
   y: number;
   captain?: boolean;
   vice?: boolean;
-  active?: boolean;
-  target?: boolean;
+  width: number;
   disabled?: boolean;
   onClick?: () => void;
 }) {
-  const ring = active
-    ? "ring-2 ring-green ring-offset-2 ring-offset-[#0f2a1c]"
-    : target
-      ? "ring-2 ring-dashed ring-card-y"
-      : "";
-
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label={`${player.name}, ${player.position}`}
-      className={`group absolute z-10 -translate-x-1/2 -translate-y-1/2 text-center transition-[left,top,transform] duration-[380ms] ease-[cubic-bezier(.2,.8,.2,1)] disabled:cursor-default`}
-      style={{ left: `${x}%`, top: `${y}%` }}
+      aria-label={`${player.name}, ${player.position}${captain ? ", captain" : vice ? ", vice-captain" : ""}`}
+      title={player.name}
+      className={`group absolute z-10 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center text-center transition-[left,top,transform] motion-reduce:transition-none duration-[380ms] ease-[cubic-bezier(.2,.8,.2,1)] disabled:cursor-default`}
+      style={{ left: `${x}%`, top: `${y}%`, width: `${width}%` }}
     >
-      <span className="relative block">
+      <span className="relative flex w-full flex-col items-center">
         <span
-          className={`flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border-2 bg-[#0b1710]/95 shadow-[0_6px_18px_-8px_rgba(0,0,0,0.9)] transition-all sm:h-12 sm:w-12 ${ring} ${
+          className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border-2 bg-[#0b1710]/95 shadow-[0_6px_18px_-8px_rgba(0,0,0,0.9)] transition-all sm:h-12 sm:w-12 ${
             captain
               ? "border-card-y"
               : vice
                 ? "border-green-glow"
-                : active
-                  ? "border-green"
-                  : "border-green-dim/70 group-hover:border-green"
+                : "border-green-dim/70 group-hover:border-green"
           }`}
         >
           {player.photoUrl ? (
@@ -188,7 +119,7 @@ function Token({
 
         {(captain || vice) && (
           <span
-            className={`num absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-bold leading-none ${
+            className={`num absolute left-1/2 -top-1 ml-2 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-bold leading-none ${
               captain ? "bg-card-y text-[#1a1400]" : "bg-green-glow text-[#04120a]"
             }`}
           >
@@ -197,10 +128,10 @@ function Token({
         )}
 
         {player.availability && player.availability !== "available" && (
-          <span className="absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full border border-pitch-950 bg-card-r" />
+          <span className="absolute right-1/2 -top-1 mr-3 h-2.5 w-2.5 rounded-full border border-pitch-950 bg-card-r" />
         )}
 
-        <span className="mt-1.5 block max-w-[74px] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10.5px] font-semibold text-chalk backdrop-blur">
+        <span className="mt-1.5 block max-w-[min(100%,100px)] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10.5px] font-semibold text-chalk backdrop-blur">
           {player.name}
         </span>
         <span className="num mt-0.5 block text-[9.5px] uppercase tracking-[0.1em] text-green-glow/80">

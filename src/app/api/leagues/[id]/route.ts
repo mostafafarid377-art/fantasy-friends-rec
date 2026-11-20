@@ -66,6 +66,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
 const patchSchema = z.object({
   name: z.string().min(3).max(60).optional(),
   description: z.string().max(280).nullable().optional(),
+  squadSize: z.number().int().min(1).max(15).optional(),
   subsCount: z.number().int().min(1).max(10).optional(),
   vicePolicy: z.enum(["auto_captain", "none"]).optional(),
 });
@@ -81,7 +82,7 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
     throw new ApiError("Invalid league settings", 422, parsed.error.flatten().fieldErrors);
   }
   const input = parsed.data;
-  if (input.subsCount !== undefined && input.subsCount + membership.league.starters > membership.league.squad_size) {
+  if ((input.subsCount ?? membership.league.subs_count) + membership.league.starters > (input.squadSize ?? membership.league.squad_size)) {
     throw new ApiError("Starters and substitutes cannot exceed the league squad size", 422);
   }
   const supabase = await getSupabase();
@@ -91,6 +92,7 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
     .update({
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.squadSize !== undefined ? { squad_size: input.squadSize } : {}),
       ...(input.subsCount !== undefined ? { subs_count: input.subsCount } : {}),
       ...(input.vicePolicy !== undefined ? { vice_policy: input.vicePolicy } : {}),
     })

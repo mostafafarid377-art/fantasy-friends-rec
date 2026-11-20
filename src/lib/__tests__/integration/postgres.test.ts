@@ -281,17 +281,20 @@ describe("PostgreSQL integration: squad creation", () => {
     const cC = await freshClient();
     try {
       await setAuthUid(cC, userCId);
-      const { rows: squads } = await sql(cC, `INSERT INTO public.fantasy_squads (id, league_id, profile_id, formation, created_at, updated_at) VALUES (gen_random_uuid()::text, $1, $2, '4-4-2', now(), now()) RETURNING id`, [leagueAId, userCId]);
-      const squadId = squads[0].id;
-
-      const { rows: players } = await sql(admin, `SELECT id FROM public.players WHERE league_id = $1 LIMIT 7`, [leagueAId]);
-      const slots = ['starter','starter','starter','starter','starter','sub','sub'];
-      for (let i = 0; i < players.length; i++) {
-        await sql(cC, `INSERT INTO public.fantasy_squad_players (id, squad_id, player_id, slot, "order", created_at) VALUES (gen_random_uuid()::text, $1, $2, $3, $4, now())`, [squadId, players[i].id, slots[i], i]);
-      }
-
+      await expect(sql(cC, `INSERT INTO public.fantasy_squads (id,league_id,profile_id,formation) VALUES ('bypass',$1,$2,'2-1-1')`,
+        [leagueAId, userCId])).rejects.toMatchObject({ code: "42501" });
+      const { rows: pool } = await sql(cC, `SELECT id, position FROM public.players WHERE league_id=$1 ORDER BY full_name`, [leagueAId]);
+      const starters = new Set(["GK", "DEF", "MID", "FWD"].flatMap((pos) => pool.filter((p) => p.position === pos)
+        .slice(0, pos === "DEF" ? 2 : 1).map((p) => p.id)));
+      const entries = pool.map((p, order) => ({ player_id: p.id, slot: starters.has(p.id) ? "starter" : "sub", order }));
+      const { rows: [saved] } = await sql(cC, `SELECT public.save_fantasy_squad_v2($1,'2-1-1',null,null,null,$2) AS result`, [leagueAId, JSON.stringify(entries)]);
+      const squadId = saved.result.squad.id;
+      expect(saved.result.squad.profile_id).toBe(userCId);
       const { rows: sp } = await sql(cC, `SELECT * FROM public.fantasy_squad_players WHERE squad_id = $1`, [squadId]);
       expect(sp.length).toBe(7);
+      await expect(sql(cC, "UPDATE public.fantasy_squad_players SET slot='sub' WHERE squad_id=$1", [squadId])).rejects.toMatchObject({ code: "42501" });
+      await expect(sql(cC, "UPDATE public.fantasy_squads SET captain_id=NULL WHERE id=$1", [squadId])).rejects.toMatchObject({ code: "42501" });
+
     } finally {
       cC.release();
     }
@@ -543,21 +546,115 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
     } finally { c.release(); }
   });
 
-  it("replaces squad entries atomically and leaves the old squad unchanged on failure", async () => {
+  it("validates scoped squad writes atomically and protects against stale editors", async () => {
+    const c = await freshClient();
+    const save = "SELECT public.save_fantasy_squad_v2($1,$2,$3,$4,$5,$6) AS result";
+    try {
+      await setAuthUid(c, userAId);
+      const { rows: [p] } = await sql(c, "SELECT id FROM players WHERE league_id=$1 AND position='GK' LIMIT 1", [leagueAId]);
+      const { rows: [foreign] } = await sql(admin,
+        "INSERT INTO players(id,league_id,full_name,position,status) VALUES(gen_random_uuid()::text,$1,'Away keeper','GK','active') RETURNING id", [leagueBId]);
+      const { rows: [inactive] } = await sql(admin,
+        "INSERT INTO players(id,league_id,full_name,position,status) VALUES(gen_random_uuid()::text,$1,'Archived keeper','GK','archived') RETURNING id", [leagueAId]);
+      const entry = { player_id: p.id, slot: "starter", order: 0 };
+      const initial = [leagueAId, "1-2-1", p.id, null, null, JSON.stringify([entry])];
+      const { rows: [saved] } = await sql(c, save, initial);
+      expect(saved.result.entries).toHaveLength(1);
+      expect(saved.result.entries[0]).toMatchObject(entry);
+      expect(saved.result.squad.completed_at).toBeNull();
+      const revision = saved.result.squad.updated_at;
+      await expect(sql(c, save, initial)).rejects.toMatchObject({ code: "PT409" });
+      for (const [formation, captain, vice, entries] of [
+        ["1-2-1", null, null, [entry, entry]],
+        ["1-2-1", p.id, p.id, [entry]],
+        ["1-2-1", p.id, null, [{ ...entry, slot: "sub" }]],
+        ["1-2-1", null, "outsider", [entry]],
+        ["1-2-3", null, null, [entry]],
+        ["1-2-1", null, null, [{ ...entry, player_id: foreign.id }]],
+        ["1-2-1", null, null, [{ ...entry, player_id: inactive.id }]],
+      ]) await expect(sql(c, save, [leagueAId, formation, captain, vice, revision, JSON.stringify(entries)])).rejects.toMatchObject({ code: "22023" });
+      expect((await sql(c, "SELECT player_id,slot,\"order\" FROM fantasy_squad_players WHERE squad_id=$1", [saved.result.squad.id])).rows).toEqual([entry]);
+      const updated = (await sql(c, save, [leagueAId, "2-1-1", null, p.id, revision, JSON.stringify([entry])])).rows[0].result;
+      expect(updated.entries[0].id).toBe(saved.result.entries[0].id);
+      expect(updated.squad).toMatchObject({ id: saved.result.squad.id, vice_captain_id: p.id });
+      await expect(sql(c, "SELECT public.save_fantasy_squad($1,'1-2-1',null,null,false,'[]')", [leagueAId])).rejects.toMatchObject({ code: "42501" });
+      await expect(sql(c, save, [leagueBId, "1-2-1", null, null, null, JSON.stringify([entry])])).rejects.toMatchObject({ code: "22023" });
+      const cleared = (await sql(c, save, [leagueAId, "1-2-1", null, null, updated.squad.updated_at, "[]"])).rows[0].result;
+      expect(cleared.entries).toEqual([]);
+      await setAuthUid(c, randomUUID());
+      await expect(sql(c, save, initial)).rejects.toMatchObject({ code: "42501" });
+    } finally { c.release(); }
+  });
+
+  it("persists an independent 7v7 squad with a smaller league's bench and position limits", async () => {
     const c = await freshClient();
     try {
       await setAuthUid(c, userAId);
-      const { rows: [p] } = await sql(c, "SELECT id FROM players WHERE league_id=$1 LIMIT 1", [leagueAId]);
-      const save = "SELECT public.save_fantasy_squad($1,'1-2-1',null,null,false,$2) AS result";
-      const entry = { player_id: p.id, slot: "starter", order: 0 };
-      const { rows: [saved] } = await sql(c, save, [leagueAId, JSON.stringify([entry])]);
-      expect(saved.result.entries).toHaveLength(1);
-      expect(saved.result.entries[0]).toMatchObject(entry);
-      await expect(sql(c, save, [leagueAId, JSON.stringify([entry, entry])])).rejects.toMatchObject({ code: "23505" });
-      const entries = await sql(c, "SELECT player_id,slot,\"order\" FROM fantasy_squad_players WHERE squad_id=$1", [saved.result.squadId]);
-      expect(entries.rows).toEqual([entry]);
+      const other = (await sql(c, "SELECT public.create_league('Seven-side test',null,'7v7',7,2,null) AS id")).rows[0].id;
+      await sql(c, "UPDATE leagues SET squad_size=10 WHERE id=$1", [other]);
+      await expect(sql(c, "UPDATE leagues SET squad_size=8 WHERE id=$1", [other])).rejects.toMatchObject({ code: "23514" });
+      const positions = ["GK", "DEF", "DEF", "DEF", "MID", "MID", "FWD", "GK", "MID", "FWD"];
+      const entries: { player_id: string; slot: string; order: number }[] = [];
+      for (const [order, position] of positions.entries()) {
+        const player_id = randomUUID();
+        await sql(c, "INSERT INTO players(id,league_id,full_name,position,created_by) VALUES($1,$2,$3,$4,$5)", [player_id, other, `Seven ${order}`, position, userAId]);
+        entries.push({ player_id, slot: order < 7 ? "starter" : order < 9 ? "sub" : "reserve", order });
+      }
+      const save = (formation: string, picks: typeof entries, revision: string | null, captain = entries[0].player_id) =>
+        sql(c, "SELECT public.save_fantasy_squad_v2($1,$2,$3,$4,$5,$6) AS result",
+          [other, formation, captain, entries[1].player_id, revision, JSON.stringify(picks)]);
+      await expect(save("2-2-2", entries, null)).rejects.toMatchObject({ code: "22023" });
+      await expect(save("3-2-1", entries.map((e,i) => i === 9 ? { ...e, slot: "sub" } : e), null)).rejects.toMatchObject({ code: "22023" });
+      await expect(save("3-2-1", entries.map((e,i) => i === 8 ? { ...e, slot: "reserve" } : e), null)).rejects.toMatchObject({ code: "22023" });
+      await expect(save("3-2-1", entries.map((e,i) => i === 6 ? { ...entries[7], slot: "starter" } : i === 7 ? { ...entries[6], slot: "sub" } : e), null)).rejects.toMatchObject({ code: "22023" });
+      const first = (await save("3-2-1", entries, null)).rows[0].result;
+      expect(first.squad.completed_at).toBeTruthy();
+      const swapped = entries.map((e,i) => i === 2 ? { ...e, slot: "sub", order: 8 } : i === 8 ? { ...e, slot: "starter", order: 2 } : e);
+      const edit = (await save("2-3-1", swapped, first.squad.updated_at)).rows[0].result;
+      expect(edit.squad).toMatchObject({ id: first.squad.id, formation: "2-3-1", completed_at: first.squad.completed_at });
+      expect(edit.entries.find((e: {player_id: string}) => e.player_id === entries[9].player_id)).toEqual(first.entries[9]);
+      expect((await sql(c, "SELECT league_id FROM fantasy_squads WHERE profile_id=$1 AND league_id IN ($2,$3)", [userAId, leagueAId, other])).rowCount).toBe(2);
+      await setAuthUid(c, userCId);
+      expect((await sql(c, "SELECT id FROM fantasy_squads WHERE league_id=$1", [other])).rowCount).toBe(0);
+      await expect(save("3-2-1", entries, null)).rejects.toMatchObject({ code: "42501" });
+    } finally { c.release(); }
+  });
+
+  it("reads only the latest approved version for the current member and preserves vice fallback", async () => {
+    const c = await freshClient();
+    try {
+      await setAuthUid(c, userAId);
+      const { rows: [game] } = await sql(c, "SELECT * FROM real_matches WHERE id=$1", [matchId]);
+      const { rows: [goal] } = await sql(c, "SELECT player_id FROM match_events WHERE match_id=$1 AND event_type='goal'", [matchId]);
+      const { rows: [absent] } = await sql(c, "SELECT id FROM players WHERE league_id=$1 AND position='GK' AND status='active' AND id NOT IN (SELECT player_id FROM match_lineups WHERE match_id=$2) LIMIT 1", [leagueAId, matchId]);
+      const { rows: [original] } = await sql(c, "SELECT updated_at::text AS revision FROM fantasy_squads WHERE league_id=$1 AND profile_id=$2", [leagueAId, userAId]);
+      const picks = [absent.id, goal.player_id].map((player_id, order) => ({ player_id, slot: "starter", order }));
+      const save = (captain: string, vice: string, revision: string) => sql(c,
+        "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS result", [leagueAId, captain, vice, revision, JSON.stringify(picks)]);
+      const revised = (await save(absent.id, goal.player_id, original.revision)).rows[0].result;
+      await sql(c, "SELECT public.calculate_match_points($1)", [matchId]);
+      const latest = (arg = leagueAId) => sql(c, "SELECT * FROM public.last_game_points($1)", [arg]);
+      const fresh = (await latest()).rows[0];
+      expect(fresh).toMatchObject({ matchId, points: "8.00" });
+      const { rows: [{ breakdown }] } = await sql(c, "SELECT breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2", [matchId, userAId]);
+      expect(breakdown).toMatchObject({ captainId: goal.player_id });
+      expect(breakdown.lines).toContainEqual(expect.objectContaining({ playerId: goal.player_id, multiplier: 2 }));
+      await save(goal.player_id, absent.id, revised.squad.updated_at);
+      expect((await latest()).rows[0]).toEqual(fresh); // a future squad edit doesn't change a finalized result
+      expect((await latest(leagueBId)).rows).toEqual([]);
+      const pending = randomUUID();
+      await sql(admin, "INSERT INTO real_matches(id,league_id,title,kick_off,team_a_id,team_b_id,organizer_id,status,version) VALUES($1,$2,'Future pending',$3::timestamptz+interval '1 day',$4,$5,$6,'pending',2)",
+        [pending, leagueAId, game.kick_off, game.team_a_id, game.team_b_id, userAId]);
+      expect((await latest()).rows[0]).toEqual(fresh);
+      await sql(admin, "UPDATE real_matches SET status='approved',version=3 WHERE id=$1", [pending]);
+      await sql(admin, "INSERT INTO manager_points(id,league_id,match_id,profile_id,match_version,points,breakdown) VALUES(gen_random_uuid()::text,$1,$2,$3,2,99,'{}')", [leagueAId, pending, userAId]);
+      expect((await latest()).rows).toEqual([{ matchId: pending, title: "Future pending", points: null }]);
+      await sql(admin, "UPDATE manager_points SET match_version=3,points=0 WHERE match_id=$1 AND profile_id=$2", [pending, userAId]);
+      expect((await latest()).rows[0]).toMatchObject({ matchId: pending, points: "0.00" });
+      await setAuthUid(c, userCId);
+      expect((await latest()).rows[0]).toMatchObject({ matchId: pending, points: null });
       await setAuthUid(c, randomUUID());
-      await expect(sql(c, save, [leagueAId, JSON.stringify([entry])])).rejects.toMatchObject({ code: "42501" });
+      expect((await latest()).rows).toEqual([]);
     } finally { c.release(); }
   });
 

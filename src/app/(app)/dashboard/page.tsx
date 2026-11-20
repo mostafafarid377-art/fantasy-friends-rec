@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowDownRight,
@@ -25,7 +25,7 @@ import {
 import { useApi } from "@/lib/client/api";
 
 type DashboardData = {
-  league: { id: string; name: string; format: string; starters: number; inviteCode: string; role: string };
+  league: { id: string; name: string; format: string; starters: number; squadSize: number; inviteCode: string; role: string };
   squad: {
     formation: string;
     captainId: string | null;
@@ -45,7 +45,7 @@ type DashboardData = {
     teamName: string | null;
   }[];
   myRank: number | null;
-  myPoints: string;
+  lastGame: { matchId: string; title: string; points: number | null } | null;
   fixtures: { id: string; title: string; gameweek: number; scheduledAt: string | null; status: string }[];
   matches: { id: string; title: string; status: string; kickOff: string; eventCount: number }[];
   notifications: { id: string; title: string; body: string; readAt: string | null; createdAt: string }[];
@@ -61,6 +61,12 @@ export default function DashboardPage() {
     league ? `/api/dashboard?leagueId=${league.id}` : null,
     [league?.id],
   );
+
+  useEffect(() => {
+    const onFocus = () => { void reload(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reload]);
 
   if (leagueLoading || (loading && !data)) {
     return (
@@ -85,7 +91,6 @@ export default function DashboardPage() {
   if (!data) return null;
 
   const me = data.standings.find((s) => s.rank === data.myRank);
-  const myPoints = Number(data.myPoints ?? 0);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
@@ -131,9 +136,9 @@ export default function DashboardPage() {
       {/* ---- headline stats ---- */}
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="League rank" value={data.myRank ? `#${data.myRank}` : "—"} accent />
-        <Stat label="Total points" value={String(myPoints)} />
+        <Stat label="Last Game Points" value={data.lastGame?.points == null ? "—" : String(data.lastGame.points)} detail={data.lastGame ? `${data.lastGame.title}${data.lastGame.points == null ? " · No score" : ""}` : "No finalized game yet"} />
         <Stat label="Managers" value={String(data.memberCount)} />
-        <Stat label="Squad" value={`${data.squad?.size ?? 0}/15`} />
+        <Stat label="Squad" value={`${data.squad?.size ?? 0}/${data.league.squadSize}`} />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[1.35fr_1fr]">
@@ -219,14 +224,14 @@ export default function DashboardPage() {
             <div className="mb-3 flex items-center justify-between">
               <Slate>Your squad</Slate>
               <Link href="/team" className="text-[13px] text-sage hover:text-green">
-                Manage
+                View squad
               </Link>
             </div>
             {!data.squad ? (
               <div className="rounded-lg border border-dashed border-line p-4 text-center">
                 <p className="text-[14px] text-sage">You have not built a squad yet.</p>
                 <Button href="/team/pick" size="sm" className="mt-3">
-                  Pick your 15 <ChevronRight className="h-4 w-4" />
+                  Pick your squad <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
             ) : (
@@ -246,7 +251,7 @@ export default function DashboardPage() {
                 <div className="mt-4 space-y-1.5">
                   {data.squad.players
                     .filter((p) => p.slot === "starter")
-                    .slice(0, 7)
+                    .slice(0, data.league.starters)
                     .map((p) => (
                       <div key={p.playerId} className="flex items-center gap-2 text-[13.5px]">
                         <span className="num w-9 text-[11px] text-green-glow/80">{p.position}</span>
@@ -257,7 +262,7 @@ export default function DashboardPage() {
                 </div>
                 {!data.squad.complete && (
                   <Button href="/team/pick" size="sm" variant="outline" className="mt-4 w-full">
-                    Finish squad ({data.squad.size}/15)
+                    Finish squad ({data.squad.size}/{data.league.squadSize})
                   </Button>
                 )}
               </>
@@ -350,13 +355,14 @@ export default function DashboardPage() {
   );
 }
 
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Stat({ label, value, accent, detail }: { label: string; value: string; accent?: boolean; detail?: string }) {
   return (
     <div className={`panel rounded-lg px-4 py-3.5 ${accent ? "border-green/35" : ""}`}>
       <div className="slate">{label}</div>
       <div className={`num mt-1.5 text-[26px] font-semibold ${accent ? "text-green" : "text-chalk"}`}>
         {value}
       </div>
+      {detail && <p className="mt-1 truncate text-xs text-sage" title={detail}>{detail}</p>}
     </div>
   );
 }
