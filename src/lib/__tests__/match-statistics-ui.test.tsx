@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MatchResult } from "@/components/MatchResult";
 import { MatchStatistics } from "@/components/MatchStatistics";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -14,7 +15,7 @@ it("records statistics without any manual bonus controls or payload", async () =
   fireEvent.click(screen.getByText("Match statistics"));
   fireEvent.change(screen.getByRole("textbox", {name:"Keeper saves"}), {target:{value:"6"}});
   expect(screen.queryByRole("combobox")).toBeNull();
-  expect(screen.getByText(/Bonuses are calculated automatically/)).toBeTruthy();
+  expect(screen.getByText(/Bonuses are calculated on approval/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", {name:"Save statistics"}));
   await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
   expect(fetchMock.mock.calls[0][0]).toBe("/api/matches/match/statistics");
@@ -26,6 +27,7 @@ it("renders reported tied awards and skipped ranks without offering selections",
     saved={[]} bonusAwards={[{playerId:"gk",rank:1,points:3},{playerId:"def",rank:1,points:3},{playerId:"mid",rank:3,points:1}]}
     workflowBusy={false} onDirty={vi.fn()} onSaved={async () => {}} />);
   const section = within(screen.getByRole("region",{name:"Match Bonus Points"}));
+  expect(section.queryByText(/Bonuses are calculated on approval/)).toBeNull();
   expect(section.getAllByText(/Rank 1/)).toHaveLength(2);
   expect(section.queryByText(/Rank 2/)).toBeNull();
   expect(section.getByText(/Rank 3 · Midfielder/)).toBeTruthy();
@@ -33,4 +35,14 @@ it("renders reported tied awards and skipped ranks without offering selections",
     "Rank 1 · Keeper+3 pts", "Rank 1 · Defender+3 pts", "Rank 3 · Midfielder+1 pts",
   ]);
   expect(section.queryByRole("combobox")).toBeNull();
+});
+
+it("shows the bonus notice only once alongside the score-entry form", () => {
+  render(<>
+    <MatchStatistics matchId="match" version={1} started status="draft" correctable={false} canManage players={players}
+      saved={[]} workflowBusy={false} onDirty={vi.fn()} onSaved={async () => {}} />
+    <MatchResult match={{ status: "draft", homeScore: null, awayScore: null }} home="Home" away="Away"
+      canManage busy={false} onSave={async () => false} />
+  </>);
+  expect(screen.getAllByText(/(?:bonus points|bonuses) are calculated/i)).toHaveLength(1);
 });
