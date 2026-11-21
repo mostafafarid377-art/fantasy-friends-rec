@@ -47,6 +47,7 @@ function fixture() {
   const nextLineups = new Map<string, NextMatchLineup>();
   const putNext = vi.fn();
   const latest: LatestPlayerGames = {};
+  const matchScores = new Map<string, LatestPlayerGames>();
   const histories = new Map<string, PlayerPerformance>();
   const historyError = new Set<string>();
   const older = new Map<string, PlayerPerformance>();
@@ -65,8 +66,12 @@ function fixture() {
       nextLineups.set(leagueId, { ...data, ...(data.match && body.matchId === null ? { preparation: saved } : { saved }) });
       return Response.json({ matchId: body.matchId, ...saved });
     }
-    if (collection === "player-performance") return Response.json(Object.fromEntries(parsed.searchParams.getAll("player")
-      .filter((id) => latest[id]).map((id) => [id, latest[id]])));
+    if (collection === "player-performance") {
+      const match = parsed.searchParams.get("match");
+      const scores = (match && matchScores.get(match)) || latest;
+      return Response.json(Object.fromEntries(parsed.searchParams.getAll("player")
+        .filter((id) => scores[id] && (!match || scores[id].matchId === match)).map((id) => [id, scores[id]])));
+    }
     if (collection === "players" && action === "performance") {
       if (historyError.has(playerId) || (parsed.searchParams.has("before") && historyError.has(`${playerId}:older`))) return Response.json({ error: "Could not load finalized games" }, { status: 500 });
       if (parsed.searchParams.has("before")) return Response.json(older.get(playerId));
@@ -91,7 +96,7 @@ function fixture() {
     return Response.json({ state: "applied", ...next });
   });
   vi.stubGlobal("fetch", fetch);
-  return { put, fetch, saved, latest, histories, historyError, older, nextLineups, putNext };
+  return { put, fetch, saved, latest, matchScores, histories, historyError, older, nextLineups, putNext };
 }
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.unstubAllGlobals(); });
 
@@ -617,4 +622,36 @@ it("does not present the default starters as match history when a result has no 
   fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]);
   await waitFor(() => expect(put).toHaveBeenCalledOnce());
   expect(putNext).not.toHaveBeenCalled();
+});
+
+it("refreshes provisional squad totals after a scoring event is added and removed without changing the previous lineup", async () => {
+  const { saved, nextLineups, latest, matchScores } = nextMatchEditFixture("scheduled");
+  const previous = nextLineups.get(a.id)!.previous!;
+  const lastMatch = { matchId: previous.matchId, title: previous.title, kickOff: previous.kickOff, points: 31 };
+  saved.set(a.id, { ...saved.get(a.id)!, lastMatch });
+  matchScores.set(previous.matchId, { "gk-a": { matchId: previous.matchId, title: previous.title, kickOff: previous.kickOff, points: 7 } });
+  renderInShell(<SquadScreen enableNextMatch />);
+  const previousPitch = () => within(screen.getByRole("region", { name: "Previous match starting lineup" }));
+  await screen.findByRole("region", { name: "Previous match starting lineup" });
+  expect(await previousPitch().findByText("7 pts")).toBeTruthy();
+  const sync = () => fireEvent(window, new StorageEvent("storage", { key: `ff:league-content-changed:${a.id}` }));
+  const liveMatch = { matchId: "scheduled", title: "Live fixture", kickOff: "2026-11-19T09:00:00Z", points: 10 };
+  saved.set(a.id, { ...saved.get(a.id)!, liveMatches: [liveMatch] });
+  latest["gk-a"] = { ...liveMatch, points: 5, provisional: true };
+  sync();
+  const live = within(await screen.findByRole("region", { name: "Live match points" }));
+  expect(live.getByText("10 pts")).toBeTruthy();
+  expect(previousPitch().queryByText("5 pts")).toBeNull();
+  expect(previousPitch().getByText("7 pts")).toBeTruthy();
+  click("Next Match");
+  const nextPitch = within(screen.getByRole("region", { name: /football pitch/ }));
+  expect(await nextPitch.findByText("5 pts")).toBeTruthy();
+  expect(nextPitch.getByText("Live")).toBeTruthy();
+  saved.set(a.id, { ...saved.get(a.id)!, liveMatches: [] });
+  delete latest["gk-a"];
+  sync();
+  await waitFor(() => expect(nextPitch.queryByText("5 pts")).toBeNull());
+  // The collapsed My Squad screen (including official points) is still mounted.
+  expect(screen.queryByText("10 pts")).toBeNull();
+  expect(screen.getByText("31 pts")).toBeTruthy();
 });

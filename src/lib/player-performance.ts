@@ -1,7 +1,7 @@
 import type { BreakdownLine } from "./scoring";
 import type { Position } from "./domain";
 
-export type LatestPlayerGame = { matchId: string; points: number | null; captainPoints?: number };
+export type LatestPlayerGame = { matchId: string; points: number | null; captainPoints?: number; provisional?: boolean };
 export type LatestPlayerGames = Record<string, LatestPlayerGame & { title: string; kickOff: string }>;
 export type PlayerGame = LatestPlayerGame & {
   title: string;
@@ -17,6 +17,7 @@ export type PlayerHistory = {
   next: { kickOff: string; matchId: string } | null;
 };
 export type PlayerPerformance = PlayerHistory & {
+  liveGames?: PlayerGame[];
   player: { name: string; position: Position; photoUrl: string | null; team: string | null; teamLogo?: string | null };
 };
 

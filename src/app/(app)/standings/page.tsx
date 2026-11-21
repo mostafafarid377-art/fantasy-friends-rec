@@ -5,13 +5,15 @@ import { ArrowDownRight, ArrowUpRight, Minus, Trophy } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Avatar, Badge, EmptyState, ErrorNote, Panel, Skeleton, Slate, TableSkeleton } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
+import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
 
 type StandingRow = {
   profileId: string;
   rank: number;
   prevRank: number | null;
-  totalPoints: string;
+  totalPoints: number;
+  livePoints?: number;
   matchesPlayed: number;
   form: unknown;
   displayName: string;
@@ -32,6 +34,7 @@ type HistoryRow = {
 };
 
 type Data = {
+  provisional?: boolean;
   standings: StandingRow[];
   history: HistoryRow[];
   ledger: { profileId: string; matchId: string; points: string; computedAt: string }[];
@@ -44,6 +47,7 @@ export default function StandingsPage() {
     league ? `/api/leagues/${league.id}/standings` : null,
     [league?.id],
   );
+  useLiveLeaguePoints(league?.id, reload);
   const [view, setView] = useState<"table" | "weekly">("table");
 
   if (leagueLoading || (loading && !data))
@@ -66,7 +70,7 @@ export default function StandingsPage() {
       <PageHeader
         eyebrow={`${league?.name} · ${league?.format}`}
         title="League table"
-        subtitle="Rebuilt from the approved-results ledger after every decision — never incremented in place."
+        subtitle="Live event points update the table before approval. Matches played and form reflect approved results."
         actions={
           <div className="flex overflow-hidden rounded-md border border-line">
             {(["table", "weekly"] as const).map((v) => (
@@ -84,10 +88,11 @@ export default function StandingsPage() {
         }
       />
 
+      {data.provisional && <p role="status" className="mb-3 text-sm text-card-y">Live standings include provisional points.</p>}
       {data.standings.length === 0 ? (
         <EmptyState
           title="The table is empty"
-          body="Standings appear as soon as managers join and approved results start coming in."
+          body="Standings appear when managers join and results or live points come in."
           action={{ label: "Invite managers", href: "/members" }}
           icon={<Trophy className="h-5 w-5" />}
         />
@@ -219,6 +224,7 @@ function WeeklyHistory({
     );
 
   const matchIds = [...new Set(history.map((h) => h.matchId))];
+  const officialTotals = new Map(standings.map((s) => [s.profileId, Number(s.totalPoints) - (s.livePoints ?? 0)]));
   const managers = standings.map((s) => ({ id: s.profileId, name: s.displayName }));
 
   return (
@@ -253,7 +259,7 @@ function WeeklyHistory({
               <td className="num px-4 py-3 text-right text-[16px] font-semibold text-chalk">
                 {Math.round(
                   Number(
-                    standings.find((s) => s.profileId === mgr.id)?.totalPoints ?? 0,
+                    officialTotals.get(mgr.id) ?? 0,
                   ),
                 )}
               </td>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, History, Lock, Pencil, Save, Unlock } from "lucide-react";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
+import { useLatestPlayerGames } from "./PlayerPerformance";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel } from "./ui";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
@@ -58,6 +59,7 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
   const revision = edit ? edit.revision : saved?.revision ?? null;
   const shape = findFormation(lineup.formation, rules.format) ?? FORMATIONS[rules.format][0];
   const starters = lineup.players.filter((p) => p.slot === "starter");
+  const scores = useLatestPlayerGames(leagueId, match ? starters : [], match?.id);
   const bench = orderedBench(lineup.players);
   const outfield = bench.filter((p) => p.position !== "GK");
   const placed = new Set(layoutFormation(lineup.players, shape).map((p) => p.playerId));
@@ -161,7 +163,7 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
               }}>{(locked ? [shape] : matchLineupFormations(lineup, rules.format)).map((f) => <option key={f.label}>{f.label}</option>)}</select>
             </label>
           </div>
-          <Pitch players={lineup.players} formation={shape} format={rules.format} captainId={lineup.captainId} viceCaptainId={lineup.viceId} onSelect={locked ? undefined : setTargetId} disabled={saving} />
+          <Pitch players={lineup.players} formation={shape} format={rules.format} captainId={lineup.captainId} viceCaptainId={lineup.viceId} onSelect={locked ? undefined : setTargetId} disabled={saving} latest={scores.data ?? undefined} />
           {!locked && <p className="mt-2 text-xs text-sage">Tap a player to swap or replace them. Formation changes use available players on your bench.</p>}
           {!locked && unplaced.length > 0 && <Panel className="mt-3 p-3"><p className="mb-2 text-sm text-card-y">Some starters do not fit the formation.</p>{unplaced.map((p) => <Button key={p.id} variant="outline" onClick={() => setTargetId(p.id)} disabled={saving}>{p.name} · {p.position}</Button>)}</Panel>}
         </section>

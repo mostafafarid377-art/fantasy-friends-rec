@@ -1915,3 +1915,77 @@ it("prepares a private lineup without a fixture and attaches it once without upd
     expect(await defaultLineup()).toEqual(original);
   } finally { c.release(); }
 });
+
+it("projects event adds, edits and deletes into squad points and standings without modifying the official ledger", async () => {
+  const c = await freshClient();
+  try {
+    const { league, match, home, away } = await recordedResultFixture(c, (id) => sql(c, `
+      UPDATE scoring_rules SET points= CASE event_type WHEN 'goal' THEN 5 WHEN 'assist' THEN 3 WHEN 'yellow_card' THEN -1 ELSE points END
+      WHERE league_id=$1`, [id]));
+    const save = (players: string[], captain: string, vice: string) => sql(c,
+      "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)", [league.id, captain, vice, JSON.stringify(matchEntries(players))]);
+    await setAuthUid(c, userAId);
+    await save(home.slice(0,5),home[2],home[3]);
+    await setAuthUid(c, userBId);
+    await save(home.slice(0,5),home[3],home[2]);
+    // This manager's match-specific picks override that otherwise scoring default.
+    await sql(admin, "INSERT INTO fantasy_match_lineup_drafts(match_id,profile_id,lineup,updated_at) VALUES($1,$2,$3,now())", [match, userBId,
+      JSON.stringify({ formation: "1-2-1", captainId: away[2], viceId: away[3], players: away.map((id, order) => ({ id, slot: "starter", order, position: ["GK","DEF","MID","MID","FWD"][order] })) })]);
+    await setAuthUid(c, userCId);
+    await reachFixtureKickoff(match);
+    const goal = randomUUID(), card = randomUUID();
+    const write = (id: string, action: string, data: object = {}) => sql(c,
+      "SELECT public.write_match_event($1,$2,$3,$4)", [match, id, action, JSON.stringify(data)]);
+    const display = () => sql(c, "SELECT * FROM public.ff_display_player_points($1,$2) ORDER BY player_id", [league.id, match]);
+    const lookup = () => sql(c, "SELECT * FROM public.ff_latest_display_player_points($1,$2,$3)", [league.id, home,match]);
+    const squad = () => sql(c, "SELECT * FROM public.ff_my_live_match_points($1)", [league.id]);
+    const table = () => sql(c, "SELECT * FROM public.ff_display_standings($1)", [league.id]);
+    const myStandings = () => sql(c, "SELECT * FROM public.ff_my_display_standings() WHERE league_id=$1", [league.id]);
+    expect((await display()).rows).toEqual([]);
+    const goalData = { teamId: league.home, playerId: home[2], otherId: home[3], eventType: "goal" };
+    await write(goal, "event", goalData);
+    await write(goal, "event", goalData); // An identical retry must not score twice.
+    await write(card, "event", { teamId: league.home, playerId: home[2], eventType: "yellow_card" });
+    await setAuthUid(c, userAId);
+    expect((await display()).rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ player_id: home[2], points: "4.00", provisional: true }),
+      expect.objectContaining({ player_id: home[3], points: "3.00", provisional: true }),
+    ]));
+    expect((await lookup()).rows).toContainEqual(expect.objectContaining({ player_id: home[2], points: "4.00", captain_points: "8.00", provisional: true }));
+    expect((await squad()).rows).toEqual([expect.objectContaining({ matchId: match, points: "11.00" })]);
+    expect((await table()).rows[0]).toMatchObject({ profile_id: userAId, total_points: "11.00", matches_played: 0, provisional: true });
+    expect((await myStandings()).rows).toEqual([expect.objectContaining({ total_points: "11.00", rank: 1, provisional: true })]);
+    expect((await table()).rows.find((p) => p.profile_id === userBId)).toMatchObject({ live_points: "0" });
+    await setAuthUid(c, userBId);
+    expect((await squad()).rows).toEqual([]);
+    expect((await lookup()).rows.every((p) => p.captain_points === null)).toBe(true);
+    await expect(sql(c, "SELECT * FROM public.ff_live_manager_points($1)", [league.id])).rejects.toMatchObject({ code: "42501" });
+    await expect(write(goal, "delete")).rejects.toMatchObject({ code: "42501" });
+    await setAuthUid(c, null);
+    for (const get of [display, lookup, squad, table, myStandings]) expect((await get()).rows).toEqual([]);
+    await setAuthUid(c, userCId);
+    await write(goal, "update", { otherId: null });
+    expect((await display()).rows).toEqual([expect.objectContaining({ player_id: home[2], points: "4.00" })]);
+    await write(goal, "delete");
+    expect((await display()).rows).toEqual([expect.objectContaining({ points: "-1.00" })]);
+    expect((await table()).rows.find((p) => p.profile_id === userAId)).toMatchObject({ live_points: "-2.00" });
+    await write(card, "delete");
+    expect((await display()).rows).toEqual([]);
+    expect((await table()).rows.every((p) => !p.provisional && Number(p.live_points) === 0)).toBe(true);
+    for (const name of ["player_match_points", "manager_points", "fantasy_match_lineup_history"]) {
+      expect((await sql(admin, `SELECT 1 FROM ${name} WHERE match_id=$1`, [match])).rowCount).toBe(0);
+    }
+    await write(randomUUID(), "event", goalData);
+    await submitScore(c, match, 1, 0);
+    expect((await display()).rows.every((p) => p.status === "pending" && p.provisional)).toBe(true);
+    await approveScore(c, match);
+    await setAuthUid(c, userAId);
+    expect((await squad()).rows).toEqual([]);
+    const finalized = (await display()).rows;
+    expect(finalized.length).toBeGreaterThan(2);
+    expect(finalized.every((p) => p.status === "approved" && !p.provisional)).toBe(true);
+    expect(new Set(finalized.map((p) => p.player_id)).size).toBe(finalized.length);
+    const official = Number((await sql(c, "SELECT points FROM manager_points WHERE match_id=$1 AND profile_id=$2", [match,userAId])).rows[0].points);
+    expect((await table()).rows.find((p) => p.profile_id === userAId)).toMatchObject({ total_points: official.toFixed(2), matches_played: 1, provisional: false });
+  } finally { c.release(); }
+});

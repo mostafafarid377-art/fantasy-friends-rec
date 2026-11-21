@@ -13,7 +13,7 @@ import { formatPlayerPoints } from "@/lib/player-performance";
 import { countdown, useKickoffClock } from "@/lib/match-deadline";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from "./ui";
-import { notifyLeagueContentChanged, useLeagueContentUpdates } from "@/lib/client/league-updates";
+import { notifyLeagueContentChanged, useLeagueContentUpdates, useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import {
   canSelectPlayer, normalizeBench, orderedBench, compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
@@ -75,7 +75,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const [notice, setNotice] = useState<string | null>(null);
   const deadline = squad.data?.deadline;
   const remaining = useKickoffClock(deadline?.serverNow, deadline?.kickOff);
-  const hasDeadline = Boolean(deadline);
   const squadLocked = Boolean(deadline?.locked || remaining === 0);
   const nextData = nextLineup.data;
   const nextFixture = nextData?.match;
@@ -98,13 +97,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const nextKickoffReached = Boolean(scheduled && nextRemaining === 0);
   useEffect(() => { if (nextKickoffReached) void nextLineup.reload(); }, [nextKickoffReached, nextLineup.reload]);
   useEffect(() => {
-    if (!hasDeadline) return;
-    const refresh = () => { if (document.visibilityState === "visible") void squad.reload(); };
-    const timer = window.setInterval(refresh, 15000);
-    window.addEventListener("focus", refresh);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
-  }, [hasDeadline, squad.reload]);
-  useEffect(() => {
     if (!squadLocked || editsNext || editingNext) return;
     setEdit(null); setInitialMode(false); setPick(null); setMoving(null);
   }, [squadLocked, editsNext, editingNext]);
@@ -116,10 +108,11 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const historical = !editing && !viewDefault ? previous : null;
   const readOnlyLineup = !editing && Boolean(previous);
   const activePlayers = (editing ? (edit ?? nextSeed)?.players : historical?.lineup.players) ?? squad.data?.players ?? [];
-  const lineupScores = useLatestPlayerGames(leagueId, activePlayers.filter((player) => player.slot !== "reserve"));
+  const displayMatch = historical?.matchId ?? (editing && editingNext ? scheduled?.id : undefined);
+  const lineupScores = useLatestPlayerGames(leagueId, activePlayers.filter((player) => player.slot !== "reserve"), displayMatch);
   const inspectedPlayer = activePlayers.find((player) => player.id === playerId && player.slot === "reserve");
   const inspectedScores = useLatestPlayerGames(leagueId, inspectedPlayer && !moving ? [inspectedPlayer] : []);
-  useLeagueContentUpdates(leagueId, squad.reload, false);
+  useLiveLeaguePoints(leagueId, squad.reload, false);
   useLeagueContentUpdates(leagueId, pool.reload, false);
 
   if (squad.error && !squad.data) return <div className="mx-auto max-w-5xl p-5"><ErrorNote message={squad.error} onRetry={() => void squad.reload()} /></div>;
@@ -290,6 +283,16 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
         {conflict && <Button variant="outline" className="mt-2" onClick={() => { cancel(); void squad.reload(); if (enableNextMatch) void nextLineup.reload(); }}>Discard changes & reload</Button>}
       </div>}
       {notice && editing && <p role="status" className="mb-4 text-sm text-card-y">{notice}</p>}
+      {!!stored.liveMatches?.length && <section aria-labelledby="live-squad-points" className="mb-5">
+        <Panel className="p-4">
+          <h2 id="live-squad-points" className="text-xl text-chalk">Live match points</h2>
+          <p className="mt-1 text-xs text-sage">Provisional fantasy totals until each match is approved.</p>
+          <ul className="mt-2 space-y-1" aria-live="polite">{stored.liveMatches.map((game) => <li key={game.matchId} className="flex justify-between gap-3 text-sm">
+            <Link className="text-chalk hover:underline" href={`/matches/${game.matchId}`}>{game.title}</Link>
+            <span className="num shrink-0 font-bold text-card-y">{formatPlayerPoints(game.points)}</span>
+          </li>)}</ul>
+        </Panel>
+      </section>}
       <section aria-labelledby="last-squad-match" className="mb-5">
         <Panel className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 p-4">
           <div className="min-w-0 break-words">

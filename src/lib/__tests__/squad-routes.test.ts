@@ -32,7 +32,7 @@ beforeEach(() => {
   lastGame = [];
   db.getUser.mockResolvedValue({ data: { user: { id: "me" } }, error: null });
   db.from.mockImplementation((table: string) => query(({ league_members: membershipRow, players, fantasy_squads: squad, real_matches: { kick_off: revision } } as Record<string, unknown>)[table], table));
-  db.rpc.mockImplementation(async (name) => ({ data: name === "last_game_points" ? lastGame : name === "recent_fantasy_substitutions" ? [] : name === "ff_squad_deadline" ? { locked: false, kickOff: null, matchId: null, title: null, serverNow: revision } : receipt, error: null }));
+  db.rpc.mockImplementation(async (name) => ({ data: name === "last_game_points" ? lastGame : ["recent_fantasy_substitutions", "ff_my_live_match_points"].includes(name) ? [] : name === "ff_squad_deadline" ? { locked: false, kickOff: null, matchId: null, title: null, serverNow: revision } : receipt, error: null }));
 });
 
 describe("league squad route", () => {

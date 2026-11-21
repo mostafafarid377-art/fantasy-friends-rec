@@ -26,7 +26,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const supabase = await getSupabase();
 
   const [standings, recent, members] = await Promise.all([
-    supabase.from("league_standings").select("*, profiles(username, display_name, avatar_url)").eq("league_id", id).order("rank"),
+    supabase.rpc("ff_display_standings", { p_league: id }).order("rank"),
     supabase.from("league_activity").select("id,action,summary,profile_id,created_at").eq("league_id", id)
       .order("created_at", { ascending: false }).limit(30),
     memberProfiles(id),
@@ -45,7 +45,9 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       profileId: s.profile_id,
       rank: s.rank,
       prevRank: s.prev_rank,
-      totalPoints: s.total_points,
+      totalPoints: Number(s.total_points),
+      livePoints: Number(s.live_points ?? 0),
+      provisional: s.provisional,
       matchesPlayed: s.matches_played,
       form: s.form,
       username: s.profiles?.username,

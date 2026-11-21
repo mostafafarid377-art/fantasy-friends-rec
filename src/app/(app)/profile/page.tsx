@@ -8,6 +8,7 @@ import { BadgeCheck, MailWarning, Save } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Avatar, Badge, Button, ErrorNote, Field, Panel, Skeleton, Slate, TextInput, Toast } from "@/components/ui";
 import { useLeague } from "@/components/LeagueContext";
+import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { api, useApi } from "@/lib/client/api";
 
 const schema = z.object({
@@ -36,11 +37,12 @@ type Data = {
     totalPoints: number;
     matchesPlayed: number;
     bestRank: number | null;
+    provisional?: boolean;
   };
 };
 
 export default function ProfilePage() {
-  const { refresh, logout } = useLeague();
+  const { refresh, logout, league } = useLeague();
   const { data, loading, error, reload, setData } = useApi<Data>("/api/me");
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -53,15 +55,17 @@ export default function ProfilePage() {
     formState: { errors, isSubmitting, isDirty },
   } = useForm<Values>({ resolver: zodResolver(schema) });
 
+  useLiveLeaguePoints(!isDirty && !isSubmitting && !busy ? league?.id : undefined, reload);
+
   useEffect(() => {
-    if (!data) return;
+    if (!data || isDirty) return;
     reset({
       displayName: data.profile.displayName,
       username: data.profile.username,
       avatarUrl: data.profile.avatarUrl ?? "",
       bio: data.profile.bio ?? "",
     });
-  }, [data, reset]);
+  }, [data, reset, isDirty]);
 
   const onSubmit = async (values: Values) => {
     try {
@@ -128,9 +132,9 @@ export default function ProfilePage() {
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Box label="Leagues" value={String(data.stats.leagues)} />
-        <Box label="Total points" value={String(data.stats.totalPoints)} />
+        <Box label={data.stats.provisional ? "Total points · live" : "Total points"} value={String(data.stats.totalPoints)} />
         <Box label="Matches" value={String(data.stats.matchesPlayed)} />
-        <Box label="Best rank" value={data.stats.bestRank ? `#${data.stats.bestRank}` : "—"} accent />
+        <Box label={data.stats.provisional ? "Best rank · live" : "Best rank"} value={data.stats.bestRank ? `#${data.stats.bestRank}` : "—"} accent />
       </div>
 
       {!data.profile.emailVerified && (

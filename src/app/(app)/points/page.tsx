@@ -6,6 +6,7 @@ import { Wallet } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Badge, EmptyState, ErrorNote, Panel, Skeleton, Slate, TableSkeleton } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
+import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
 
 type BreakdownLine = {
@@ -23,7 +24,8 @@ type Row = {
   playerId: string;
   playerName: string;
   position: string | null;
-  points: string;
+  points: number;
+  provisional: boolean;
   started: boolean;
   breakdown: BreakdownLine[];
   events: { id: string; type: string; minute: number | null }[];
@@ -43,6 +45,8 @@ function PointsInner() {
     league ? `/api/leagues/${league.id}/points${only ? `?matchId=${only}` : ""}` : null,
     [league?.id, only],
   );
+
+  useLiveLeaguePoints(league?.id, reload);
 
   if (leagueLoading || (loading && !data))
     return (
@@ -68,7 +72,7 @@ function PointsInner() {
       <PageHeader
         eyebrow={`${league?.name} · transparent scoring`}
         title="Points breakdown"
-        subtitle="Every point traceable to a rule, a position and an approved match event."
+        subtitle="Follow live event points and see how every point was earned. Live totals are provisional until approval."
         actions={
           <Badge tone={data.approvedRules ? "live" : "warn"}>
             {data.approvedRules ? "Approved rules" : "Draft rules"}
@@ -79,7 +83,7 @@ function PointsInner() {
       {!grouped.length ? (
         <EmptyState
           title="No calculated points yet"
-          body="Points appear once a League Leader approves a real match and the scoring rules have been approved."
+          body="Record a scoring event under approved rules to see live points here."
           action={{ label: "Match centre", href: "/matches" }}
           icon={<Wallet className="h-5 w-5" />}
         />
@@ -90,7 +94,7 @@ function PointsInner() {
               <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 border-b border-line pb-2">
                 <h2 className="text-[20px] text-chalk">{group.match.title}</h2>
                 <div className="flex items-center gap-2">
-                  <Badge tone={group.match.status === "approved" ? "live" : "neutral"}>{group.match.status}</Badge>
+                  <Badge tone={group.match.status === "approved" ? "live" : "neutral"}>{group.match.status === "approved" ? "Approved" : "Live · provisional"}</Badge>
                   <span className="num text-[11.5px] text-sage-dim">
                     {group.match.kickOff ? new Date(group.match.kickOff).toLocaleDateString() : ""}
                   </span>

@@ -28,6 +28,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     statisticsResp,
     pointsResp,
     scoringLineupsResp,
+    livePointsResp,
   ] = await Promise.all([
     supabase.from("match_lineups").select("*").eq("match_id", id).order("order", { ascending: true }),
     supabase.from("match_events").select("*").eq("match_id", id).order("created_at").order("id"),
@@ -40,9 +41,10 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       .eq("league_id", match.league_id).eq("match_id", id).eq("match_version", match.version) : { data: [], error: null },
     match.status === "approved" ? supabase.from("match_scoring_lineups").select("team_id,player_id,slot,match_position").eq("match_id", id)
       .eq("league_id", match.league_id) : { data: null, error: null },
+    match.status === "approved" ? { data: [], error: null } : supabase.rpc("ff_display_player_points", { p_league: match.league_id, p_match: id, p_live_only: true }),
   ]);
 
-  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp, statisticsResp, pointsResp, scoringLineupsResp]) {
+  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp, statisticsResp, pointsResp, scoringLineupsResp, livePointsResp]) {
     checkDb(result.error, "Could not load match details");
   }
   const lineups = lineupsResp.data ?? [];
@@ -76,6 +78,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     statistics: (statisticsResp.data ?? []).map((r) => ({ playerId: r.player_id, position: r.position, saves: r.saves,
       defensiveContributions: r.defensive_contributions })),
     bonusAwards,
+    livePlayerPoints: (livePointsResp.data ?? []).map((p: { player_id: string; points: number }) => ({ playerId: p.player_id, points: Number(p.points) })),
     rules: leagueRules(membership.league),
     role: membership.role,
     canOrganize: authorized,

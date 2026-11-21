@@ -28,7 +28,7 @@ it("batches player IDs, returns official match/date and zero points, and keeps c
   const res = await latest(request("?player=player-a&player=player-b&player=player-a"), { params });
   expect(res.headers.get("cache-control")).toBe("private, no-store");
   expect(await res.json()).toEqual({ "player-a": { matchId: "match-a", title: "Home v Away", kickOff: date, points: 0, captainPoints: 0 } });
-  expect(db.rpc).toHaveBeenCalledExactlyOnceWith("latest_squad_scored_matches", { p_league: "league-a", p_players: ["player-a", "player-b"] });
+  expect(db.rpc).toHaveBeenCalledExactlyOnceWith("ff_latest_display_player_points", { p_league: "league-a", p_players: ["player-a", "player-b"], p_match: null });
   expect(db.from).not.toHaveBeenCalledWith("players");
   expect((await latest(request(`?${Array.from({ length: 16 }, (_, i) => `player=${i}`).join("&")}`), { params })).status).toBe(422);
 });
@@ -69,4 +69,17 @@ it("denies unauthorized history and distinguishes missing players, no games and 
   db.rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Permission denied" } });
   expect((await performance(request(), { params })).status).toBe(403);
   expect((await latest(request("?player=player-a"), { params })).status).toBe(403);
+});
+
+it("marks live point totals and keeps them separate from finalized player history", async () => {
+  const line = { category: "goal", count: 1, pointsPer: 5, points: 5 };
+  const row = { player_id: "player-a", match_id: "live-a", title: "Live game", kick_off: date, points: "5.00", captain_points: "10.00", provisional: true, breakdown: [line] };
+  db.rpc.mockImplementation(async (name) => ({ data: name === "player_finalized_games_with_logos" ? [] : [row], error: null }));
+  expect(await (await latest(request("?player=player-a&match=live-a"), { params })).json()).toEqual({
+    "player-a": { matchId: "live-a", title: "Live game", kickOff: date, points: 5, captainPoints: 10, provisional: true },
+  });
+  expect(db.rpc).toHaveBeenCalledWith("ff_latest_display_player_points", { p_league: "league-a", p_players: ["player-a"], p_match: "live-a" });
+  expect(await (await performance(request(), { params })).json()).toMatchObject({
+    games: [], liveGames: [{ matchId: "live-a", points: 5, provisional: true, breakdown: [{ ...line, label: "Goal" }] }], next: null,
+  });
 });

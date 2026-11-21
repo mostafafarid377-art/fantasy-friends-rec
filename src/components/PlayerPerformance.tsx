@@ -4,36 +4,23 @@ import { RealTeamName } from "./TeamLogo";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, useApi } from "@/lib/client/api";
-import { useLeagueContentUpdates } from "@/lib/client/league-updates";
+import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { formatPlayerPoints, type LatestPlayerGame, type LatestPlayerGames, type PlayerGame, type PlayerHistory, type PlayerPerformance } from "@/lib/player-performance";
 import type { SquadEntry } from "@/lib/squad";
 import { Avatar, Button, ErrorNote, Modal } from "./ui";
 
-export function useLatestPlayerGames(leagueId: string, players: SquadEntry[]) {
+export function useLatestPlayerGames(leagueId: string, players: SquadEntry[], matchId?: string) {
   const ids = [...new Set(players.map((p) => p.id))].sort();
   const query = new URLSearchParams(ids.map((id) => ["player", id]));
+  if (matchId) query.set("match", matchId);
   const result = useApi<LatestPlayerGames>(ids.length ? `/api/leagues/${encodeURIComponent(leagueId)}/player-performance?${query}` : null);
-  useLeagueContentUpdates(leagueId, result.reload);
-  const hasPlayers = ids.length > 0;
-  const { reload } = result;
-  useEffect(() => {
-    if (!hasPlayers) return;
-    const refresh = () => { if (document.visibilityState === "visible") void reload(); };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    const timer = window.setInterval(refresh, 15000);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-      window.clearInterval(timer);
-    };
-  }, [hasPlayers, reload]);
+  useLiveLeaguePoints(ids.length ? leagueId : undefined, result.reload);
   return result;
 }
 
 export function PlayerPointsLabel({ game, onPitch = false }: { game: LatestPlayerGame | undefined; onPitch?: boolean }) {
   return <span className={`num block leading-tight text-[11px] font-bold ${game?.points == null ? "text-sage" : "text-green-glow"}`}>
-    {formatPlayerPoints(game?.points)}
+    {formatPlayerPoints(game?.points)}{game?.provisional && <span className="ml-1 text-card-y" title="Provisional until approval">Live</span>}
     {game?.captainPoints != null && <span className={`${onPitch ? "block text-[10px]" : "ml-1 inline-block"} text-card-y`} title="Fantasy contribution with the captain multiplier">{onPitch ? `C: ${game.captainPoints} pts` : `${game.captainPoints} pts (C ×2)`}</span>}
   </span>;
 }
@@ -48,6 +35,7 @@ export function PlayerPerformanceDialog({ leagueId, entry, latest, onClose, acti
 }) {
   const route = `/api/leagues/${encodeURIComponent(leagueId)}/players/${encodeURIComponent(entry.id)}/performance`;
   const history = useApi<PlayerPerformance>(route);
+  useLiveLeaguePoints(leagueId, history.reload);
   const [pages, setPages] = useState<PlayerHistory[]>([]);
   const [moreError, setMoreError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -55,7 +43,9 @@ export function PlayerPerformanceDialog({ leagueId, entry, latest, onClose, acti
   const games = [...(history.data?.games ?? []), ...pages.flatMap((page) => page.games)];
   const next = pages.length ? pages[pages.length - 1].next : history.data?.next;
   const player = history.data?.player;
-  const last = history.data ? history.data.games[0] : latest;
+  const liveGames = history.data?.liveGames ?? [];
+  const last = liveGames[0] && (!games[0] || Date.parse(liveGames[0].kickOff) >= Date.parse(games[0].kickOff))
+    ? liveGames[0] : history.data ? games[0] : latest;
   const latestWithCaptain = last && latest?.matchId === last.matchId ? { ...last, captainPoints: latest.captainPoints } : last;
   const name = player?.name ?? entry.name;
 
@@ -82,6 +72,11 @@ export function PlayerPerformanceDialog({ leagueId, entry, latest, onClose, acti
       </div>
     </div>
     {actions && <div className="mb-5 border-b border-line pb-4">{actions}</div>}
+    {liveGames.length > 0 && <section aria-label="Live match points" className="mb-4">
+      <h3 className="mb-2 text-lg text-chalk">Live match points</h3>
+      <p className="mb-2 text-xs text-sage">Provisional until the match is approved.</p>
+      <ol className="space-y-2">{liveGames.map((game) => <li key={game.matchId}><GameDetails game={game} /></li>)}</ol>
+    </section>}
     <section aria-label="Finalized match history">
       <h3 className="mb-2 text-lg text-chalk">Finalized match history</h3>
       {history.loading && <p role="status" className="py-3 text-sm text-sage">Loading player history…</p>}

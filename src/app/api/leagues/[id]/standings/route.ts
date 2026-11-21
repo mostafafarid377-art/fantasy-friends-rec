@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getSupabase } from "@/db";
-import { handler, memberProfiles, requireMember } from "@/lib/server";
+import { checkDb, handler, memberProfiles, requireMember } from "@/lib/server";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -12,11 +12,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const supabase = await getSupabase();
 
   const [standingsResp, historyResp, ledgerResp] = await Promise.all([
-    supabase
-      .from("league_standings")
-      .select("*, profiles(username, display_name, avatar_url)")
-      .eq("league_id", id)
-      .order("rank", { ascending: true }),
+    supabase.rpc("ff_display_standings", { p_league: id }).order("rank"),
     supabase
       .from("fantasy_points_history")
       .select("*, real_matches(title, kick_off), profiles(username, display_name)")
@@ -28,24 +24,27 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       .select("profile_id, match_id, points, computed_at, breakdown")
       .eq("league_id", id),
   ]);
-  const members = await memberProfiles(id);
+  for (const result of [standingsResp, historyResp, ledgerResp]) checkDb(result.error, "Could not load league standings");
+  const members = new Map((await memberProfiles(id)).map((m) => [m.profileId, m]));
   const rows = (standingsResp as any)?.data ?? [];
   const history = (historyResp as any)?.data ?? [];
   const ledger = (ledgerResp as any)?.data ?? [];
 
   return Response.json({
+    provisional: rows.some((row: { provisional: boolean }) => row.provisional),
     standings: rows.map((s: any) => ({
       profileId: s.profile_id,
       rank: s.rank,
       prevRank: s.prev_rank,
-      totalPoints: s.total_points,
+      totalPoints: Number(s.total_points),
+      livePoints: Number(s.live_points ?? 0),
       matchesPlayed: s.matches_played,
       form: s.form,
       username: s.profiles?.username,
       displayName: s.profiles?.display_name,
       avatarUrl: s.profiles?.avatar_url,
-      teamName: members.find((m: any) => m.profileId === s.profile_id)?.teamName ?? null,
-      role: members.find((m: any) => m.profileId === s.profile_id)?.role ?? "manager",
+      teamName: members.get(s.profile_id)?.teamName ?? null,
+      role: members.get(s.profile_id)?.role ?? "manager",
     })),
     history: (history ?? []).map((h: any) => ({
       matchId: h.match_id,
