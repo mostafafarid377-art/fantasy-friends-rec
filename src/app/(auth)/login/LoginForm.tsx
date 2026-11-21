@@ -18,7 +18,7 @@ const schema = z.object({
 
 type Values = z.infer<typeof schema>;
 
-export default function LoginForm({ next, googleEnabled, authError }: { next: string; googleEnabled: boolean; authError?: string }) {
+export default function LoginForm({ next, googleStartToken, authError }: { next: string; googleStartToken: string | null; authError?: string }) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const [showAuthError, setShowAuthError] = useState(true);
@@ -61,8 +61,8 @@ export default function LoginForm({ next, googleEnabled, authError }: { next: st
           <span>{message}</span>
         </div>
       )}
-      {googleEnabled && <GoogleSignIn next={next} />}
-      <form onSubmit={handleSubmit(onSubmit)} className={`${googleEnabled ? "mt-5" : "mt-8"} space-y-5`} noValidate>
+      {googleStartToken && <GoogleSignIn next={next} startToken={googleStartToken} />}
+      <form onSubmit={handleSubmit(onSubmit)} className={`${googleStartToken ? "mt-5" : "mt-8"} space-y-5`} noValidate>
         <Field label="Email" error={errors.email?.message}>
           <TextInput type="email" autoComplete="email" placeholder="you@example.com" {...register("email")} />
         </Field>

@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { GOOGLE_START_ERROR, GOOGLE_START_HEADER } from "@/lib/google-sign-in";
+import { useEffect, useRef, useState } from "react";
+import { GOOGLE_START_FIELD } from "@/lib/google-sign-in";
 
-export function GoogleSignIn({ next }: { next: string }) {
+export function GoogleSignIn({ next, startToken }: { next: string; startToken: string }) {
   const submitted = useRef(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState(false);
   useEffect(() => {
     // Returning with Back can restore the previous document from the browser cache.
     const reset = () => { submitted.current = false; setPending(false); };
@@ -14,38 +13,14 @@ export function GoogleSignIn({ next }: { next: string }) {
     return () => window.removeEventListener("pageshow", reset);
   }, []);
 
-  async function start(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (submitted.current) return;
-    submitted.current = true;
-    setPending(true);
-    setError(false);
-    try {
-      const response = await fetch("/api/auth/google", {
-        method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store",
-        referrerPolicy: "no-referrer", headers: { [GOOGLE_START_HEADER]: "1" }, body: new URLSearchParams({ next }),
-      });
-      if (!response.ok) throw new Error("Google sign-in start failed");
-      const data: { location?: unknown } = await response.json();
-      if (typeof data?.location !== "string") throw new Error("Missing Google sign-in URL");
-      // The server validates this URL against the configured Auth endpoint.
-      // Navigate without including the sign-in page's query in the referrer.
-      const link = document.createElement("a");
-      link.href = data.location;
-      link.rel = "noreferrer";
-      link.hidden = true;
-      document.body.append(link);
-      try { link.click(); } finally { link.remove(); }
-    } catch {
-      submitted.current = false;
-      setPending(false);
-      setError(true);
-    }
-  }
-
   return (
     <div className="mt-7 space-y-5">
-      <form method="post" action="/api/auth/google" onSubmit={start}>
+      <form method="post" action="/api/auth/google" onSubmit={(event) => {
+        if (submitted.current) { event.preventDefault(); return; }
+        submitted.current = true;
+        setPending(true);
+      }}>
+        <input type="hidden" name={GOOGLE_START_FIELD} value={startToken} />
         <input type="hidden" name="next" value={next} />
         <button type="submit" disabled={pending} aria-busy={pending}
           className="flex min-h-11 w-full items-center justify-center gap-3 rounded-md border border-[#747775] bg-white px-4 py-2 text-sm font-semibold text-[#1f1f1f] transition-colors hover:bg-[#f2f5fa] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-green disabled:cursor-wait disabled:opacity-80">
@@ -58,7 +33,6 @@ export function GoogleSignIn({ next }: { next: string }) {
           {pending ? "Opening Google…" : "Continue with Google"}
         </button>
       </form>
-      {error && <p role="alert" className="text-sm text-card-r">{GOOGLE_START_ERROR}</p>}
       <div className="flex items-center gap-3 text-xs text-sage" role="separator" aria-label="Or continue with email">
         <span className="h-px flex-1 bg-line" /> or continue with email <span className="h-px flex-1 bg-line" />
       </div>

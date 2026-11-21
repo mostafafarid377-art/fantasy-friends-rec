@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { GOOGLE_START_HEADER } from "@/lib/google-sign-in";
 
 export const GOOGLE_CALLBACK = "/auth/callback/google";
 export const GOOGLE_FLOW_COOKIE = "ff-google-flow";
@@ -30,25 +29,15 @@ export function googleRequestOrigin(request: NextRequest, configured: string): s
   return allowed.find((origin) => new URL(origin).host === host) ?? null;
 }
 
-export function isGoogleStartFetch(request: NextRequest): boolean {
-  return request.headers.get(GOOGLE_START_HEADER) === "1";
+export const googleStartTokenPattern = /^[a-f0-9]{64}$/;
+export const googleStartCookieName = (secure: boolean) => secure ? "__Host-ff-google-start" : "ff-google-start";
+
+export function newGoogleStartToken(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-export function isGoogleStartFromApp(request: NextRequest, targetOrigin: string): boolean {
-  const origin = request.headers.get("origin");
-  const site = request.headers.get("sec-fetch-site");
-  const mode = request.headers.get("sec-fetch-mode");
-  const destination = request.headers.get("sec-fetch-dest");
-  if (site !== null && site !== "same-origin") return false;
-  if (origin !== null && origin !== "null" && origin !== targetOrigin) return false;
-  // Browser forms cannot set the custom header, and this route does not allow
-  // CORS (the header would require a successful cross-origin preflight).
-  if (isGoogleStartFetch(request)) {
-    return (mode === null || mode === "same-origin") && (destination === null || destination === "empty");
-  }
-  // Retain the native form for browsers with JavaScript disabled. A null or
-  // missing Origin alone is not proof that the form came from this app.
-  return origin === targetOrigin || (site === "same-origin" && mode === "navigate" && destination === "document");
+export function googleStartCookieOptions(secure: boolean) {
+  return { secure, httpOnly: true, sameSite: "lax" as const, path: "/", maxAge: 24 * 60 * 60 };
 }
 
 export function googleCookieOptions(origin: string, maxAge: number) {

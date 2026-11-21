@@ -1,5 +1,5 @@
 import { safeAuthPath } from "@/lib/auth-redirect";
-import { googleAppOrigin } from "@/lib/supabase/google-oauth";
+import { readGoogleStartToken } from "@/lib/supabase/google-start-token";
 import { GOOGLE_START_ERROR } from "@/lib/google-sign-in";
 import LoginForm from "./LoginForm";
 
@@ -14,6 +14,6 @@ const messages = new Map([
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string | string[]; auth_error?: string | string[] }> }) {
   const { next, auth_error } = await searchParams;
-  return <LoginForm next={safeAuthPath(typeof next === "string" ? next : null)} googleEnabled={Boolean(googleAppOrigin())}
+  return <LoginForm next={safeAuthPath(typeof next === "string" ? next : null)} googleStartToken={await readGoogleStartToken()}
     authError={typeof auth_error === "string" ? messages.get(auth_error) : undefined} />;
 }
