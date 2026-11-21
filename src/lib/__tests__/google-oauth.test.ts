@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { createHash } from "node:crypto";
-import { POST } from "@/app/api/auth/google/route";
+import { OPTIONS, POST } from "@/app/api/auth/google/route";
+import { GOOGLE_START_HEADER } from "@/lib/google-sign-in";
 import { GET as callback } from "@/app/auth/callback/google/route";
 import { GET as emailCallback } from "@/app/auth/callback/route";
 import { safeAuthPath } from "@/lib/auth-redirect";
@@ -79,8 +80,8 @@ describe("Google OAuth", () => {
   });
 
   it("refuses cross-origin and unconfigured starts", async () => {
-    expect((await start({ origin: "https://untrusted.example.test" })).status).toBe(403);
-    expect((await start({ origin: null })).status).toBe(403);
+    expect((await start({ origin: "https://untrusted.example.test" })).headers.get("location")).toBe("/login?auth_error=google_start_failed");
+    expect((await start({ origin: null })).headers.get("location")).toBe("/login?auth_error=google_start_failed");
     vi.stubEnv("GOOGLE_OAUTH_APP_ORIGIN", "http://fantasy.example.test");
     expect((await start()).headers.get("location")).toBe("/login?auth_error=google_unavailable");
     expect(writes).not.toHaveBeenCalled();
@@ -107,6 +108,38 @@ describe("Google OAuth", () => {
     expect(new URL(res.headers.get("location")!).searchParams.get("redirect_to")).toBe(`${production}${callbackPath}`);
   });
 
+  it.each([null, "null"])("starts from a same-origin fetch with Origin %j and no Fetch Metadata headers", async (origin) => {
+    const res = await start({ origin, headers: { [GOOGLE_START_HEADER]: "1" } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    const authorize = new URL((await res.json()).location);
+    expect(authorize.origin + authorize.pathname).toBe(`${project}/auth/v1/authorize`);
+    expect(authorize.searchParams.get("redirect_to")).toBe(`${app}${callbackPath}`);
+    expect(authorize.searchParams.get("code_challenge_method")).toBe("s256");
+    expect(res.cookies.get("ff-google-flow")).toMatchObject({ httpOnly: true, secure: true, maxAge: 600 });
+    expect((await finish()).headers.get("location")).toBe(returnTo);
+  });
+
+  it("rejects CORS preflights and incompatible Origin, Fetch Metadata, and target host even with the custom header", async () => {
+    expect(OPTIONS().status).toBe(405);
+    expect(OPTIONS().headers.get("access-control-allow-origin")).toBeNull();
+    const rejected: Parameters<typeof start>[0][] = [
+      { origin: "https://outside.example.test" },
+      { target: "https://outside.example.test", origin: null },
+      { origin: "null", headers: { "sec-fetch-site": "cross-site" } },
+      { origin: "null", headers: { "sec-fetch-mode": "cors" } },
+      { origin: "null", headers: { "sec-fetch-dest": "iframe" } },
+    ];
+    for (const input of rejected) {
+      const res = await start({ ...input, headers: { ...input?.headers, [GOOGLE_START_HEADER]: "1" } });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "google_start_failed" });
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    expect(writes).not.toHaveBeenCalled();
+  });
+
   it("starts on localhost with host-only, non-Secure OAuth cookies for HTTP", async () => {
     const local = "http://localhost:3000";
     vi.stubEnv("GOOGLE_OAUTH_APP_ORIGIN", local);
@@ -116,7 +149,7 @@ describe("Google OAuth", () => {
     expect(writes).toHaveBeenCalledWith(expect.stringMatching(verifier), expect.any(String), expect.objectContaining({ secure: false }));
   });
 
-  it("still returns the original 403 for foreign, unproven and untrusted requests, before PKCE writes", async () => {
+  it("returns foreign, unproven and untrusted native requests to sign-in before any PKCE writes", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     const common = { target: production };
     for (const input of [
@@ -130,8 +163,8 @@ describe("Google OAuth", () => {
       { target: "https://untrusted.example.test", origin: production, headers: { ...navigation, "x-forwarded-host": new URL(production).host } },
     ]) {
       const res = await start(input);
-      expect(res.status).toBe(403);
-      expect(await res.text()).toBe("Start Google sign-in from the Fantasy Friends sign-in page.");
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe("/login?auth_error=google_start_failed");
       expect(res.headers.get("set-cookie")).toBeNull();
     }
     expect(writes).not.toHaveBeenCalled();
@@ -139,7 +172,7 @@ describe("Google OAuth", () => {
 
   it("does not enable the pinned production domain on a preview deployment", async () => {
     vi.stubEnv("VERCEL_ENV", "preview");
-    expect((await start({ target: production, origin: production, headers: navigation })).status).toBe(403);
+    expect((await start({ target: production, origin: production, headers: navigation })).headers.get("location")).toBe("/login?auth_error=google_start_failed");
     expect((await finish("code=valid-code", "a".repeat(32) + ":/dashboard", production)).headers.get("location")).toBe("/login?auth_error=google_unavailable");
     expect(writes).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
