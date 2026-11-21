@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { authCookieOptions } from "./auth-cookies";
 import { getSupabasePublicConfig } from "./config";
 
 export async function createClient(oauth?: { secure: boolean }) {
@@ -14,9 +15,7 @@ export async function createClient(oauth?: { secure: boolean }) {
       setAll(cookiesToSet) {
         try {
           cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, oauth && /-code-verifier(?:\.\d+)?$/.test(name)
-              ? { ...options, httpOnly: true, secure: oauth.secure, maxAge: options.maxAge === 0 ? 0 : 600 }
-              : options),
+            cookieStore.set(name, value, authCookieOptions(name, options, oauth)),
           );
         } catch (error) {
           if (oauth) throw error;
