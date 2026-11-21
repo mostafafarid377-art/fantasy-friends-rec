@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SquadScreen } from "@/components/SquadScreen";
 import { AppProvider } from "@/components/LeagueContext";
 import { AppShell } from "@/components/AppShell";
@@ -61,7 +61,7 @@ function fixture() {
       putNext(leagueId, body);
       if (!data.previous) return Response.json({ error: "No previous saved lineup" }, { status: 409 });
       const saved = { revision: "2026-11-19T08:00:01.000001+00:00", lineup: { ...data.previous.lineup, formation: body.formation, captainId: body.captainId, viceId: body.viceId,
-        players: body.entries.map((e: { id: string; slot: string; order: number }) => ({ ...data.previous?.lineup.players.find((p) => p.id === e.id), ...e })) } };
+        players: body.entries.map((e: { id: string; slot: string; order: number }) => ({ ...pool.find((p) => p.id === e.id), name: pool.find((p) => p.id === e.id)?.fullName, ...e })) } };
       nextLineups.set(leagueId, { ...data, ...(data.match && body.matchId === null ? { preparation: saved } : { saved }) });
       return Response.json({ matchId: body.matchId, ...saved });
     }
@@ -469,6 +469,7 @@ it.each([false, true])("prepares a player swap with no future fixture (locked fi
     entries: expect.arrayContaining([{ id: entries[5].id, slot: "starter", order: 0 }]) }));
   expect(put).not.toHaveBeenCalled();
   click("Edit Squad");
+  fireEvent.click(screen.getAllByRole("button", { name: "Cancel" })[0]);
   expect(pitch().getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
   expect(pitch().queryByRole("button", { name: /Zed Keeper/ })).toBeNull();
   page.unmount();
@@ -477,4 +478,84 @@ it.each([false, true])("prepares a player swap with no future fixture (locked fi
   if (hasLockedFixture) click("Prepare next lineup");
   expect(pitch().getByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
   expect(screen.getByText("Prepared for the next fixture")).toBeTruthy();
+});
+
+function nextMatchEditFixture(kind: "scheduled" | "unscheduled" | "locked") {
+  const result = fixture();
+  const entries = [pool[0], pool[4], pool[5], pool[6], pool[8]].map((p, order) => ({ ...p, name: p.fullName,
+    slot: "starter" as const, order }));
+  result.saved.set(a.id, { ...empty(a), players: entries, squad: { id: "default", formation: "1-2-1",
+    captainId: entries[1].id, viceCaptainId: entries[2].id, completedAt: null, updatedAt: "2026-11-18T18:00:00Z" },
+    ...(kind === "locked" ? { deadline: { matchId: "played", title: "Played fixture",
+      kickOff: "2026-11-19T07:00:00Z", serverNow: "2026-11-19T08:00:00Z", locked: true } } : {}) });
+  const previous = { matchId: "previous", title: "Previous fixture", kickOff: "2026-11-18T19:00:00Z",
+    lineup: { players: entries, formation: "1-2-1", captainId: entries[1].id, viceId: entries[2].id } };
+  const match = kind === "scheduled" ? { id: "scheduled", title: "Scheduled fixture", kickOff: "2026-11-19T09:00:00Z", locked: false }
+    : kind === "locked" ? { id: "played", title: "Played fixture", kickOff: "2026-11-19T07:00:00Z", locked: true } : null;
+  result.nextLineups.set(a.id, { serverNow: "2026-11-19T08:00:00Z", previous, saved: null, match, canPrepare: kind !== "scheduled" });
+  return { ...result, entries };
+}
+
+it.each(["scheduled", "unscheduled", "locked"] as const)("saves edits made in My Team only to the next-match draft (%s)", async (kind) => {
+  const { saved, put, nextLineups, putNext } = nextMatchEditFixture(kind);
+  renderInShell(<SquadScreen enableNextMatch />);
+  await waitFor(() => expect((screen.getByRole("button", { name: "Edit squad" }) as HTMLButtonElement).disabled).toBe(false));
+  click("Edit squad");
+  expect(screen.getByRole("heading", { name: "Edit squad" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Next Match Lineup" })).toBeNull();
+  click(/Ada Keeper, GK/);
+  click("Replace player");
+  fireEvent.click(await dialog().findByRole("button", { name: /Zed Keeper/ }));
+  expect(putNext).not.toHaveBeenCalled();
+  expect(put).not.toHaveBeenCalled();
+  fireEvent.click(screen.getAllByRole("button", { name: "Save for next match" })[0]);
+  await screen.findByText("Lineup saved for the next match only. My Squad is unchanged.");
+  expect(put).not.toHaveBeenCalled();
+  expect(putNext).toHaveBeenCalledOnce();
+  expect(putNext).toHaveBeenCalledWith(a.id, expect.objectContaining({ matchId: kind === "scheduled" ? "scheduled" : null,
+    expectedUpdatedAt: null, entries: expect.arrayContaining([{ id: "gk-b", slot: "starter", order: 0 }]) }));
+  expect(screen.getByRole("button", { name: /Ada Keeper, GK/ })).toBeTruthy();
+  expect(saved.get(a.id)?.players[0].id).toBe("gk-a");
+  expect(nextLineups.get(a.id)?.previous?.lineup.players[0].id).toBe("gk-a");
+  click("Next Match");
+  if (kind === "locked") click("Prepare next lineup");
+  const pitch = within(screen.getByRole("region", { name: /football pitch/ }));
+  expect(await pitch.findByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
+  click("Edit Squad");
+  expect(screen.getByRole("button", { name: /Zed Keeper, GK/ })).toBeTruthy();
+  fireEvent.click(screen.getAllByRole("button", { name: "Save for next match" })[0]);
+  await waitFor(() => expect(putNext).toHaveBeenLastCalledWith(a.id, expect.objectContaining({ expectedUpdatedAt: "2026-11-19T08:00:01.000001+00:00" })));
+  await screen.findByText("Lineup saved for the next match only. My Squad is unchanged.");
+  expect(put).not.toHaveBeenCalled();
+});
+
+it("still saves an initial default squad if the manager has no verified lineup", async () => {
+  const { put, putNext } = fixture();
+  renderInShell(<SquadScreen enableNextMatch editInitially />);
+  fireEvent.click(await screen.findByRole("button", { name: "Add GK 1" }));
+  fireEvent.click(await dialog().findByRole("button", { name: /Ada Keeper/ }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]);
+  await screen.findByText("Squad draft saved.");
+  expect(put).toHaveBeenCalledOnce();
+  expect(putNext).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Next Match" })).toBeNull();
+});
+
+it("does not retarget a dirty Edit Squad preparation when a match is scheduled", async () => {
+  const { nextLineups, put, putNext } = nextMatchEditFixture("unscheduled");
+  renderInShell(<SquadScreen enableNextMatch />);
+  await waitFor(() => expect((screen.getByRole("button", { name: "Edit squad" }) as HTMLButtonElement).disabled).toBe(false));
+  click("Edit squad");
+  click(/Ada Keeper, GK/);
+  click("Make captain");
+  nextLineups.set(a.id, { ...nextLineups.get(a.id)!, canPrepare: false,
+    match: { id: "new-fixture", title: "New fixture", kickOff: "2026-11-19T09:00:00Z", locked: false } });
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  await screen.findByText(/next-match target has changed or locked/);
+  for (const button of screen.getAllByRole<HTMLButtonElement>("button", { name: "Save for next match" })) {
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+  }
+  expect(put).not.toHaveBeenCalled();
+  expect(putNext).not.toHaveBeenCalled();
 });
