@@ -27,7 +27,7 @@ const schema = z
 
 type Values = z.infer<typeof schema>;
 
-export default function SignupForm({ next, googleEnabled }: { next: string; googleEnabled: boolean }) {
+export default function SignupForm({ next, googleStartToken }: { next: string; googleStartToken: string | null }) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const [devLink, setDevLink] = useState<string | null>(null);
@@ -95,7 +95,7 @@ export default function SignupForm({ next, googleEnabled }: { next: string; goog
         .
       </p>
 
-      {googleEnabled && !verificationSent && !devLink && <GoogleSignIn next={next} />}
+      {googleStartToken && !verificationSent && !devLink && <GoogleSignIn next={next} startToken={googleStartToken} />}
       {verificationSent ? (
         <div className="mt-8 rounded-xl border border-green/40 bg-green/8 p-5">
           <div className="flex items-center gap-2.5">
@@ -125,7 +125,7 @@ export default function SignupForm({ next, googleEnabled }: { next: string; goog
           </a>
         </div>
       ) : (
-        <form onSubmit={handleSubmit(onSubmit)} className={`${googleEnabled ? "mt-5" : "mt-8"} space-y-5`} noValidate>
+        <form onSubmit={handleSubmit(onSubmit)} className={`${googleStartToken ? "mt-5" : "mt-8"} space-y-5`} noValidate>
           {serverError && (
             <div className="rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3 text-sm text-chalk">
               {serverError}

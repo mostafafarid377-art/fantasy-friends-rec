@@ -96,3 +96,37 @@ it("does not resume a revoked session just because a cookie remains", async () =
   upstream.mockImplementation(async () => Response.json({ code: "session_not_found", message: "Session ended" }, { status: 403 }));
   expect((await navigate("/login")).headers.get("location")).toBeNull();
 });
+
+it("opens an old shared homepage link even with a malformed session cookie", async () => {
+  const key = "sb-example-project-auth-token";
+  const options = { maxAge: 86400 };
+  browser.set(`${key}.0`, { value: "base64-not%21", options });
+  browser.set(`${key}.1`, { value: "valid", options });
+  browser.set("unrelated", { value: "keep", options });
+  const response = await navigate("/");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("location")).toBeNull();
+  expect(response.cookies.get(`${key}.0`)?.maxAge).toBe(0);
+  expect(response.cookies.get(`${key}.1`)?.maxAge).toBe(0);
+  expect(response.cookies.get("unrelated")).toBeUndefined();
+  expect(response.headers.get("x-middleware-request-cookie")).toBe("unrelated=keep");
+  expect(upstream).not.toHaveBeenCalled();
+});
+
+it("can sign in again directly when the browser sends an unreadable session cookie", async () => {
+  const key = "sb-example-project-auth-token";
+  browser.set(key, { value: "base64-!", options: { maxAge: 86400 } });
+  expect((await signIn()).status).toBe(200);
+  expect(browser.get(key)?.options.maxAge).toBeGreaterThan(86400);
+  expect((await navigate("/")).headers.get("location")).toBe("/dashboard");
+});
+
+it("keeps readable cookies during a temporary Auth outage and lets the homepage load", async () => {
+  expect((await signIn()).status).toBe(200);
+  upstream.mockResolvedValueOnce(Response.json({ message: "Unavailable" }, { status: 503 }));
+  const response = await navigate("/");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("location")).toBeNull();
+  expect(response.cookies.getAll()).toEqual([]);
+  expect((await navigate("/")).headers.get("location")).toBe("/dashboard");
+});

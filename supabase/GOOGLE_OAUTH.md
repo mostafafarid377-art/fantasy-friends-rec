@@ -72,13 +72,13 @@ attempt in that browser).
 
 1. Open `https://fantasy-friends-rec.vercel.app/login?next=%2Fteam` directly in
    a browser tab and enable **Preserve log** in DevTools → Network.
-2. Click **Continue with Google**. The form sends a same-origin, URL-encoded
-   `POST /api/auth/google`. It does not need an existing session, a client-side
-   PKCE verifier, or a hidden CSRF token. The endpoint validates the request
-   before issuing PKCE cookies. An exact `Origin` is accepted; if the browser
-   sends no origin or `Origin: null`, it must also send `Sec-Fetch-Site:
-   same-origin`, `Sec-Fetch-Mode: navigate`, and `Sec-Fetch-Dest: document`.
-   Cross-site, same-site (different origin), or unproven requests return 403.
+2. Click **Continue with Google**. The browser submits a regular URL-encoded
+   `POST /api/auth/google`. The form includes a random token that must match a
+   host-only, HttpOnly cookie issued on the sign-in page. A browser may omit
+   `Origin` and Fetch Metadata; an explicitly foreign origin, an unrecognized
+   host, or a missing/mismatched token cannot start PKCE. If the app returns to
+   sign-in, reload the page in a top-level browser tab with first-party cookies
+   enabled. Do not share the form token or cookie values.
 3. Expect a **303** to Supabase `/auth/v1/authorize`, then Google's chooser.
    The `redirect_to` parameter should be exactly
    `https://fantasy-friends-rec.vercel.app/auth/callback/google`. In the initiation

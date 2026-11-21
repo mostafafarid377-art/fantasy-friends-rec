@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { createHash } from "node:crypto";
 import { OPTIONS, POST } from "@/app/api/auth/google/route";
-import { GOOGLE_START_HEADER } from "@/lib/google-sign-in";
+import { GOOGLE_START_FIELD } from "@/lib/google-sign-in";
+import { googleStartCookieName } from "@/lib/supabase/google-oauth";
+import { proxy } from "@/proxy";
 import { GET as callback } from "@/app/auth/callback/google/route";
 import { GET as emailCallback } from "@/app/auth/callback/route";
 import { safeAuthPath } from "@/lib/auth-redirect";
@@ -47,13 +49,15 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 let pendingCookie: string | undefined;
-const start = async ({ next = returnTo, origin = app, target = app, headers = {} }: {
-  next?: string; origin?: string | null; target?: string; headers?: Record<string, string>;
+const formNonce = "a".repeat(64);
+const start = async ({ next = returnTo, origin = app, target = app, headers = {}, token = formNonce, cookie = formNonce }: {
+  next?: string; origin?: string | null; target?: string; headers?: Record<string, string>; token?: string | null; cookie?: string | null;
 } = {}) => {
   const res = await POST(new NextRequest("http://internal:3000/api/auth/google", {
     method: "POST",
-    headers: { host: new URL(target).host, ...(origin === null ? {} : { origin }), "x-forwarded-host": "untrusted.example.test", ...headers },
-    body: new URLSearchParams({ next }),
+    headers: { host: new URL(target).host, ...(origin === null ? {} : { origin }), "x-forwarded-host": "untrusted.example.test",
+      ...(cookie === null ? {} : { cookie: `${googleStartCookieName(target.startsWith("https:"))}=${cookie}` }), ...headers },
+    body: new URLSearchParams({ next, ...(token === null ? {} : { [GOOGLE_START_FIELD]: token }) }),
   }));
   pendingCookie = res.cookies.get("ff-google-flow")?.value;
   return res;
@@ -81,7 +85,7 @@ describe("Google OAuth", () => {
 
   it("refuses cross-origin and unconfigured starts", async () => {
     expect((await start({ origin: "https://untrusted.example.test" })).headers.get("location")).toBe("/login?auth_error=google_start_failed");
-    expect((await start({ origin: null })).headers.get("location")).toBe("/login?auth_error=google_start_failed");
+    expect((await start({ origin: null, token: null })).headers.get("location")).toContain("/login?auth_error=google_start_failed");
     vi.stubEnv("GOOGLE_OAUTH_APP_ORIGIN", "http://fantasy.example.test");
     expect((await start()).headers.get("location")).toBe("/login?auth_error=google_unavailable");
     expect(writes).not.toHaveBeenCalled();
@@ -108,12 +112,11 @@ describe("Google OAuth", () => {
     expect(new URL(res.headers.get("location")!).searchParams.get("redirect_to")).toBe(`${production}${callbackPath}`);
   });
 
-  it.each([null, "null"])("starts from a same-origin fetch with Origin %j and no Fetch Metadata headers", async (origin) => {
-    const res = await start({ origin, headers: { [GOOGLE_START_HEADER]: "1" } });
-    expect(res.status).toBe(200);
+  it.each([null, "null"])("starts a native form with Origin %j and no Fetch Metadata when the form token matches", async (origin) => {
+    const res = await start({ origin });
+    expect(res.status).toBe(303);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(res.headers.get("access-control-allow-origin")).toBeNull();
-    const authorize = new URL((await res.json()).location);
+    const authorize = new URL(res.headers.get("location")!);
     expect(authorize.origin + authorize.pathname).toBe(`${project}/auth/v1/authorize`);
     expect(authorize.searchParams.get("redirect_to")).toBe(`${app}${callbackPath}`);
     expect(authorize.searchParams.get("code_challenge_method")).toBe("s256");
@@ -121,21 +124,32 @@ describe("Google OAuth", () => {
     expect((await finish()).headers.get("location")).toBe(returnTo);
   });
 
-  it("rejects CORS preflights and incompatible Origin, Fetch Metadata, and target host even with the custom header", async () => {
+  it("mints a private token for login and signup and forwards it to the renderer and browser", async () => {
+    const name = googleStartCookieName(true);
+    const signIn = await proxy(new NextRequest(`${app}/login`));
+    expect(signIn.headers.get("cache-control")).toBe("private, no-store");
+    const issued = signIn.cookies.get(name)!;
+    expect(issued).toMatchObject({ secure: true, httpOnly: true, sameSite: "lax", path: "/" });
+    expect(issued).not.toHaveProperty("domain");
+    expect(issued.value).toMatch(/^[a-f0-9]{64}$/);
+    expect(signIn.headers.get("x-middleware-request-cookie")).toContain(`${name}=${issued.value}`);
+    const signup = await proxy(new NextRequest(`${app}/signup`, { headers: { cookie: `${name}=${issued.value}` } }));
+    expect(signup.cookies.get(name)).toBeUndefined();
+    expect(signup.headers.get("cache-control")).toBe("private, no-store");
+    const second = await proxy(new NextRequest(`${app}/login`));
+    expect(second.cookies.get(name)?.value).not.toBe(issued.value);
+    expect((await start({ origin: null, token: issued.value, cookie: issued.value })).status).toBe(303);
+    expect((await finish()).headers.get("location")).toBe(returnTo);
+  });
+
+  it("rejects preflights and stops requests with a missing or mismatched token before PKCE", async () => {
     expect(OPTIONS().status).toBe(405);
     expect(OPTIONS().headers.get("access-control-allow-origin")).toBeNull();
-    const rejected: Parameters<typeof start>[0][] = [
-      { origin: "https://outside.example.test" },
-      { target: "https://outside.example.test", origin: null },
-      { origin: "null", headers: { "sec-fetch-site": "cross-site" } },
-      { origin: "null", headers: { "sec-fetch-mode": "cors" } },
-      { origin: "null", headers: { "sec-fetch-dest": "iframe" } },
-    ];
-    for (const input of rejected) {
-      const res = await start({ ...input, headers: { ...input?.headers, [GOOGLE_START_HEADER]: "1" } });
-      expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({ error: "google_start_failed" });
-      expect(res.headers.get("set-cookie")).toBeNull();
+    for (const input of [{ token: null }, { cookie: null }, { token: "b".repeat(64) }, { token: "malformed" }]) {
+      const res = await start({ ...input, headers: navigation });
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toContain("/login?auth_error=google_start_failed");
+      expect(res.cookies.get("ff-google-flow")).toBeUndefined();
     }
     expect(writes).not.toHaveBeenCalled();
   });
@@ -149,18 +163,12 @@ describe("Google OAuth", () => {
     expect(writes).toHaveBeenCalledWith(expect.stringMatching(verifier), expect.any(String), expect.objectContaining({ secure: false }));
   });
 
-  it("returns foreign, unproven and untrusted native requests to sign-in before any PKCE writes", async () => {
+  it("rejects foreign origins and untrusted hosts even if the submitted values match", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
-    const common = { target: production };
     for (const input of [
-      { ...common, origin: "null" },
-      { ...common, origin: null, headers: { ...navigation, "sec-fetch-site": "cross-site" } },
-      { ...common, origin: "null", headers: { ...navigation, "sec-fetch-site": "same-site" } },
-      { ...common, origin: "null", headers: { ...navigation, "sec-fetch-dest": "iframe" } },
-      { ...common, origin: "null", headers: { ...navigation, "sec-fetch-mode": "cors" } },
-      { ...common, origin: app, headers: navigation },
-      { ...common, origin: production, headers: { ...navigation, "sec-fetch-site": "cross-site" } },
-      { target: "https://untrusted.example.test", origin: production, headers: { ...navigation, "x-forwarded-host": new URL(production).host } },
+      { target: production, origin: app },
+      { target: production, origin: "https://untrusted.example.test" },
+      { target: "https://untrusted.example.test", origin: production, headers: { "x-forwarded-host": new URL(production).host } },
     ]) {
       const res = await start(input);
       expect(res.status).toBe(303);
