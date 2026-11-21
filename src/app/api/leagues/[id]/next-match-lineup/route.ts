@@ -33,12 +33,12 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   checkDb(error, "Could not load the next match lineup");
   if (!data?.serverNow) throw new ApiError("Could not confirm the next match lineup", 503);
   const result = data as NextMatchLineup;
-  await decorate(sb, id, [result.previous?.lineup, result.saved?.lineup].filter((l): l is MatchLineup => Boolean(l)));
+  await decorate(sb, id, [result.previous?.lineup, result.saved?.lineup, result.preparation?.lineup].filter((l): l is MatchLineup => Boolean(l)));
   return Response.json(result, noStore);
 });
 
 const input = z.object({
-  matchId: z.string().min(1), formation: z.string().regex(/^[0-6]-[0-6]-[0-6]$/),
+  matchId: z.string().min(1).nullable(), formation: z.string().regex(/^[0-6]-[0-6]-[0-6]$/),
   captainId: z.string().min(1).nullable(), viceId: z.string().min(1).nullable(),
   expectedUpdatedAt: z.iso.datetime({ offset: true }).nullable(),
   entries: z.array(z.object({ id: z.string().min(1), slot: z.enum(["starter", "sub", "reserve"]), order: z.number().int().min(0).max(2147483647) })).max(15),

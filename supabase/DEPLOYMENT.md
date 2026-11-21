@@ -26,6 +26,7 @@ missing forward migrations, in order:
 15. `0019_squad_points_and_real_lineups.sql` (fantasy-only kickoff lock, independent real lineups, individual player history, optional event minute)
 16. `0020_next_match_lineups.sql` (match-specific fantasy lineups and forward-only verified lineup history)
 17. `0021_approval_kickoff.sql` (server-enforced approval cutoff at scheduled kickoff)
+18. `0022_prepare_next_match_lineup.sql` (prepare the next fantasy lineup before scheduling a fixture)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -91,7 +92,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0021_approval_kickoff.sql`. The
+`0001_schema.sql` to `0022_prepare_next_match_lineup.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -345,3 +346,14 @@ checks the current scheduled kickoff against the database clock before writing
 an approval or official points. Submitting for review and rejecting are not
 restricted by this cutoff. Previously approved matches, scores, and lineup
 history are not changed or backfilled.
+
+### Prepare Next Match before scheduling (`0022`)
+
+Apply `0022_prepare_next_match_lineup.sql` after `0021`. The Next Match editor
+can save a separate preparation when no eligible match exists and the manager
+has verified lineup history. Creating a match with a future kickoff moves the
+preparation into that match's lineup in the same transaction. It does not
+move again when a later match is added or when kickoff changes. A locked
+match awaiting approval does not prevent preparation for a future match.
+Backdated/approved fixtures do not consume preparations. No default squads,
+previous lineups, scoring rules, or existing points are changed by the upgrade.

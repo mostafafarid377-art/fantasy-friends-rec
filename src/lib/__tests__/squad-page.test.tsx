@@ -62,7 +62,7 @@ function fixture() {
       if (!data.previous) return Response.json({ error: "No previous saved lineup" }, { status: 409 });
       const saved = { revision: "2026-11-19T08:00:01.000001+00:00", lineup: { ...data.previous.lineup, formation: body.formation, captainId: body.captainId, viceId: body.viceId,
         players: body.entries.map((e: { id: string; slot: string; order: number }) => ({ ...data.previous?.lineup.players.find((p) => p.id === e.id), ...e })) } };
-      nextLineups.set(leagueId, { ...data, saved });
+      nextLineups.set(leagueId, { ...data, ...(data.match && body.matchId === null ? { preparation: saved } : { saved }) });
       return Response.json({ matchId: body.matchId, ...saved });
     }
     if (collection === "player-performance") return Response.json(Object.fromEntries(parsed.searchParams.getAll("player")
@@ -439,4 +439,42 @@ it("gates the real Next Match view on verified history and saves a separate line
   expect(putNext).toHaveBeenCalledWith(a.id, expect.objectContaining({ matchId: "target-match", captainId: entries[0].id, expectedUpdatedAt: null }));
   expect(nextLineups.get(a.id)?.previous?.lineup.captainId).toBe(entries[1].id);
   expect(put).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("prepares a player swap with no future fixture (locked fixture present: %s) and leaves My Squad alone", async (hasLockedFixture) => {
+  const { saved, nextLineups, putNext, put } = fixture();
+  const entries = [pool[0], pool[4], pool[5], pool[6], pool[8], pool[1]].map((p, order) => ({ ...p, name: p.fullName,
+    slot: order === 5 ? "sub" as const : "starter" as const, order: order === 5 ? 0 : order }));
+  saved.set(a.id, { ...empty(a), players: entries });
+  nextLineups.set(a.id, { serverNow: "2026-11-19T08:00:00Z", canPrepare: true, saved: null,
+    match: hasLockedFixture ? { id: "locked-match", title: "Match awaiting result", kickOff: "2026-11-19T07:00:00Z", locked: true } : null,
+    previous: { matchId: "played-match", title: "Previous fixture", kickOff: "2026-11-18T19:00:00Z",
+      lineup: { players: entries, formation: "1-2-1", captainId: entries[1].id, viceId: entries[2].id } } });
+  const page = renderInShell(<SquadScreen enableNextMatch />);
+  fireEvent.click(await screen.findByRole("button", { name: "Next Match" }));
+  if (hasLockedFixture) {
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    click("Prepare next lineup");
+  }
+  expect(screen.getByRole("heading", { name: "No next match scheduled" })).toBeTruthy();
+  expect(screen.queryByRole("timer")).toBeNull();
+  const pitch = () => within(screen.getByRole("region", { name: /football pitch/ }));
+  fireEvent.click(pitch().getByRole("button", { name: /Ada Keeper/ }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Zed Keeper · Bench" }));
+  expect(pitch().getByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
+  expect(putNext).not.toHaveBeenCalled();
+  click("Save next lineup");
+  await screen.findByText("Lineup prepared. My Squad is unchanged.");
+  expect(putNext).toHaveBeenCalledWith(a.id, expect.objectContaining({ matchId: null, expectedUpdatedAt: null,
+    entries: expect.arrayContaining([{ id: entries[5].id, slot: "starter", order: 0 }]) }));
+  expect(put).not.toHaveBeenCalled();
+  click("Edit Squad");
+  expect(pitch().getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
+  expect(pitch().queryByRole("button", { name: /Zed Keeper/ })).toBeNull();
+  page.unmount();
+  renderInShell(<SquadScreen enableNextMatch />);
+  fireEvent.click(await screen.findByRole("button", { name: "Next Match" }));
+  if (hasLockedFixture) click("Prepare next lineup");
+  expect(pitch().getByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
+  expect(screen.getByText("Prepared for the next fixture")).toBeTruthy();
 });

@@ -447,6 +447,16 @@ export const fantasyMatchLineupDrafts = pgTable("fantasy_match_lineup_drafts", {
 }, (t) => [primaryKey({ columns: [t.matchId, t.profileId] }),
   check("fantasy_match_lineup_drafts_lineup_check", sql`jsonb_typeof(${t.lineup}) = 'object'`)]).enableRLS();
 
+export const fantasyNextLineupPreparations = pgTable("fantasy_next_lineup_preparations", {
+  leagueId: text("league_id").notNull(),
+  profileId: text("profile_id").notNull(),
+  lineup: jsonb("lineup").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (t) => [primaryKey({ columns: [t.leagueId, t.profileId] }),
+  check("fantasy_next_lineup_preparations_lineup_check", sql`jsonb_typeof(${t.lineup}) = 'object'`),
+  foreignKey({ name: "fantasy_next_lineup_preparations_member_fk", columns: [t.leagueId, t.profileId],
+    foreignColumns: [leagueMembers.leagueId, leagueMembers.profileId] }).onDelete("cascade")]).enableRLS();
+
 export const fantasyMatchLineupHistory = pgTable("fantasy_match_lineup_history", {
   matchId: text("match_id").notNull().references(() => realMatches.id, { onDelete: "cascade" }),
   profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
