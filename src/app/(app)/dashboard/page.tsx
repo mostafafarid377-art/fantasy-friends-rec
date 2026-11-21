@@ -25,8 +25,9 @@ import {
 import { Pitch } from "@/components/Pitch";
 import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "@/components/PlayerPerformance";
 import { deriveFormation, FORMATIONS, orderedBench, type LeagueFormat } from "@/lib/domain";
+import type { LiveMatchPoints } from "@/lib/live-points";
 import type { SquadEntry } from "@/lib/squad";
-import { useLeagueContentUpdates } from "@/lib/client/league-updates";
+import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
 
 type DashboardData = {
@@ -45,11 +46,13 @@ type DashboardData = {
     profileId: string;
     rank: number;
     prevRank: number | null;
-    totalPoints: string;
+    totalPoints: number;
     matchesPlayed: number;
     displayName: string;
     teamName: string | null;
   }[];
+  liveMatches?: LiveMatchPoints[];
+  provisional?: boolean;
   myRank: number | null;
   lastGame: { matchId: string; title: string; points: number | null } | null;
   fixtures: { id: string; title: string; gameweek: number; scheduledAt: string | null; status: string }[];
@@ -68,7 +71,7 @@ export default function DashboardPage() {
     [league?.id],
   );
 
-  useLeagueContentUpdates(league?.id, reload);
+  useLiveLeaguePoints(league?.id, reload);
   useEffect(() => {
     const onFocus = () => { void reload(); };
     window.addEventListener("focus", onFocus);
@@ -142,8 +145,9 @@ export default function DashboardPage() {
 
       {/* ---- headline stats ---- */}
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="League rank" value={data.myRank ? `#${data.myRank}` : "—"} accent />
-        <Stat label="Last Game Points" value={data.lastGame?.points == null ? "—" : String(data.lastGame.points)} detail={data.lastGame ? `${data.lastGame.title}${data.lastGame.points == null ? " · No score" : ""}` : "No finalized game yet"} />
+        <Stat label={data.provisional ? "League rank · live" : "League rank"} value={data.myRank ? `#${data.myRank}` : "—"} accent />
+        {data.liveMatches?.[0] ? <Stat label="Live Match Points" value={String(data.liveMatches[0].points)} detail={`${data.liveMatches[0].title} · Provisional`} /> :
+          <Stat label="Last Game Points" value={data.lastGame?.points == null ? "—" : String(data.lastGame.points)} detail={data.lastGame ? `${data.lastGame.title}${data.lastGame.points == null ? " · No score" : ""}` : "No finalized game yet"} />}
         <Stat label="Managers" value={String(data.memberCount)} />
         <Stat label="Squad" value={`${data.squad?.size ?? 0}/${data.league.squadSize}`} />
       </div>
@@ -161,6 +165,7 @@ export default function DashboardPage() {
             </Link>
           </div>
 
+          {data.provisional && <p className="mb-2 text-xs text-card-y">Includes provisional live points</p>}
           {data.standings.length === 0 ? (
             <div className="p-5">
               <EmptyState

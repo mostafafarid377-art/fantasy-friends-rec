@@ -1,3 +1,4 @@
+import type { LiveMatchPoints } from "./live-points";
 import type { SquadDeadline } from "./match-deadline";
 import type { LeagueRules, Position, SquadPlayer } from "./domain";
 import type { playerDto, teamDto } from "./roster";
@@ -17,6 +18,7 @@ export type SquadResponse = {
   deadline?: SquadDeadline;
   recentSubs?: AutoSubReport[];
   lastMatch?: LastSquadMatch | null;
+  liveMatches?: LiveMatchPoints[];
 };
 
 export function filterSquadPool<T extends Pick<PoolPlayer, "fullName" | "position" | "teamId">>(

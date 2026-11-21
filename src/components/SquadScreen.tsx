@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { ArrowDown, ArrowLeftRight, ArrowUp, CalendarDays, Ellipsis, FlaskConical, Plus, Save } from "lucide-react";
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
@@ -12,7 +13,7 @@ import { formatPlayerPoints } from "@/lib/player-performance";
 import { countdown, useKickoffClock } from "@/lib/match-deadline";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from "./ui";
-import { notifyLeagueContentChanged, useLeagueContentUpdates } from "@/lib/client/league-updates";
+import { notifyLeagueContentChanged, useLeagueContentUpdates, useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import {
   canSelectPlayer, normalizeBench, orderedBench, compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
@@ -54,6 +55,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const nextLineup = useApi<NextMatchLineup>(enableNextMatch ? nextRoute : null);
   const [viewNext, setViewNext] = useState(false);
   const [hasOpenedNext, setHasOpenedNext] = useState(false);
+  const [viewDefault, setViewDefault] = useState(false);
   useEffect(() => {
     if (!enableNextMatch) return;
     const refresh = () => { if (document.visibilityState === "visible") void nextLineup.reload(); };
@@ -73,7 +75,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const [notice, setNotice] = useState<string | null>(null);
   const deadline = squad.data?.deadline;
   const remaining = useKickoffClock(deadline?.serverNow, deadline?.kickOff);
-  const hasDeadline = Boolean(deadline);
   const squadLocked = Boolean(deadline?.locked || remaining === 0);
   const nextData = nextLineup.data;
   const nextFixture = nextData?.match;
@@ -96,30 +97,34 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const nextKickoffReached = Boolean(scheduled && nextRemaining === 0);
   useEffect(() => { if (nextKickoffReached) void nextLineup.reload(); }, [nextKickoffReached, nextLineup.reload]);
   useEffect(() => {
-    if (!hasDeadline) return;
-    const refresh = () => { if (document.visibilityState === "visible") void squad.reload(); };
-    const timer = window.setInterval(refresh, 15000);
-    window.addEventListener("focus", refresh);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
-  }, [hasDeadline, squad.reload]);
-  useEffect(() => {
     if (!squadLocked || editsNext || editingNext) return;
     setEdit(null); setInitialMode(false); setPick(null); setMoving(null);
   }, [squadLocked, editsNext, editingNext]);
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
-  const activePlayers = (editing ? (edit ?? nextSeed)?.players : undefined) ?? squad.data?.players ?? [];
-  const lineupScores = useLatestPlayerGames(leagueId, activePlayers.filter((player) => player.slot !== "reserve"));
+  // The last verified match's lineup is independent of both the default
+  // squad and the draft for the upcoming match. Never render either as history.
+  const previous = nextData?.previous;
+  const historical = !editing && !viewDefault ? previous : null;
+  const readOnlyLineup = !editing && Boolean(previous);
+  const activePlayers = (editing ? (edit ?? nextSeed)?.players : historical?.lineup.players) ?? squad.data?.players ?? [];
+  const displayMatch = historical?.matchId ?? (editing && editingNext ? scheduled?.id : undefined);
+  const lineupScores = useLatestPlayerGames(leagueId, activePlayers.filter((player) => player.slot !== "reserve"), displayMatch);
   const inspectedPlayer = activePlayers.find((player) => player.id === playerId && player.slot === "reserve");
   const inspectedScores = useLatestPlayerGames(leagueId, inspectedPlayer && !moving ? [inspectedPlayer] : []);
-  useLeagueContentUpdates(leagueId, squad.reload, false);
+  useLiveLeaguePoints(leagueId, squad.reload, false);
   useLeagueContentUpdates(leagueId, pool.reload, false);
 
   if (squad.error && !squad.data) return <div className="mx-auto max-w-5xl p-5"><ErrorNote message={squad.error} onRetry={() => void squad.reload()} /></div>;
   if (!squad.data) return <div className="mx-auto max-w-5xl space-y-4 p-5"><Skeleton className="h-24" /><Skeleton className="h-80" /></div>;
   const stored = squad.data;
   const showingNext = viewNext && editsNext;
-  const current = (editing ? edit ?? nextSeed : null) ?? snapshot(stored);
+  const current = (editing ? edit ?? nextSeed : historical ? { ...historical.lineup, revision: null } : null) ?? snapshot(stored);
+  const lineupTitle = historical ? "Previous match starting lineup" : editing && editingNext ? "Next match starters"
+    : !editing && enableNextMatch && (previous || stored.lastMatch) ? "Default starting lineup" : "Starting lineup";
+  const latest = lineupScores.data && historical
+    ? Object.fromEntries(Object.entries(lineupScores.data).filter(([, game]) => game.matchId === historical.matchId))
+    : lineupScores.data ?? undefined;
   const { formation, captainId, viceId } = current;
   // Refresh photo presentation without touching the unsaved slot choices or
   // the revision guarding concurrent squad edits.
@@ -141,6 +146,10 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   function begin() {
     if (editingBlocked || saving) return;
     setEdit(edit ?? nextSeed ?? snapshot(stored));
+    if (previous) {
+      setViewDefault(false);
+      setPlayerId(null);
+    }
     setMessage(null);
     setNotice(null);
   }
@@ -148,7 +157,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
     setEdit(null); setInitialMode(false); setMessage(null); setConflict(false); setPick(null); setPlayerId(null); setMoving(null);
   }
   function openPicker(target: PickTarget) {
-    if (editingBlocked || saving) return;
+    if (readOnlyLineup || editingBlocked || saving) return;
     if (!editing) begin();
     setPick(target); setPlayerId(null); setMoving(null);
   }
@@ -236,7 +245,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const benchRow = (p: SquadEntry, label: string) => <button type="button" disabled={saving} onClick={() => setPlayerId(p.id)}
     className="flex min-w-0 flex-1 items-center gap-2 rounded border border-line px-2 py-2 text-left text-chalk hover:border-green">
     <span className="num text-xs text-green">{label}</span><Avatar name={p.name} url={p.photoUrl} size={28} />
-    <span className="min-w-0 flex-1 break-words text-sm">{p.name}{lineupScores.data && <PlayerPointsLabel game={lineupScores.data[p.id]} />}</span><span className="text-xs text-sage">{p.position}</span>
+    <span className="min-w-0 flex-1 break-words text-sm">{p.name}{lineupScores.data && <PlayerPointsLabel game={latest?.[p.id]} />}</span><span className="text-xs text-sage">{p.position}</span>
   </button>;
   const priorityButton = "grid min-h-10 min-w-10 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-40";
   const addStarter = (position: Position) => openPicker({ slot: "starter", position });
@@ -259,6 +268,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
       <PageHeader eyebrow={`${leagueName} · ${rules.format} fantasy`} title={editing ? (editingNext || stored.players.length ? "Edit squad" : "Pick squad") : "My squad"}
         subtitle={editing ? (editingNext ? "Changes save for the next match only. Your default squad and previous lineups won’t change."
           : "Tap a pitch slot to pick, or tap a player for their performance and squad actions. Changes only count after saving.")
+          : historical ? "View the lineup saved for your previous match. Edit Squad only changes the next match."
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
         actions={<>{pickActions}{nextLineup.data?.previous && <Button variant="outline" onClick={() => { setHasOpenedNext(true); setViewNext(true); setPlayerId(null); setPick(null); setMoving(null); }}><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button>}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
       {enableNextMatch && nextLineup.error && <div className="mb-4"><ErrorNote message={nextLineup.error} onRetry={() => void nextLineup.reload()} /></div>}
@@ -273,6 +283,16 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
         {conflict && <Button variant="outline" className="mt-2" onClick={() => { cancel(); void squad.reload(); if (enableNextMatch) void nextLineup.reload(); }}>Discard changes & reload</Button>}
       </div>}
       {notice && editing && <p role="status" className="mb-4 text-sm text-card-y">{notice}</p>}
+      {!!stored.liveMatches?.length && <section aria-labelledby="live-squad-points" className="mb-5">
+        <Panel className="p-4">
+          <h2 id="live-squad-points" className="text-xl text-chalk">Live match points</h2>
+          <p className="mt-1 text-xs text-sage">Provisional fantasy totals until each match is approved.</p>
+          <ul className="mt-2 space-y-1" aria-live="polite">{stored.liveMatches.map((game) => <li key={game.matchId} className="flex justify-between gap-3 text-sm">
+            <Link className="text-chalk hover:underline" href={`/matches/${game.matchId}`}>{game.title}</Link>
+            <span className="num shrink-0 font-bold text-card-y">{formatPlayerPoints(game.points)}</span>
+          </li>)}</ul>
+        </Panel>
+      </section>}
       <section aria-labelledby="last-squad-match" className="mb-5">
         <Panel className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 p-4">
           <div className="min-w-0 break-words">
@@ -288,27 +308,34 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
         </Panel>
       </section>
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-        <section className="mx-auto w-full max-w-[470px] space-y-3" aria-label="Starting lineup">
+        <section className="mx-auto w-full max-w-[470px] space-y-3" aria-label={lineupTitle}>
           <div className="flex min-h-10 flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2"><h2 className="text-xl text-chalk">Starting lineup</h2><Badge tone="live">{players.filter((p) => p.slot === "starter").length}/{rules.starters}</Badge></div>
+            <div className="flex items-center gap-2"><h2 className="text-xl text-chalk">{lineupTitle}</h2><Badge tone="live">{players.filter((p) => p.slot === "starter").length}/{rules.starters}</Badge></div>
             {editing ? <select aria-label="Formation" className={fieldClass} value={shape.label} disabled={editingBlocked || saving || !canUse.length}
               onChange={(e) => { setEdit({ ...current, formation: e.target.value }); setMessage(null); }}>
               {!canUse.length && <option value={shape.label}>{shape.label}</option>}
               {canUse.map((f) => <option key={f.label}>{f.label}</option>)}
             </select> : <Badge>{shape.label}</Badge>}
           </div>
+          {historical && <p className="text-sm text-sage"><Link className="underline-offset-4 hover:underline" href={`/matches/${historical.matchId}`}>{historical.title}</Link> · <time dateTime={historical.kickOff}>{MATCH_DATE.format(new Date(historical.kickOff))}</time> · Read-only</p>}
+          {!editing && enableNextMatch && nextData && !nextLineup.error && stored.lastMatch && previous?.matchId !== stored.lastMatch.matchId &&
+            <p className="text-sm text-sage">No verified lineup saved for {stored.lastMatch.title}.</p>}
+          {previous && !editing && <Button size="sm" variant="outline" onClick={() => { setViewDefault(!viewDefault); setPlayerId(null); }}>
+            {historical ? "View default squad" : "View previous lineup"}
+          </Button>}
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
-            disabled={saving} latest={lineupScores.data ?? undefined} onAdd={editingBlocked ? undefined : addStarter} onSelect={setPlayerId} />
+            disabled={saving} latest={latest} onAdd={readOnlyLineup || editingBlocked ? undefined : addStarter} onSelect={setPlayerId} />
           {!!unplaced.length && <Panel className="p-3">
-            <p className="mb-2 text-sm text-card-y">Some saved starters no longer fit. Move, replace or remove them to repair the lineup.</p>
+            <p className="mb-2 text-sm text-card-y">{historical ? "Some starters from this match could not be placed on the pitch." : "Some saved starters no longer fit. Move, replace or remove them to repair the lineup."}</p>
             {unplaced.map((p) => <Button key={p.id} variant="ghost" onClick={() => setPlayerId(p.id)}>{p.name} · {p.position}</Button>)}
           </Panel>}
           {caps.sub > 0 && <Panel className="p-3">
             <h2 className="mb-2 text-lg text-chalk">Bench <span className="num text-sm text-sage">{bench.length}/{caps.sub}</span></h2>
             <p className="mb-2 text-xs text-sage">Goalkeeper first. Outfield priorities are checked from 1 down.</p>
+            {readOnlyLineup && !bench.length && <p className="text-sm text-sage">No substitutes in this lineup.</p>}
             <ol className="space-y-2">
-              <li className="flex">{keeper ? benchRow(keeper, "GK") : <Button size="sm" variant="outline" disabled={editingBlocked || saving || players.length >= rules.squadSize || bench.length >= caps.sub}
-                onClick={() => openPicker({ slot: "sub", position: "GK" })}>Pick bench goalkeeper</Button>}</li>
+              {(keeper || !readOnlyLineup) && <li className="flex">{keeper ? benchRow(keeper, "GK") : <Button size="sm" variant="outline" disabled={editingBlocked || saving || players.length >= rules.squadSize || bench.length >= caps.sub}
+                onClick={() => openPicker({ slot: "sub", position: "GK" })}>Pick bench goalkeeper</Button>}</li>}
               {bench.filter((p) => p.position === "GK" && p !== keeper).map((p) => <li key={p.id} className="flex">{benchRow(p, "Extra GK")}</li>)}
               {outfield.map((p, index) => <li key={p.id} className="flex items-stretch gap-1">
                 {benchRow(p, `${index + 1}`)}
@@ -316,7 +343,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
                   <button type="button" className={priorityButton} aria-label={`Lower ${p.name} priority`} disabled={saving || index === outfield.length - 1} onClick={() => shiftBench(index, 1)}><ArrowDown aria-hidden="true" className="h-4 w-4" /></button></>}
               </li>)}
             </ol>
-            {outfield.length < caps.sub - 1 && bench.length < caps.sub && players.length < rules.squadSize && <Button size="sm" variant="outline" className="mt-2" disabled={editingBlocked || saving}
+            {!readOnlyLineup && outfield.length < caps.sub - 1 && bench.length < caps.sub && players.length < rules.squadSize && <Button size="sm" variant="outline" className="mt-2" disabled={editingBlocked || saving}
               onClick={() => openPicker({ slot: "sub" })}><Plus className="h-4 w-4" /> Add outfield sub</Button>}
           </Panel>}
         </section>
@@ -324,19 +351,19 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
           <Panel className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-xl text-chalk">Squad <span className="num text-green">{players.length}/{rules.squadSize}</span></h2>
-              <Badge tone={savedComplete && !editing ? "live" : "neutral"}>{editing ? "Editing" : savedComplete ? "Complete" : players.length ? "Saved draft" : "Not picked"}</Badge>
+              <Badge tone={savedComplete && !editing ? "live" : "neutral"}>{historical ? "Read-only" : editing ? "Editing" : savedComplete ? "Complete" : players.length ? "Saved draft" : "Not picked"}</Badge>
             </div>
             <p className="mt-2 text-sm text-sage">A saved captain who plays scores double for your fantasy squad. Individual points stay unchanged; the captain contribution is shown separately. {stored.vicePolicy === "auto_captain" ? "If your captain doesn't play, an eligible vice-captain takes over." : "This league does not auto-promote the vice-captain."}</p>
             <p className="mt-2 text-sm text-chalk">Captain: {players.find((p) => p.id === captainId)?.name ?? "Not set"} · Vice: {players.find((p) => p.id === viceId)?.name ?? "Not set"}</p>
-            {archived.length > 0 && <p className="mt-2 text-sm text-card-y">Replace or remove archived players before saving: {archived.map((p) => p.name).join(", ")}.</p>}
-            {!validation.ok && <ul className="mt-2 space-y-1 text-sm text-card-y">{validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>}
+            {!historical && archived.length > 0 && <p className="mt-2 text-sm text-card-y">Replace or remove archived players before saving: {archived.map((p) => p.name).join(", ")}.</p>}
+            {!historical && !validation.ok && <ul className="mt-2 space-y-1 text-sm text-card-y">{validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>}
           </Panel>
           {(["reserve"] as const).filter((slot) => caps[slot] > 0 || players.some((p) => p.slot === slot)).map((slot) => {
             const group = players.filter((p) => p.slot === slot).sort((a,b) => a.order-b.order || a.id.localeCompare(b.id));
             return <Panel key={slot} className="p-4">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="text-xl text-chalk">{LABEL[slot]} <span className="num text-sm text-sage">{group.length}/{caps[slot]}</span></h2>
-                {group.length < caps[slot] && players.length < rules.squadSize && <Button size="sm" variant="outline" disabled={editingBlocked || saving}
+                {!readOnlyLineup && group.length < caps[slot] && players.length < rules.squadSize && <Button size="sm" variant="outline" disabled={editingBlocked || saving}
                   onClick={() => openPicker({ slot })}><Plus className="h-4 w-4" /> Add reserve</Button>}
               </div>
               {group.length ? <ul className="space-y-1">{group.map((p) => <li key={p.id}><button type="button" onClick={() => setPlayerId(p.id)} disabled={saving}

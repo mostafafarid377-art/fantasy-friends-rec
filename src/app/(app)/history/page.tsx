@@ -8,13 +8,15 @@ import { History as HistoryIcon } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Badge, EmptyState, ErrorNote, Panel, Skeleton, Slate } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
+import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
 
 type Data = {
+  provisional?: boolean;
   standings: {
     profileId: string;
     rank: number;
-    totalPoints: string;
+    totalPoints: number;
     matchesPlayed: number;
     displayName: string;
     form: unknown;
@@ -45,6 +47,7 @@ export default function HistoryPage() {
     [league?.id],
   );
 
+  useLiveLeaguePoints(league?.id, reload);
   if (leagueLoading || (loading && !data))
     return (
       <div className="mx-auto max-w-4xl px-4 py-6 md:px-8">
@@ -82,8 +85,8 @@ export default function HistoryPage() {
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Box label="Matches played" value={String(me?.matchesPlayed ?? 0)} />
-        <Box label="Total points" value={String(Math.round(Number(me?.totalPoints ?? 0)))} />
-        <Box label="Current rank" value={me ? `#${me.rank}` : "—"} />
+        <Box label={data.provisional ? "Total points · live" : "Total points"} value={String(Math.round(Number(me?.totalPoints ?? 0)))} />
+        <Box label={data.provisional ? "Current rank · live" : "Current rank"} value={me ? `#${me.rank}` : "—"} />
         <Box label="Approved matches" value={String(matches.data?.total ?? 0)} />
       </div>
 
@@ -157,7 +160,7 @@ export default function HistoryPage() {
       </div>
 
       <Panel className="mt-5 p-4">
-        <Slate className="mb-3 block">Standings snapshot</Slate>
+        <Slate className="mb-3 block">{data.provisional ? "Standings snapshot · provisional" : "Standings snapshot"}</Slate>
         <ul className="divide-y divide-line-soft">
           {data.standings.map((s) => (
             <li key={s.profileId} className="flex items-center gap-3 py-2.5">

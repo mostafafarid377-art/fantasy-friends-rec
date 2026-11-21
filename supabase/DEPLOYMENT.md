@@ -27,6 +27,7 @@ missing forward migrations, in order:
 16. `0020_next_match_lineups.sql` (match-specific fantasy lineups and forward-only verified lineup history)
 17. `0021_approval_kickoff.sql` (server-enforced approval cutoff at scheduled kickoff)
 18. `0022_prepare_next_match_lineup.sql` (prepare the next fantasy lineup before scheduling a fixture)
+19. `0023_live_event_points.sql` (provisional scoring and standings from unapproved match events)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -92,7 +93,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0022_prepare_next_match_lineup.sql`. The
+`0001_schema.sql` to `0023_live_event_points.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -357,3 +358,14 @@ move again when a later match is added or when kickoff changes. A locked
 match awaiting approval does not prevent preparation for a future match.
 Backdated/approved fixtures do not consume preparations. No default squads,
 previous lineups, scoring rules, or existing points are changed by the upgrade.
+
+### Live event points (`0023`)
+
+Apply `0023_live_event_points.sql` before deploying the app version that calls
+its RPCs. It adds read-only projections, with no backfill or change to official
+points, approval, or saved lineup history. Saved scoring events and statistics
+for participants count immediately under approved scoring rules. Live fantasy
+points use the fixture's saved lineup or the default squad and the league's
+captain/vice policy. Appearance, result and bonus points and automatic fantasy
+substitutions are finalized on approval. An approved match is excluded from
+the live projection and is shown only from the official ledger.

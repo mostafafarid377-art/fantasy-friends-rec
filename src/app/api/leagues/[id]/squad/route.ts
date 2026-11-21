@@ -6,6 +6,8 @@ import { ApiError, handler, leagueRules, requireMember, checkDb } from "@/lib/se
 import { normalizeBench, validateSquad, validateSquadDraft, type Position } from "@/lib/domain";
 import type { AutoSubReport, SquadEntry, SquadResponse } from "@/lib/squad";
 
+import type { LiveMatchPoints } from "@/lib/live-points";
+
 type Ctx = { params: Promise<{ id: string }> };
 export const dynamic = "force-dynamic";
 
@@ -31,16 +33,18 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const sb = await getSupabase();
   const membership = await requireMember(id, sb);
   // Parent revision and its entries are read in the same snapshot.
-  const [{ data, error }, recent, deadline, lastGame] = await Promise.all([
+  const [{ data, error }, recent, deadline, lastGame, liveGames] = await Promise.all([
     sb.from("fantasy_squads").select(`${SQUAD},fantasy_squad_players(player_id,slot,order,players(${PLAYER}))`)
       .eq("league_id", id).eq("profile_id", membership.profileId).maybeSingle(),
     sb.rpc("recent_fantasy_substitutions", { p_league: id }),
     sb.rpc("ff_squad_deadline", { p_league: id }),
     sb.rpc("last_game_points", { p_league: id }),
+    sb.rpc("ff_my_live_match_points", { p_league: id }),
   ]);
   checkDb(deadline.error, "Could not load the squad deadline");
   checkDb(recent.error, "Could not load automatic substitutions");
   checkDb(lastGame.error, "Could not load last match points");
+  checkDb(liveGames.error, "Could not load live match points");
   checkDb(error, "Could not load your squad");
   const row = data as unknown as (SavedSquad & { fantasy_squad_players: {
     player_id: string; slot: Entry["slot"]; order: number; players: PlayerRow | null }[] }) | null;
@@ -56,7 +60,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const lastMatch = game ? { matchId: game.matchId, title: game.title, kickOff: match?.data?.kick_off ?? null,
     points: game.points == null ? null : Number(game.points) } : null;
   return Response.json({ squad: row ? squadDto(row) : null, players, rules: leagueRules(membership.league),
-    vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[], deadline: deadline.data, lastMatch
+    vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[], deadline: deadline.data, lastMatch, liveMatches: ((liveGames.data ?? []) as LiveMatchPoints[]).filter((m) => m.matchId !== lastMatch?.matchId)
   } satisfies SquadResponse, { headers: { "Cache-Control": "private, no-store" } });
 });
 

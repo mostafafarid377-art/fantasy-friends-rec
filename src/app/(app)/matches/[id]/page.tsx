@@ -29,7 +29,7 @@ import {
   Toast,
 } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
-import { notifyLeagueContentChanged } from "@/lib/client/league-updates";
+import { notifyLeagueContentChanged, useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { api, assertConfirmed, useApi } from "@/lib/client/api";
 import { lineupPayload, lineupSelection, type SavedLineupEntry, type LineupSelection } from "@/lib/match-lineup";
 import { canSelectPlayer, validateLineup, EVENT_TYPES, type LeagueRules, type Position } from "@/lib/domain";
@@ -77,6 +77,7 @@ type MatchData = {
   rules: LeagueRules;
   role: string;
   canOrganize: boolean;
+  livePlayerPoints?: { playerId: string; points: number }[];
   canEditEvents: boolean;
   canApprove: boolean;
   lineups: (LineupEntry & { matchPosition?: string; player: Player | null })[];
@@ -167,6 +168,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const [statError, setStatError] = useState<string | null>(null);
   const savingStatistic = useRef(false);
   const statisticsDirty = statCount !== null;
+  useLiveLeaguePoints(tab === "events" && !busy && !statisticsDirty ? data?.match.leagueId : undefined, reload, false);
   const resetStatistic = () => { setStatCount(null); setStatReason(""); setStatError(null); };
   useEffect(() => { resetStatistic(); }, [data?.match.id, data?.match.version]);
 
@@ -282,6 +284,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
       setEvNote("");
       assertConfirmed(saved?.event, "The event could not be confirmed");
       notify("Event recorded");
+      notifyLeagueContentChanged(data.match.leagueId);
       reload();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not record the event", "error");
@@ -314,6 +317,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
       setSubMinute("");
       assertConfirmed(saved?.substitution, "The substitution could not be confirmed");
       notify("Substitution recorded");
+      if (data) notifyLeagueContentChanged(data.match.leagueId);
       reload();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not record the substitution", "error");
@@ -325,8 +329,10 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const deleteEvent = async (eventId: string) => {
     if (!matchId) return;
     try {
-      await api(`/api/matches/${matchId}/events?eventId=${eventId}`, { method: "DELETE" });
+      const receipt = await api<{ deleted: boolean }>(`/api/matches/${matchId}/events?eventId=${encodeURIComponent(eventId)}`, { method: "DELETE" });
+      if (receipt?.deleted !== true) throw new Error("The event removal could not be confirmed");
       notify("Event removed");
+      if (data) notifyLeagueContentChanged(data.match.leagueId);
       reload();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not remove the event", "error");
@@ -426,7 +432,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
         method: "PUT", body: { version: m.version, stats, ...(correctingStatistics ? { reason: statReason.trim() } : {}) },
       });
       if (receipt?.matchId !== m.id || receipt.version !== m.version + 1) throw new Error("The save could not be confirmed. Reload before retrying.");
-      if (correctingStatistics) notifyLeagueContentChanged(m.leagueId);
+      notifyLeagueContentChanged(m.leagueId);
       await reload();
       resetStatistic();
     } catch (error) {
@@ -495,7 +501,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
               decision. {m.homeScore == null || m.awayScore == null ? "Send this match back so both scores can be recorded."
                 : timeToKickoff == null ? "Waiting to confirm the scheduled kickoff."
                   : !started ? "You can approve this match once its scheduled kickoff time has been reached."
-                    : "Approval calculates fantasy points and rebuilds the table."}
+                    : "Approval finalizes provisional points and records the official result."}
             </span>
             <Button variant="primary" onClick={() => flow("approve")} loading={busy} disabled={!started || m.homeScore == null || m.awayScore == null}>
               <CheckCircle2 className="h-4 w-4" /> Approve
@@ -845,9 +851,14 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
               </ul>
             )}
 
-            <p className="mt-4 border-t border-line pt-3 text-[12.5px] leading-relaxed text-sage-dim">
-              Event points are calculated when the result is approved. Clean sheets come from the recorded final score and real participation, not a manual event.
-            </p>
+            {m.status !== "approved" && <section aria-label="Live player points" className="mt-4 border-t border-line pt-3">
+              <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-chalk">Live player points</h3><Badge tone="warn">Provisional</Badge></div>
+              <p className="mt-1 text-xs text-sage">Scoring events count for recorded participants as soon as they’re saved. Final-result points and bonuses are added on approval.</p>
+              {!!data.livePlayerPoints?.length && <ul className="mt-2 space-y-1" aria-live="polite">{data.livePlayerPoints.map((p) => <li key={p.playerId} className="flex justify-between gap-3 text-sm text-chalk">
+                <span>{data.lineups.find((l) => l.playerId === p.playerId)?.player?.fullName ?? "Player"}</span>
+                <span className="num text-card-y">{p.points} pts</span>
+              </li>)}</ul>}
+            </section>}
           </Panel>
         </div>
       )}

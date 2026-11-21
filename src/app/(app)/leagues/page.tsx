@@ -17,7 +17,8 @@ import {
   Toast,
 } from "@/components/ui";
 import { useLeague } from "@/components/LeagueContext";
-import { api, assertConfirmed } from "@/lib/client/api";
+import { useLiveLeaguePoints } from "@/lib/client/league-updates";
+import { api, assertConfirmed, useApi } from "@/lib/client/api";
 
 const FORMAT_COPY = {
   "5v5": {
@@ -37,10 +38,14 @@ const FORMAT_COPY = {
 } as const;
 
 export default function LeaguesPage() {
-  const { leagues, loading, refresh, selectLeague, user } = useLeague();
+  const { leagues, league, loading, refresh, selectLeague, user } = useLeague();
   const router = useRouter();
 
   const [mode, setMode] = useState<"list" | "create" | "join">("list");
+  const leaguesData = useApi<{ leagues: { id: string; rank: number | null; provisional: boolean }[] }>(
+    mode === "list" && leagues.length ? "/api/leagues" : null, [leagues.length]);
+  useLiveLeaguePoints(mode === "list" ? league?.id : undefined, leaguesData.reload);
+  const standings = new Map(leaguesData.data?.leagues.map((s) => [s.id, s]));
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [format, setFormat] = useState<"5v5" | "7v7">("5v5");
@@ -254,7 +259,9 @@ export default function LeaguesPage() {
                   <Badge tone={l.role === "leader" ? "info" : "neutral"}>
                     {l.role === "leader" ? "League leader" : l.role}
                   </Badge>
-                  {l.rank && <span className="num hidden text-[15px] text-sage sm:block">#{l.rank}</span>}
+                  {(standings.get(l.id)?.rank ?? l.rank) && <span className="num hidden text-[15px] text-sage sm:block">
+                    #{standings.get(l.id)?.rank ?? l.rank}{standings.get(l.id)?.provisional && <span className="ml-1 text-xs text-card-y">Live</span>}
+                  </span>}
                   <ArrowRight className="h-4 w-4 shrink-0 text-sage-dim transition-transform group-hover:translate-x-1 group-hover:text-green" />
                 </Link>
               </li>

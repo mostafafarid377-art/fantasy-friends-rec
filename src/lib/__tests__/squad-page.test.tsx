@@ -47,6 +47,7 @@ function fixture() {
   const nextLineups = new Map<string, NextMatchLineup>();
   const putNext = vi.fn();
   const latest: LatestPlayerGames = {};
+  const matchScores = new Map<string, LatestPlayerGames>();
   const histories = new Map<string, PlayerPerformance>();
   const historyError = new Set<string>();
   const older = new Map<string, PlayerPerformance>();
@@ -65,8 +66,12 @@ function fixture() {
       nextLineups.set(leagueId, { ...data, ...(data.match && body.matchId === null ? { preparation: saved } : { saved }) });
       return Response.json({ matchId: body.matchId, ...saved });
     }
-    if (collection === "player-performance") return Response.json(Object.fromEntries(parsed.searchParams.getAll("player")
-      .filter((id) => latest[id]).map((id) => [id, latest[id]])));
+    if (collection === "player-performance") {
+      const match = parsed.searchParams.get("match");
+      const scores = (match && matchScores.get(match)) || latest;
+      return Response.json(Object.fromEntries(parsed.searchParams.getAll("player")
+        .filter((id) => scores[id] && (!match || scores[id].matchId === match)).map((id) => [id, scores[id]])));
+    }
     if (collection === "players" && action === "performance") {
       if (historyError.has(playerId) || (parsed.searchParams.has("before") && historyError.has(`${playerId}:older`))) return Response.json({ error: "Could not load finalized games" }, { status: 500 });
       if (parsed.searchParams.has("before")) return Response.json(older.get(playerId));
@@ -91,7 +96,7 @@ function fixture() {
     return Response.json({ state: "applied", ...next });
   });
   vi.stubGlobal("fetch", fetch);
-  return { put, fetch, saved, latest, histories, historyError, older, nextLineups, putNext };
+  return { put, fetch, saved, latest, matchScores, histories, historyError, older, nextLineups, putNext };
 }
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.unstubAllGlobals(); });
 
@@ -558,4 +563,95 @@ it("does not retarget a dirty Edit Squad preparation when a match is scheduled",
   }
   expect(put).not.toHaveBeenCalled();
   expect(putNext).not.toHaveBeenCalled();
+});
+
+it("shows the actual previous starting lineup even when the default squad and saved next-match draft differ", async () => {
+  const { saved, nextLineups, entries, put, putNext, latest } = nextMatchEditFixture("scheduled");
+  const prior = nextLineups.get(a.id)!.previous!;
+  const baseline = { ...pool[2], name: pool[2].fullName, slot: "starter" as const, order: 0 };
+  saved.set(a.id, { ...saved.get(a.id)!, players: [baseline, ...entries.slice(1)],
+    lastMatch: { matchId: prior.matchId, title: prior.title, kickOff: prior.kickOff, points: 31 } });
+  latest[entries[0].id] = { matchId: prior.matchId, title: prior.title, kickOff: prior.kickOff, points: 7 };
+  latest[entries[1].id] = { matchId: "other-game", title: "Other game", kickOff: prior.kickOff, points: 99 };
+  const page = renderInShell(<SquadScreen enableNextMatch />);
+  const previousPitch = () => within(screen.getByRole("region", { name: "Previous match starting lineup" }));
+  await screen.findByRole("region", { name: "Previous match starting lineup" });
+  expect(previousPitch().getByRole("link", { name: prior.title }).getAttribute("href")).toBe(`/matches/${prior.matchId}`);
+  expect(previousPitch().getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
+  expect(previousPitch().queryByRole("button", { name: /Bert Keeper/ })).toBeNull();
+  expect(await previousPitch().findByText("7 pts")).toBeTruthy();
+  expect(previousPitch().queryByText("99 pts")).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Last match points" })).getByText("31 pts")).toBeTruthy();
+  click("View default squad");
+  expect(within(screen.getByRole("region", { name: "Default starting lineup" })).getByRole("button", { name: /Bert Keeper/ })).toBeTruthy();
+  click("View previous lineup");
+  click("Edit squad");
+  const draft = within(screen.getByRole("region", { name: "Next match starters" }));
+  fireEvent.click(draft.getByRole("button", { name: /Ada Keeper/ }));
+  click("Replace player");
+  fireEvent.click(await dialog().findByRole("button", { name: /Zed Keeper/ }));
+  expect(draft.getByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
+  expect(putNext).not.toHaveBeenCalled();
+  expect(put).not.toHaveBeenCalled();
+  fireEvent.click(screen.getAllByRole("button", { name: "Save for next match" })[0]);
+  await screen.findByText("Lineup saved for the next match only. My Squad is unchanged.");
+  expect(put).not.toHaveBeenCalled();
+  expect(nextLineups.get(a.id)?.previous?.lineup).toEqual(prior.lineup);
+  expect(previousPitch().getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
+  expect(previousPitch().queryByRole("button", { name: /Zed Keeper/ })).toBeNull();
+  page.unmount();
+  renderInShell(<SquadScreen enableNextMatch />);
+  await screen.findByRole("region", { name: "Previous match starting lineup" });
+  expect(previousPitch().getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
+  click("Next Match");
+  expect(within(screen.getByRole("region", { name: /football pitch/ })).getByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
+});
+
+it("does not present the default starters as match history when a result has no verified lineup", async () => {
+  const { saved, nextLineups, put, putNext } = nextMatchEditFixture("unscheduled");
+  nextLineups.set(a.id, { ...nextLineups.get(a.id)!, previous: null, canPrepare: false });
+  saved.set(a.id, { ...saved.get(a.id)!, lastMatch: { matchId: "result", title: "Finalized fixture", kickOff: null, points: 12 } });
+  renderInShell(<SquadScreen enableNextMatch />);
+  expect(await screen.findByText("No verified lineup saved for Finalized fixture.")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Previous match starting lineup" })).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Default starting lineup" })).getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
+  click("Edit squad");
+  click(/Ada Keeper, GK/);
+  click("Replace player");
+  fireEvent.click(await dialog().findByRole("button", { name: /Zed Keeper/ }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]);
+  await waitFor(() => expect(put).toHaveBeenCalledOnce());
+  expect(putNext).not.toHaveBeenCalled();
+});
+
+it("refreshes provisional squad totals after a scoring event is added and removed without changing the previous lineup", async () => {
+  const { saved, nextLineups, latest, matchScores } = nextMatchEditFixture("scheduled");
+  const previous = nextLineups.get(a.id)!.previous!;
+  const lastMatch = { matchId: previous.matchId, title: previous.title, kickOff: previous.kickOff, points: 31 };
+  saved.set(a.id, { ...saved.get(a.id)!, lastMatch });
+  matchScores.set(previous.matchId, { "gk-a": { matchId: previous.matchId, title: previous.title, kickOff: previous.kickOff, points: 7 } });
+  renderInShell(<SquadScreen enableNextMatch />);
+  const previousPitch = () => within(screen.getByRole("region", { name: "Previous match starting lineup" }));
+  await screen.findByRole("region", { name: "Previous match starting lineup" });
+  expect(await previousPitch().findByText("7 pts")).toBeTruthy();
+  const sync = () => fireEvent(window, new StorageEvent("storage", { key: `ff:league-content-changed:${a.id}` }));
+  const liveMatch = { matchId: "scheduled", title: "Live fixture", kickOff: "2026-11-19T09:00:00Z", points: 10 };
+  saved.set(a.id, { ...saved.get(a.id)!, liveMatches: [liveMatch] });
+  latest["gk-a"] = { ...liveMatch, points: 5, provisional: true };
+  sync();
+  const live = within(await screen.findByRole("region", { name: "Live match points" }));
+  expect(live.getByText("10 pts")).toBeTruthy();
+  expect(previousPitch().queryByText("5 pts")).toBeNull();
+  expect(previousPitch().getByText("7 pts")).toBeTruthy();
+  click("Next Match");
+  const nextPitch = within(screen.getByRole("region", { name: /football pitch/ }));
+  expect(await nextPitch.findByText("5 pts")).toBeTruthy();
+  expect(nextPitch.getByText("Live")).toBeTruthy();
+  saved.set(a.id, { ...saved.get(a.id)!, liveMatches: [] });
+  delete latest["gk-a"];
+  sync();
+  await waitFor(() => expect(nextPitch.queryByText("5 pts")).toBeNull());
+  // The collapsed My Squad screen (including official points) is still mounted.
+  expect(screen.queryByText("10 pts")).toBeNull();
+  expect(screen.getByText("31 pts")).toBeTruthy();
 });

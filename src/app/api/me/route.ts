@@ -3,6 +3,8 @@ import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, confirmedRow, handler, requireIdentity, requireUser } from "@/lib/server";
 
+import type { MyDisplayStanding } from "@/lib/live-points";
+
 export const dynamic = "force-dynamic";
 
 export const GET = handler(async () => {
@@ -12,14 +14,14 @@ export const GET = handler(async () => {
     supabase.from("profiles").select("id,email,username,display_name,avatar_url,bio,email_verified_at,created_at")
       .eq("id", user.id).maybeSingle(),
     supabase.from("league_members").select("role").eq("profile_id", user.id),
-    supabase.from("league_standings").select("total_points,matches_played,rank").eq("profile_id", user.id),
+    supabase.rpc("ff_my_display_standings"),
   ]);
   checkDb(profileResult.error, "Could not load your profile");
   const profile = profileResult.data;
   if (!profile) throw new ApiError("Profile not found", 404);
   checkDb(memberships.error, "Could not load your league roles");
   checkDb(points.error, "Could not load your points");
-  const results = points.data ?? [];
+  const results = (points.data ?? []) as MyDisplayStanding[];
   const totalPoints = results.reduce((sum, p) => sum + Number(p.total_points), 0);
   const matchesPlayed = results.reduce((sum, p) => sum + p.matches_played, 0);
   const bestRank = results.length ? Math.min(...results.map((p) => p.rank)) : null;
@@ -42,6 +44,7 @@ export const GET = handler(async () => {
         return acc;
       }, {}),
       totalPoints,
+      provisional: results.some((p) => p.provisional),
       matchesPlayed,
       bestRank,
     },
