@@ -73,6 +73,7 @@ type MatchData = {
   serverNow?: string;
   statistics?: MatchStat[];
   bonusAwards?: MatchBonusAward[];
+  scoringLineups?: (Pick<LineupEntry, "playerId" | "teamId" | "slot"> & { matchPosition?: string; player: Player | null })[];
   rules: LeagueRules;
   role: string;
   canOrganize: boolean;
@@ -85,7 +86,6 @@ type MatchData = {
     playerId: string;
     assistPlayerId: string | null;
     eventType: string;
-    minute: number;
     note: string | null;
     player: Player | null;
     assistPlayer: Player | null;
@@ -155,14 +155,13 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const [draft, setDraft] = useState<{ id: string; teams: Record<string, LineupSelection> } | null>(null);
   const savedSelections = useMemo(() => data ? Object.fromEntries([data.match.teamAId, data.match.teamBId]
     .map((id) => [id, lineupSelection(data.lineups, id)])) : {}, [data]);
-  const sel = { ...savedSelections, ...(!started && draft && draft.id === matchId ? draft.teams : {}) };
+  const sel = { ...savedSelections, ...(draft && draft.id === matchId ? draft.teams : {}) };
 
   // event form
   const [evTeam, setEvTeam] = useState("");
   const [evPlayer, setEvPlayer] = useState("");
   const [evAssist, setEvAssist] = useState("");
   const [evType, setEvType] = useState<string>("goal");
-  const [evMinute, setEvMinute] = useState("");
   const [evNote, setEvNote] = useState("");
 
   // substitution form
@@ -198,7 +197,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const lineupSaving = useRef(false);
   const saveLineup = async (teamId: string) => {
-    if (started || !matchId || !data || lineupSaving.current) return;
+    if (!matchId || !data?.canOrganize || busy || statisticsDirty || lineupSaving.current) return;
     lineupSaving.current = true;
     setBusy(true);
     setFormError(null);
@@ -240,7 +239,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   };
 
   const assign = (teamId: string, playerId: string, slot: "starter" | "sub" | null) => {
-    if (!matchId) return;
+    if (!matchId || !data?.canOrganize || busy) return;
     setDraft((current) => {
       const teams = current?.id === matchId ? current.teams : {};
       const state = teams[teamId] ?? savedSelections[teamId] ?? { starters: [], subs: [] };
@@ -255,8 +254,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const recordEvent = async () => {
     if (!matchId) return;
-    if (!evTeam || !evPlayer || !evMinute) {
-      notify("Team, player and minute are required", "error");
+    if (!evTeam || !evPlayer) {
+      notify("Team and player are required", "error");
       return;
     }
     setBusy(true);
@@ -268,7 +267,6 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
           playerId: evPlayer,
           assistPlayerId: evAssist || null,
           eventType: evType,
-          minute: Number(evMinute),
           note: evNote || null,
         },
         idempotent: true,
@@ -391,7 +389,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const logoOf = (id: string) => data.teams.find((t) => t.id === id)?.crestUrl;
   const teamLabel = (id: string) => <RealTeamName name={teamName(id)} logo={logoOf(id)} />;
-  const participants = data.lineups.flatMap((l) => {
+  const participants = (data.scoringLineups ?? data.lineups).flatMap((l) => {
     if (!l.player || ![m.teamAId, m.teamBId].includes(l.teamId) || (l.slot !== "starter" && !data.substitutions.some((sub) => sub.teamId === l.teamId && sub.playerOnId === l.playerId))) return [];
     return [{ id: l.playerId, name: l.player.fullName, position: data.statistics?.find((r) => r.playerId === l.playerId)?.position ?? l.matchPosition ?? l.player.position, team: teamName(l.teamId) }];
   });
@@ -425,7 +423,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
         actions={<Badge tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Badge>}
       />
 
-      {started && <p className="mb-4 text-sm text-sage"><strong className="text-chalk">Lineup Locked.</strong> The match has started.</p>}
+      {m.status === "approved" && data.canOrganize && <p className="mb-4 text-sm text-sage">You can update the real team lineups. These edits do not change the approved scoring record.</p>}
       {!started && editable && <div className="mb-4 flex flex-wrap items-end gap-2">
         {rescheduling ? <><Field label="New kickoff (local time)"><TextInput type="datetime-local" value={newKickoff} onChange={(e) => setNewKickoff(e.target.value)} /></Field>
           <Button size="sm" onClick={reschedule} disabled={!newKickoff || busy}>Save kickoff</Button><Button variant="ghost" size="sm" onClick={() => setRescheduling(false)}>Cancel</Button></>
@@ -433,7 +431,10 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
       </div>}
       {data.statistics && <MatchStatistics key={`statistics:${m.id}:${m.version}`} matchId={m.id} version={m.version} status={m.status}
         started={started} correctable={m.homeScore != null && m.awayScore != null} canManage={data.canOrganize}
-        players={participants} saved={data.statistics} bonusAwards={data.bonusAwards} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={reload} />}
+        players={participants} saved={data.statistics} bonusAwards={data.bonusAwards} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={async () => {
+          if (m.status === "approved") notifyLeagueContentChanged(m.leagueId);
+          await reload();
+        }} />}
       <MatchResult key={`result:${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)} homeLogo={logoOf(m.teamAId)} awayLogo={logoOf(m.teamBId)}
         canManage={data.canOrganize} busy={busy} unsavedStatistics={statisticsDirty} onSave={flow} />
 
@@ -466,7 +467,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                 <TextInput
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
-                  placeholder="Wrong minute on the second goal"
+                  placeholder="Wrong player on the second goal"
                 />
               </Field>
               <div className="mt-3 flex justify-end gap-2.5">
@@ -511,7 +512,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             const state = sel[teamId] ?? { starters: [], subs: [] };
             const roster = [...(rosterByTeam[teamId] ?? []), ...data.roster.filter((p) => p.teamId !== teamId
               && (state.starters.includes(p.id) || state.subs.includes(p.id)))];
-            const locked = started || m.status === "pending" || m.status === "approved" || !data.canOrganize;
+            const locked = !data.canOrganize;
             const lineupRules = validateLineup(data.rules, roster.filter((p) => state.starters.includes(p.id)), roster.filter((p) => state.subs.includes(p.id)));
             const allowed = (p: Player) => p.teamId === teamId && canSelectPlayer(p);
             const eligible = roster.filter((p) => state.starters.includes(p.id) || state.subs.includes(p.id)).every(allowed);
@@ -541,7 +542,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                     size="sm"
                     onClick={() => saveLineup(teamId)}
                     loading={busy}
-                    disabled={locked || busy || !lineupRules.ok || !eligible}
+                    disabled={locked || busy || statisticsDirty || !lineupRules.ok || !eligible}
                   >
                     <Save className="h-3.5 w-3.5" /> Save line-up
                   </Button>
@@ -654,16 +655,6 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                         ))}
                       </Select>
                     </Field>
-                    <Field label="Minute">
-                      <TextInput
-                        type="number"
-                        min={0}
-                        max={200}
-                        value={evMinute}
-                        onChange={(e) => setEvMinute(e.target.value)}
-                        placeholder="34"
-                      />
-                    </Field>
                   </div>
 
                   {evType === "goal" && (
@@ -762,10 +753,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             ) : (
               <ul className="divide-y divide-line-soft">
                 {[...data.events]
-                  .sort((a, b) => a.minute - b.minute)
                   .map((e) => (
                     <li key={e.id} className="flex items-center gap-3 py-2.5">
-                      <span className="num w-10 shrink-0 text-[13px] text-green">{e.minute}&apos;</span>
                       <span className="w-20 shrink-0">
                         <Badge
                           tone={

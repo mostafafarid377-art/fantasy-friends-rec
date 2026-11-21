@@ -23,6 +23,7 @@ missing forward migrations, in order:
 12. `0016_team_logos.sql` (private real-team logos and history reads)
 13. `0017_google_profile_names.sql` (first-login profile names)
 14. `0018_automatic_match_bonus.sql` (automatic competition ranking for bonuses)
+15. `0019_squad_points_and_real_lineups.sql` (fantasy-only kickoff lock, independent real lineups, latest individual scores, optional event minute)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -88,7 +89,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0018_automatic_match_bonus.sql`. The
+`0001_schema.sql` to `0019_squad_points_and_real_lineups.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -274,9 +275,9 @@ scoring, clean-sheet eligibility or the range allowed for recording match events
 - Fantasy squads are still shared within a league. A started, unfinalized
   match keeps the squad locked even if another match is upcoming. Review old
   unfinished drafts before rollout: those with past kickoff times also lock the
-  squad. Locking never rewrites a squad. A real lineup cannot be changed after
-  kickoff, including when a result is sent back for correction. For new
-  lineups the saved match position is used for the new statistics. Old lineups
+  squad. Locking never rewrites a squad. Since `0019`, this deadline does not
+  apply to real team lineups. For new lineups the saved match position is used
+  for the new statistics. Old lineups
   without a recorded position use the current roster position when stats are
   first entered; previous official points are not recalculated by migration.
 - Apply `0018` before deploying the automatic bonus UI. Approval and explicit
@@ -297,3 +298,23 @@ scoring, clean-sheet eligibility or the range allowed for recording match events
   after changing its display name; confirm password login still works. Test
   actual Supabase Storage upload, replacement/removal, cross-league access and
   mobile camera/gallery in addition to the automated PostgreSQL policy tests.
+
+## Latest Squad points, real lineup editing and optional event minutes
+
+- Apply `0019_squad_points_and_real_lineups.sql` after `0018` and **before**
+  deploying the corresponding app. Test on staging first; do not reset or use
+  the fresh-install script on the existing database. `0019` does not recalculate
+  historical scores, replace scoring rules or backfill match statistics.
+- Assigned organizers and league leaders can save real lineups after kickoff,
+  during review, and after approval. A pending lineup change invalidates an older
+  approval revision. The first approved lineup edit captures the previous real
+  lineup for official participation, history, and explicit score/stat corrections.
+  The current real lineup remains editable without changing approved points.
+  Existing match statistics no longer cascade on lineup replacement. Clear affected
+  statistics explicitly before removing a participant in an unapproved match.
+- Last match points read the current approved individual scoring ledger, including
+  any recorded bonus, with title and kickoff date. A later unused bench slot does
+  not hide an earlier appearance. Use separate accounts to verify standings,
+  correction updates and manager/organizer permissions on staging.
+- Newly logged regular match events may omit the minute. Historical event
+  minutes stay stored, and substitution minutes are still required.

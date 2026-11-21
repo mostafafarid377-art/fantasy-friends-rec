@@ -22,9 +22,6 @@ const schema = z.object({
 async function canTouch(matchId: string, profileId: string) {
   const auth = await canManageMatch(matchId, profileId);
   if (!auth.authorized) throw new ApiError("Not authorized to manage this match", 403);
-  if (auth.match.status === "pending" || auth.match.status === "approved") {
-    throw new ApiError("Lineups are locked once the match is pending", 409);
-  }
   return { match: auth.match, membership: auth.membership };
 }
 

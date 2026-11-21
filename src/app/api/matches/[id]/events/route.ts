@@ -12,7 +12,7 @@ const eventSchema = z.object({
   playerId: z.string().min(1),
   assistPlayerId: z.string().min(1).nullable().optional(),
   eventType: z.enum(EVENT_TYPES),
-  minute: z.number().int().min(0).max(200),
+  minute: z.number().int().min(0).max(200).optional(),
   note: z.string().max(240).nullable().optional(),
 });
 
@@ -36,7 +36,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     subsResp,
     rosterResp,
   ] = await Promise.all([
-    supabase.from("match_events").select("*").eq("match_id", id).order("minute", { ascending: true }),
+    supabase.from("match_events").select("*").eq("match_id", id).order("created_at").order("id"),
     supabase.from("match_substitutions").select("*").eq("match_id", id).order("minute", { ascending: true }),
     supabase.from("players").select("*").eq("league_id", match.league_id),
   ]);

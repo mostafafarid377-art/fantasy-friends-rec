@@ -27,9 +27,10 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     rosterResp,
     statisticsResp,
     pointsResp,
+    scoringLineupsResp,
   ] = await Promise.all([
     supabase.from("match_lineups").select("*").eq("match_id", id).order("order", { ascending: true }),
-    supabase.from("match_events").select("*").eq("match_id", id).order("minute", { ascending: true }),
+    supabase.from("match_events").select("*").eq("match_id", id).order("created_at").order("id"),
     supabase.from("match_substitutions").select("*").eq("match_id", id).order("minute", { ascending: true }),
     supabase.from("match_approvals").select("*").eq("match_id", id).order("created_at", { ascending: true }),
     supabase.from("teams").select(TEAM_FIELDS).eq("league_id", match.league_id).in("id", [match.team_a_id, match.team_b_id]),
@@ -37,9 +38,11 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     supabase.from("match_player_statistics").select("player_id,position,saves,defensive_contributions").eq("match_id", id),
     match.status === "approved" ? supabase.from("player_match_points").select("player_id,breakdown")
       .eq("league_id", match.league_id).eq("match_id", id).eq("match_version", match.version) : { data: [], error: null },
+    match.status === "approved" ? supabase.from("match_scoring_lineups").select("team_id,player_id,slot,match_position").eq("match_id", id)
+      .eq("league_id", match.league_id) : { data: null, error: null },
   ]);
 
-  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp, statisticsResp, pointsResp]) {
+  for (const result of [lineupsResp, eventsResp, subsResp, approvalsResp, teamRowsResp, rosterResp, statisticsResp, pointsResp, scoringLineupsResp]) {
     checkDb(result.error, "Could not load match details");
   }
   const lineups = lineupsResp.data ?? [];
@@ -84,9 +87,13 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       id: l.id, playerId: l.player_id, teamId: l.team_id, slot: l.slot, order: l.order, matchPosition: l.match_position ?? playerById.get(l.player_id)?.position,
       player: playerById.get(l.player_id) ?? null,
     })),
+    ...(scoringLineupsResp.data && { scoringLineups: scoringLineupsResp.data.map((l) => ({
+      playerId: l.player_id, teamId: l.team_id, slot: l.slot, matchPosition: l.match_position,
+      player: playerById.get(l.player_id) ?? null,
+    })) }),
     events: (events ?? []).map((e: any) => ({
       id: e.id, teamId: e.team_id, playerId: e.player_id, assistPlayerId: e.assist_player_id,
-      eventType: e.event_type, minute: e.minute, note: e.note,
+      eventType: e.event_type, note: e.note,
       player: playerById.get(e.player_id) ?? null,
       assistPlayer: e.assist_player_id ? (playerById.get(e.assist_player_id) ?? null) : null,
     })),

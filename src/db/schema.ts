@@ -428,6 +428,12 @@ export const matchLineups = pgTable(
   ],
 );
 
+export const finalizedMatchLineups = pgTable("finalized_match_lineups", {
+  matchId: text("match_id").primaryKey().references(() => realMatches.id, { onDelete: "cascade" }),
+  leagueId: text("league_id").notNull().references(() => leagues.id, { onDelete: "cascade" }),
+  entries: jsonb("entries").notNull(),
+}, () => [check("finalized_match_lineups_entries_check", sql`jsonb_typeof(entries) = 'array'`)]).enableRLS();
+
 export const matchPlayerStatistics = pgTable("match_player_statistics", {
   matchId: text("match_id").notNull(),
   playerId: text("player_id").notNull(),
@@ -436,10 +442,10 @@ export const matchPlayerStatistics = pgTable("match_player_statistics", {
   defensiveContributions: integer("defensive_contributions").notNull().default(0),
   bonusRank: integer("bonus_rank"),
 }, (t) => [
+  foreignKey({ name: "match_player_statistics_match_id_fkey", columns: [t.matchId], foreignColumns: [realMatches.id] }).onDelete("cascade"),
+  foreignKey({ name: "match_player_statistics_player_id_fkey", columns: [t.playerId], foreignColumns: [players.id] }).onDelete("cascade"),
   primaryKey({ name: "match_player_statistics_pkey", columns: [t.matchId, t.playerId] }),
   unique("match_player_statistics_match_id_bonus_rank_key").on(t.matchId, t.bonusRank),
-  foreignKey({ name: "match_player_statistics_match_id_player_id_fkey", columns: [t.matchId, t.playerId],
-    foreignColumns: [matchLineups.matchId, matchLineups.playerId] }).onDelete("cascade"),
   check("match_player_statistics_position_check", sql`position in ('GK','DEF','MID','FWD')`),
   check("match_player_statistics_check", sql`saves between 0 and 999 and (saves=0 or position='GK')`),
   check("match_player_statistics_defensive_contributions_check", sql`defensive_contributions between 0 and 999`),
@@ -466,7 +472,7 @@ export const matchEvents = pgTable(
       onDelete: "set null",
     }),
     eventType: text("event_type").notNull(),
-    minute: integer("minute").notNull(),
+    minute: integer("minute"),
     note: text("note"),
     createdBy: text("created_by").references(() => profiles.id, {
       onDelete: "set null",

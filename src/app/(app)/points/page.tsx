@@ -26,7 +26,7 @@ type Row = {
   points: string;
   started: boolean;
   breakdown: BreakdownLine[];
-  events: { id: string; type: string; minute: number }[];
+  events: { id: string; type: string; minute: number | null }[];
 };
 
 type Data = {
@@ -159,7 +159,7 @@ function PointsInner() {
                                 key={e.id}
                                 className="num rounded border border-line bg-pitch-850 px-2 py-1 text-[11px] uppercase text-sage"
                               >
-                                {e.type} {e.minute}&apos;
+                                {e.type}
                               </span>
                             ))}
                           </div>

@@ -79,7 +79,7 @@ export default function MatchesPage() {
       <PageHeader
         eyebrow={`${league?.name} · ${league?.format} · ${league?.starters} starters per side`}
         title="Match centre"
-        subtitle="Real matches, recorded minute by minute. Results only reach the table after the League Leader approves them."
+        subtitle="Real matches, with recorded events. Results only reach the table after the League Leader approves them."
         actions={
           canOrganize ? (
             <Button href="/matches/new">
