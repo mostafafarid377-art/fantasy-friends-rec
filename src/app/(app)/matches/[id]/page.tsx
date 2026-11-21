@@ -335,7 +335,7 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const reviewing = useRef(false);
   const flow = async (action: "submit" | "approve" | "reject" | "correct", score?: MatchScore, correctionReason?: string) => {
-    if (!matchId || !data || reviewing.current || busy || statisticsDirty) return false;
+    if (!matchId || !data || reviewing.current || busy || statisticsDirty || (action === "approve" && !started)) return false;
     reviewing.current = true;
     setBusy(true);
     setFormError(null);
@@ -492,9 +492,12 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             <Timer className="h-4 w-4 shrink-0 text-card-y" />
             <span className="flex-1 text-[14px] text-chalk">
               Submitted {m.submittedAt ? new Date(m.submittedAt).toLocaleString() : ""} — awaiting your
-              decision. {m.homeScore == null ? "Send this match back so both scores can be recorded." : "Approval calculates fantasy points and rebuilds the table."}
+              decision. {m.homeScore == null || m.awayScore == null ? "Send this match back so both scores can be recorded."
+                : timeToKickoff == null ? "Waiting to confirm the scheduled kickoff."
+                  : !started ? "You can approve this match once its scheduled kickoff time has been reached."
+                    : "Approval calculates fantasy points and rebuilds the table."}
             </span>
-            <Button variant="primary" onClick={() => flow("approve")} loading={busy} disabled={m.homeScore == null || m.awayScore == null}>
+            <Button variant="primary" onClick={() => flow("approve")} loading={busy} disabled={!started || m.homeScore == null || m.awayScore == null}>
               <CheckCircle2 className="h-4 w-4" /> Approve
             </Button>
             <Button variant="danger" onClick={() => setShowReject((s) => !s)}>

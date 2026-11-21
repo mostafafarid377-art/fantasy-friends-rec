@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, within, fireEvent } from "@testing-library/react";
 import MatchPage from "@/app/(app)/matches/[id]/page";
 
 vi.mock("@/components/LeagueContext", () => ({ useActiveLeague: () => ({ league: { id: "league", name: "League" } }) }));
@@ -8,7 +8,7 @@ vi.mock("@/components/AppShell", () => ({ PageHeader: ({ title, eyebrow }: { tit
 const params = Promise.resolve({ id: "m" });
 const players = ["GK","DEF","MID","MID","FWD","DEF"].map((position,i)=>({ id:`p${i}`, fullName:`Player ${i}`, position, teamId:"home", photoUrl:null, status:"active", availability:"available" }));
 const teams = [{ id:"home",name:"Home",crestUrl:"/home.webp" },{ id:"away",name:"Away",crestUrl:"/away.webp" }];
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it("submits ordered entries, does not show success on DB failure, and uses persisted rows on reopen", async () => {
   let fail = true;
@@ -68,7 +68,7 @@ it("records a 2–0 result, approves it, and reopens the corrected score and his
       return Response.json({ status:match.status, match:{ id:match.id, home_score:match.homeScore, away_score:match.awayScore, version:match.version } });
     }
     if (!url.endsWith("/m")) throw new Error(`Unexpected ${url}`);
-    return Response.json({match, rules:{format:"5v5",starters:5,subsCount:2,squadSize:10}, canOrganize:true, canApprove:true,
+    return Response.json({match, serverNow:"2026-11-19T19:00:00Z", rules:{format:"5v5",starters:5,subsCount:2,squadSize:10}, canOrganize:true, canApprove:true,
       canEditEvents:match.status === "draft", teams, roster:players, lineups:[], events:[], substitutions:[], approvals });
   });
   vi.stubGlobal("fetch",fetch);
@@ -203,4 +203,32 @@ it("corrects approved statistics from Events using the official participants and
   await screen.findByText(/v5$/);
   expect(saves.value).toBe("0");
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/statistics"))).toHaveLength(1);
+});
+
+
+it("disables approval before kickoff, keeps rejection available and enables approval at kickoff", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+  const fetch = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/flow")) {
+      expect(JSON.parse(String(init.body))).toEqual({ action: "approve", version: 2 });
+      return Response.json({ status: "approved", match: { id: "m", version: 3 } });
+    }
+    return Response.json({ serverNow: "2026-11-19T17:59:59Z",
+      match: { id: "m", leagueId: "league", title: "Game", status: "pending", kickOff: "2026-11-19T18:00:00Z", teamAId: "home", teamBId: "away", version: 2, homeScore: 2, awayScore: 0 },
+      rules: { format: "5v5", starters: 5, subsCount: 2, squadSize: 10 }, canApprove: true,
+      teams, roster: players, lineups: [], events: [], substitutions: [], approvals: [] });
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(<MatchPage params={params} />);
+  const approve = await screen.findByRole<HTMLButtonElement>("button", { name: "Approve" });
+  expect(approve.disabled).toBe(true);
+  expect(screen.getByText(/once its scheduled kickoff time has been reached/)).toBeTruthy();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reject" }).disabled).toBe(false);
+  fireEvent.click(approve);
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/flow"))).toHaveLength(0);
+  act(() => vi.advanceTimersByTime(1000));
+  expect(approve.disabled).toBe(false);
+  fireEvent.click(approve);
+  expect(await screen.findByText("Approved — points calculated")).toBeTruthy();
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/flow"))).toHaveLength(1);
 });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { SquadScreen } from "@/components/SquadScreen";
 import { AppProvider } from "@/components/LeagueContext";
 import { AppShell } from "@/components/AppShell";
@@ -407,12 +407,16 @@ it("adds a separate demo entry when enabled without showing Next Match for the l
 
 
 it("gates the real Next Match view on verified history and saves a separate lineup only on explicit confirmation", async () => {
-  const { saved, nextLineups, putNext, put } = fixture();
+  const { fetch, saved, nextLineups, putNext, put } = fixture();
   const entries = [pool[0], pool[4], pool[5], pool[6], pool[8], pool[1]].map((p, order) => ({ ...p, name: p.fullName,
     slot: order === 5 ? "sub" as const : "starter" as const, order: order === 5 ? 0 : order }));
   saved.set(a.id, { ...empty(a), players: [entries[0]] });
   const page = renderInShell(<SquadScreen enableNextMatch />);
-  expect(await screen.findByText("No previous lineup yet")).toBeTruthy();
+  await screen.findByRole("button", { name: "Edit squad" });
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledWith(`/api/leagues/${a.id}/next-match-lineup`, expect.objectContaining({ method: "GET" }));
+  expect(screen.queryByText("No previous lineup yet")).toBeNull();
+  expect(screen.queryByText(/Next Match appears once your saved starting lineup/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Next Match" })).toBeNull();
   page.unmount();
   const previous = { matchId: "played-match", title: "Previous fixture", kickOff: "2026-11-18T19:00:00Z",

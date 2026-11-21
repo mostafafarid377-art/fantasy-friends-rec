@@ -219,10 +219,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
         actions={<>{pickActions}{nextLineup.data?.previous && <Button variant="outline" onClick={() => { setHasOpenedNext(true); setViewNext(true); setPlayerId(null); setPick(null); setMoving(null); }}><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button>}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
       {enableNextMatch && nextLineup.error && <div className="mb-4"><ErrorNote message={nextLineup.error} onRetry={() => void nextLineup.reload()} /></div>}
-      {enableNextMatch && nextLineup.data && !nextLineup.data.previous && <Panel className="mb-4 p-3">
-        <p className="text-sm font-semibold text-chalk">No previous lineup yet</p>
-        <p className="mt-1 text-xs text-sage">Next Match appears once your saved starting lineup is recorded for a previous match. Until then, use Edit Squad.</p>
-      </Panel>}
       {showLineupPreview && <Button className="mb-4" href="/team/next-match-preview?from=squad" variant="ghost"><FlaskConical aria-hidden="true" className="size-4" />Lineup design preview</Button>}
       {locked ? <p role="status" className="mb-4 rounded border border-line p-3 text-sm text-chalk"><strong>Squad Locked.</strong> {deadline?.title ?? "The match"} has started. Your saved squad stays unchanged until the match is finalized.</p>
         : remaining != null && <p className="mb-4 text-sm text-chalk">{deadline?.title} kicks off in <span className="num text-green">{countdown(remaining)}</span>.</p>}
