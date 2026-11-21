@@ -431,12 +431,10 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
           <Button size="sm" onClick={reschedule} disabled={!newKickoff || busy}>Save kickoff</Button><Button variant="ghost" size="sm" onClick={() => setRescheduling(false)}>Cancel</Button></>
           : <Button size="sm" variant="outline" onClick={() => setRescheduling(true)}>Change kickoff</Button>}
       </div>}
-      {data.statistics && <MatchStatistics key={`${m.id}:${m.version}`} matchId={m.id} version={m.version} status={m.status}
+      {data.statistics && <MatchStatistics key={`statistics:${m.id}:${m.version}`} matchId={m.id} version={m.version} status={m.status}
         started={started} correctable={m.homeScore != null && m.awayScore != null} canManage={data.canOrganize}
-        players={participants} saved={data.statistics} bonusAwards={data.bonusAwards} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={async () => {
-          await reload(); notify("Match statistics saved");
-        }} />}
-      <MatchResult key={`${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)} homeLogo={logoOf(m.teamAId)} awayLogo={logoOf(m.teamBId)}
+        players={participants} saved={data.statistics} bonusAwards={data.bonusAwards} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={reload} />}
+      <MatchResult key={`result:${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)} homeLogo={logoOf(m.teamAId)} awayLogo={logoOf(m.teamBId)}
         canManage={data.canOrganize} busy={busy} unsavedStatistics={statisticsDirty} onSave={flow} />
 
       {m.status === "rejected" && m.rejectionReason && (

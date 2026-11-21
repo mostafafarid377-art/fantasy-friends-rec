@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "@/lib/client/api";
 import { Button, ErrorNote, Field, Panel, TextInput } from "./ui";
 
@@ -15,6 +15,7 @@ export function MatchStatistics({ matchId, version, started, status, correctable
   const [draft, setDraft] = useState(() => Object.fromEntries(saved.map((s) => [s.playerId, [String(s.saves), String(s.defensiveContributions)]])));
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const edit = started && canManage && (status === "draft" || status === "rejected" || (finalized && correctable));
@@ -24,7 +25,8 @@ export function MatchStatistics({ matchId, version, started, status, correctable
   const changed = (value: boolean) => { setDirty(value); onDirty(value); };
   const locked = busy || workflowBusy;
   const save = async () => {
-    if (locked || !edit || !validCounts || (finalized && !reason.trim())) return;
+    if (saving.current || locked || !edit || !dirty || !validCounts || (finalized && !reason.trim())) return;
+    saving.current = true;
     setBusy(true); setError(null);
     try {
       const stats = players.flatMap((p) => {
@@ -37,7 +39,7 @@ export function MatchStatistics({ matchId, version, started, status, correctable
       await onSaved();
       changed(false);
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save match statistics"); }
-    finally { setBusy(false); }
+    finally { saving.current = false; setBusy(false); }
   };
   const update = (id: string, index: number, value: string) => {
     setDraft((old) => { const row = [...(old[id] ?? ["", ""])]; row[index] = value; return { ...old, [id]: row }; });
@@ -56,6 +58,15 @@ export function MatchStatistics({ matchId, version, started, status, correctable
           <Field label="Defensive contributions"><TextInput aria-label={`${p.name} defensive contributions`} inputMode="numeric" maxLength={3} placeholder="0" value={draft[p.id]?.[1] ?? ""} disabled={locked} onChange={(e) => update(p.id, 1, e.target.value)} /></Field>
         </div>
       </div>)}</div>}
+      {edit && dirty && <div className="mt-3 space-y-2">
+        {error && <ErrorNote message={error} />}
+        {!validCounts && <p className="text-sm text-card-y">Use whole numbers from 0 to 999.</p>}
+        {finalized && <Field label="Statistics correction reason"><TextInput value={reason} maxLength={400} disabled={locked} onChange={(e) => setReason(e.target.value)} /></Field>}
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={save} loading={busy} disabled={locked || !validCounts || (finalized && !reason.trim())}>{finalized ? "Save statistics correction" : "Save statistics"}</Button>
+          <Button variant="ghost" disabled={locked} onClick={() => { setDraft(Object.fromEntries(saved.map((s) => [s.playerId, [String(s.saves), String(s.defensiveContributions)]]))); setReason(""); setError(null); changed(false); }}>Discard changes</Button>
+        </div>
+      </div>}
     </details>
     {finalized && <section aria-label="Match Bonus Points" className="space-y-2 border-t border-line pt-3">
       <h2 className="text-lg text-chalk">Match Bonus Points</h2>
@@ -66,10 +77,5 @@ export function MatchStatistics({ matchId, version, started, status, correctable
         </li>)}
       </ul> : <p className="text-sm text-sage">No bonus awards in the finalized result.</p>}
     </section>}
-    {error && <ErrorNote message={error} />}
-    {!validCounts && <p className="text-sm text-card-y">Use whole numbers from 0 to 999.</p>}
-    {edit && finalized && dirty && <Field label="Statistics correction reason"><TextInput value={reason} maxLength={400} disabled={locked} onChange={(e) => setReason(e.target.value)} /></Field>}
-    {edit && <div className="flex flex-wrap gap-2"><Button onClick={save} loading={busy} disabled={!dirty || locked || !validCounts || (finalized && !reason.trim())}>{finalized ? "Save statistics correction" : "Save statistics"}</Button>
-      {dirty && <Button variant="ghost" disabled={locked} onClick={() => { setDraft(Object.fromEntries(saved.map((s) => [s.playerId, [String(s.saves), String(s.defensiveContributions)]]))); setReason(""); setError(null); changed(false); }}>Discard changes</Button>}</div>}
   </Panel>;
 }
