@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { safeAuthPath } from "@/lib/auth-redirect";
 import { authCookieOptions, unreadableAuthCookies } from "@/lib/supabase/auth-cookies";
 import { getSupabasePublicConfig } from "@/lib/supabase/config";
 import { googleAppOrigin, googleRequestOrigin, googleStartCookieName, googleStartCookieOptions, googleStartTokenPattern, newGoogleStartToken } from "@/lib/supabase/google-oauth";
@@ -11,11 +10,16 @@ import { googleAppOrigin, googleRequestOrigin, googleStartCookieName, googleStar
  * need the proxy to persist rotated tokens before Server Components run.
  */
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  // Never put an Auth network call or a session redirect in front of the
+  // shared homepage. The page resumes a session in the background instead.
+  if (pathname === "/") return NextResponse.next();
+
   let config: ReturnType<typeof getSupabasePublicConfig>;
   try {
     config = getSupabasePublicConfig();
   } catch {
-    return NextResponse.next({ request });
+    return NextResponse.next();
   }
 
   const pending = new Map<string, { value: string; options: CookieOptions }>();
@@ -28,41 +32,30 @@ export async function proxy(request: NextRequest) {
     if (pending.size) response.headers.set("Cache-Control", "private, no-store");
     return response;
   };
-  const supabase = createServerClient(config.url, config.publishableKey, {
-    cookies: {
-      getAll: () => request.cookies.getAll(),
-      setAll(cookiesToSet) {
-        for (const { name, value, options } of cookiesToSet) {
-          if (options.maxAge === 0) request.cookies.delete(name);
-          else request.cookies.set(name, value);
-          pending.set(name, { value, options: authCookieOptions(name, options) });
-        }
-      },
-    },
-  });
-
-  const { pathname, searchParams } = request.nextUrl;
-  try {
-    if ((pathname === "/" || pathname === "/login") && !searchParams.has("auth_error")) {
-      // Verify with Auth, rather than trusting a cookie or JWT alone to redirect.
-      // This avoids sending a revoked session back to a protected route in a loop.
-      const { data, error } = await supabase.auth.getUser();
-      if (!error && data.user) {
-        const next = pathname === "/login" ? safeAuthPath(searchParams.get("next")) : "/dashboard";
-        const destination = /^\/login\/?(?:[?#]|$)/.test(next) ? "/dashboard" : next;
-        return withCookies(new NextResponse(null, { status: 307, headers: { Location: destination, "Cache-Control": "private, no-store" } }));
-      }
-    } else {
+  const isSignInPage = pathname === "/login" || pathname === "/signup";
+  if (!isSignInPage) {
+    try {
+      const supabase = createServerClient(config.url, config.publishableKey, {
+        cookies: {
+          getAll: () => request.cookies.getAll(),
+          setAll(cookiesToSet) {
+            for (const { name, value, options } of cookiesToSet) {
+              if (options.maxAge === 0) request.cookies.delete(name);
+              else request.cookies.set(name, value);
+              pending.set(name, { value, options: authCookieOptions(name, options) });
+            }
+          },
+        },
+      });
       await supabase.auth.getClaims();
+    } catch {
+      // Protected pages and APIs verify their own session independently.
+      // Do not delete a readable session merely because Auth was unavailable.
     }
-  } catch {
-    // A failed Auth check never grants access. Public pages can still render;
-    // protected pages and APIs verify their own session independently.
-    // Do not delete a readable session merely because Auth was unavailable.
   }
   // Mint the nonce before rendering, so the browser receives the same value
   // in its host-only cookie and in the form without an extra fetch.
-  const googleConfigured = (pathname === "/login" || pathname === "/signup") && request.method === "GET" ? googleAppOrigin() : null;
+  const googleConfigured = isSignInPage && request.method === "GET" ? googleAppOrigin() : null;
   const googleOrigin = googleConfigured && googleRequestOrigin(request, googleConfigured);
   if (googleOrigin) {
     const secure = googleOrigin.startsWith("https:");
@@ -73,13 +66,14 @@ export async function proxy(request: NextRequest) {
       pending.set(name, { value, options: googleStartCookieOptions(secure) });
     }
   }
-  const response = withCookies(NextResponse.next({ request }));
+  // Forward request-header overrides only after a cookie actually changed.
+  const response = withCookies(pending.size ? NextResponse.next({ request }) : NextResponse.next());
   if (googleOrigin) response.headers.set("Cache-Control", "private, no-store");
   return response;
 }
 
 export const config = {
   matcher: [
-    "/((?!api/|auth/callback(?:/|$)|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!$|api/|auth/callback(?:/|$)|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

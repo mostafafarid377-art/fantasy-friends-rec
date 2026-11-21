@@ -8,6 +8,7 @@ import {
   Users,
 } from "lucide-react";
 import { Badge, Slate } from "@/components/ui";
+import { ResumeSession } from "@/components/ResumeSession";
 
 const STEPS = [
   {
@@ -40,6 +41,7 @@ const FORMATS = [
 export default function LandingPage() {
   return (
     <main className="relative">
+      <ResumeSession destination="/dashboard" />
       {/* ---------------- hero ---------------- */}
       <section className="relative isolate overflow-hidden">
         <div className="absolute inset-0 -z-10">
