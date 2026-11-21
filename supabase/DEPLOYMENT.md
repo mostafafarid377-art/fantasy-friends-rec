@@ -25,6 +25,7 @@ missing forward migrations, in order:
 14. `0018_automatic_match_bonus.sql` (automatic competition ranking for bonuses)
 15. `0019_squad_points_and_real_lineups.sql` (fantasy-only kickoff lock, independent real lineups, individual player history, optional event minute)
 16. `0020_next_match_lineups.sql` (match-specific fantasy lineups and forward-only verified lineup history)
+17. `0021_approval_kickoff.sql` (server-enforced approval cutoff at scheduled kickoff)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -90,7 +91,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0020_next_match_lineups.sql`. The
+`0001_schema.sql` to `0021_approval_kickoff.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -336,3 +337,11 @@ squad as the scoring input. Approval records the selected input atomically
 with official scoring. Corrections continue using the official ledger and do
 not rewrite the saved historical lineup. Real-team lineup permissions and
 scoring formulas are unchanged.
+
+### Match approval kickoff cutoff (`0021`)
+
+Apply `0021_approval_kickoff.sql` after `0020`. The existing approval RPC
+checks the current scheduled kickoff against the database clock before writing
+an approval or official points. Submitting for review and rejecting are not
+restricted by this cutoff. Previously approved matches, scores, and lineup
+history are not changed or backfilled.
