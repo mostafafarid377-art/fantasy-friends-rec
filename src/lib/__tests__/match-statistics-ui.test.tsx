@@ -13,11 +13,16 @@ it("records statistics without any manual bonus controls or payload", async () =
   render(<MatchStatistics matchId="match" version={1} started status="draft" correctable={false} canManage players={players}
     saved={[]} workflowBusy={false} onDirty={vi.fn()} onSaved={onSaved} />);
   fireEvent.click(screen.getByText("Match statistics"));
+  expect(screen.queryByRole("button", {name:"Save statistics"})).toBeNull();
   fireEvent.change(screen.getByRole("textbox", {name:"Keeper saves"}), {target:{value:"6"}});
   expect(screen.queryByRole("combobox")).toBeNull();
   expect(screen.queryByRole("region", { name: "Match Bonus Points" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", {name:"Save statistics"}));
-  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+  const save = screen.getByRole("button", {name:"Save statistics"});
+  fireEvent.click(save);
+  fireEvent.click(save);
+  await waitFor(() => expect(screen.queryByRole("button", {name:"Save statistics"})).toBeNull());
+  expect(onSaved).toHaveBeenCalledOnce();
+  expect(fetchMock).toHaveBeenCalledOnce();
   expect(fetchMock.mock.calls[0][0]).toBe("/api/matches/match/statistics");
   expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ version:1, stats:[{playerId:"gk",saves:6,defensiveContributions:0}] });
 });
