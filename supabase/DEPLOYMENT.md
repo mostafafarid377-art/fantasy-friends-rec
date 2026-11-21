@@ -24,6 +24,7 @@ missing forward migrations, in order:
 13. `0017_google_profile_names.sql` (first-login profile names)
 14. `0018_automatic_match_bonus.sql` (automatic competition ranking for bonuses)
 15. `0019_squad_points_and_real_lineups.sql` (fantasy-only kickoff lock, independent real lineups, individual player history, optional event minute)
+16. `0020_next_match_lineups.sql` (match-specific fantasy lineups and forward-only verified lineup history)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -89,7 +90,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0019_squad_points_and_real_lineups.sql`. The
+`0001_schema.sql` to `0020_next_match_lineups.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -319,3 +320,19 @@ scoring, clean-sheet eligibility or the range allowed for recording match events
   correction updates and manager/organizer permissions on staging.
 - Newly logged regular match events may omit the minute. Historical event
   minutes stay stored, and substitution minutes are still required.
+
+### Next Match Lineup (`0020`)
+
+Apply `0020_next_match_lineups.sql` after `0019` and **before** releasing the
+updated app. Never run the fresh-install script against an existing database.
+The migration adds private fantasy lineup tables and caller-scoped RPCs. It
+neither backfills old lineups nor revises scores. A previous lineup becomes
+eligible after approval of a post-rollout match with a verified full starting
+lineup. Kickoffs before migration installation are deliberately excluded.
+
+Before kickoff, a saved match lineup applies only to that fixture. Opening the
+editor, making unsaved changes, or never opening it leaves the existing saved
+squad as the scoring input. Approval records the selected input atomically
+with official scoring. Corrections continue using the official ledger and do
+not rewrite the saved historical lineup. Real-team lineup permissions and
+scoring formulas are unchanged.
