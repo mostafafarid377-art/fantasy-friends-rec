@@ -1,8 +1,10 @@
 import { safeAuthPath } from "@/lib/auth-redirect";
 import { googleAppOrigin } from "@/lib/supabase/google-oauth";
+import { GOOGLE_START_ERROR } from "@/lib/google-sign-in";
 import LoginForm from "./LoginForm";
 
 const messages = new Map([
+  ["google_start_failed", GOOGLE_START_ERROR],
   ["google_cancelled", "Google sign-in was cancelled. You can try again or continue with email."],
   ["google_failed", "We couldn’t complete Google sign-in. Try again in this browser, or continue with email."],
   ["google_unavailable", "Google sign-in is unavailable right now. Please continue with email or try again later."],
