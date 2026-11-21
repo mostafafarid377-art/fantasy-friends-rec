@@ -6,6 +6,8 @@ export type PreviousMatchLineup = { matchId: string; title: string; kickOff: str
 export type SavedMatchLineup = { revision: string; lineup: MatchLineup };
 export type NextMatchLineup = {
   serverNow: string;
+  canPrepare?: boolean;
+  preparation?: SavedMatchLineup | null;
   previous: PreviousMatchLineup | null;
   match: { id: string; title: string; kickOff: string; locked: boolean } | null;
   saved: SavedMatchLineup | null;

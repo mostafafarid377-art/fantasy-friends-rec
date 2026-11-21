@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, History, Lock, Pencil, Save, Unlock } from "lucide-react";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
@@ -15,9 +15,26 @@ import type { PlayerPool, PoolPlayer, SquadEntry } from "@/lib/squad";
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 const arrowClass = "grid size-11 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-35";
 
-export function NextMatchLineupScreen({ leagueId, leagueName, rules, data, fallback, onBack, refresh, route, loadError }: {
+type Props = {
   leagueId: string; leagueName: string; rules: LeagueRules; data: NextMatchLineup; fallback: MatchLineup;
   onBack: () => void; refresh: () => Promise<void>; route: string; loadError: string | null;
+};
+
+export function NextMatchLineupScreen(props: Props) {
+  const [showPreparation, setShowPreparation] = useState(false);
+  const { data } = props;
+  const canSwitch = Boolean(data.match?.locked && data.canPrepare);
+  const isPreparation = canSwitch && showPreparation;
+  return <LineupEditor {...props} key={isPreparation ? "preparation" : "fixture"}
+    data={isPreparation ? { ...data, match: null, saved: data.preparation ?? null } : data}
+    modeAction={canSwitch ? {
+      label: isPreparation ? "View locked lineup" : "Prepare next lineup",
+      onClick: () => setShowPreparation(!isPreparation),
+    } : undefined} />;
+}
+
+function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, refresh, route, loadError, modeAction }: Props & {
+  modeAction?: { label: string; onClick: () => void };
 }) {
   const [edit, setEdit] = useState<{ lineup: MatchLineup; revision: string | null } | null>(null);
   const [confirmed, setConfirmed] = useState<SavedMatchLineup | null>(null);
@@ -29,8 +46,12 @@ export function NextMatchLineupScreen({ leagueId, leagueName, rules, data, fallb
   const [notice, setNotice] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const { previous, match } = data;
+  const preparing = !match && Boolean(data.canPrepare);
+  const targetMatchId = match?.id ?? null;
   const remaining = useKickoffClock(data.serverNow, match?.kickOff);
   const locked = Boolean(match?.locked || remaining === 0);
+  const needsDeadlineRefresh = match?.locked === false && remaining === 0;
+  useEffect(() => { if (needsDeadlineRefresh) void refresh(); }, [needsDeadlineRefresh, refresh]);
   // A confirmed response may arrive while GET still contains the earlier value.
   const saved = confirmed && (!data.saved || confirmed.revision >= data.saved.revision) ? confirmed : data.saved;
   const lineup = ((locked ? null : edit?.lineup) ?? saved?.lineup ?? (locked ? fallback : previous?.lineup)) ?? fallback;
@@ -70,19 +91,19 @@ export function NextMatchLineupScreen({ leagueId, leagueName, rules, data, fallb
     closePicker();
   }
   async function save() {
-    if (!match || !previous || locked || saving || conflict || loadError || !validation.ok || unavailable.length || starters.length !== rules.starters) return;
+    if ((!match && !preparing) || !previous || locked || saving || conflict || loadError || !validation.ok || unavailable.length || starters.length !== rules.starters) return;
     setSaving(true); setMessage(null); setNotice(null);
     try {
       const normalized = normalizeBench(lineup.players);
-      const result = await api<SavedMatchLineup & { matchId: string }>(route, { method: "PUT", body: {
-        matchId: match.id, formation: shape.label, captainId: lineup.captainId, viceId: lineup.viceId,
+      const result = await api<SavedMatchLineup & { matchId: string | null }>(route, { method: "PUT", body: {
+        matchId: targetMatchId, formation: shape.label, captainId: lineup.captainId, viceId: lineup.viceId,
         expectedUpdatedAt: revision, entries: lineupEntries(normalized),
       } });
-      if (result.matchId !== match.id || !result.revision || !result.lineup) throw new ApiRequestError("Save could not be confirmed. Reload before retrying.", 409);
+      if (result.matchId !== targetMatchId || !result.revision || !result.lineup) throw new ApiRequestError("Save could not be confirmed. Reload before retrying.", 409);
       const byId = new Map(normalized.map((p) => [p.id, p]));
       setConfirmed({ revision: result.revision, lineup: { ...result.lineup, players: result.lineup.players.map((p) => ({ ...byId.get(p.id)!, ...p })) } });
       setEdit(null);
-      setNotice("Lineup saved for this match only.");
+      setNotice(preparing ? "Lineup prepared. My Squad is unchanged." : "Lineup saved for this match only.");
       void refresh();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not save the match lineup.");
@@ -93,7 +114,8 @@ export function NextMatchLineupScreen({ leagueId, leagueName, rules, data, fallb
 
   return <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
     <PageHeader eyebrow={`${leagueName} · ${rules.format} fantasy`} title="Next Match Lineup"
-      subtitle="This lineup is separate from Edit Squad. Until you save it, the match uses your current saved squad."
+      subtitle={preparing ? "Prepare your next lineup without changing your current saved squad."
+        : "This lineup is separate from Edit Squad. Until you save it, the match uses your current saved squad."}
       actions={<><Button variant="outline" onClick={onBack}><Pencil aria-hidden="true" className="size-4" />Edit Squad</Button><Button disabled><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button></>} />
     {previous && <Panel className="mb-5 p-4">
       <details>
@@ -105,8 +127,15 @@ export function NextMatchLineupScreen({ leagueId, leagueName, rules, data, fallb
       </details>
     </Panel>}
     {loadError && <div className="mb-4"><ErrorNote message={loadError} onRetry={() => void refresh()} /></div>}
-    {!match ? <Panel className="p-4"><h2 className="text-xl">No next match scheduled</h2><p className="mt-2 text-sm text-sage">When a match is scheduled, you can prepare its lineup here.</p></Panel> : <>
-      <Panel className="floodlight mb-5 flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
+    {!match && <Panel className="floodlight mb-5 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2"><h2 className="text-xl">No next match scheduled</h2>{preparing && <Badge tone="live">Editable</Badge>}</div>
+      <p className="mt-2 text-sm text-sage">{preparing
+        ? "Save your lineup now. It will be applied when a match with a future kickoff is created in this league. Your current squad and previous lineups won’t change."
+        : "When a match is scheduled, you can prepare its lineup here."}</p>
+    </Panel>}
+    {modeAction && <Button className="mb-4" variant="outline" disabled={saving} onClick={modeAction.onClick}>{modeAction.label}</Button>}
+    {(match || preparing) && <>
+      {match && <Panel className="floodlight mb-5 flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2"><span className="slate text-sage">Next fixture</span><Badge tone={locked ? "warn" : "live"}>{locked ? <Lock aria-hidden="true" className="size-3" /> : <Unlock aria-hidden="true" className="size-3" />}{locked ? "Locked" : "Editable"}</Badge></div>
           <h2 className="break-words text-2xl sm:text-3xl">{match.title}</h2>
@@ -115,15 +144,15 @@ export function NextMatchLineupScreen({ leagueId, leagueName, rules, data, fallb
         <div className="w-full sm:w-auto"><p className="slate mb-2 text-sage">{locked ? "Lineup deadline" : "Time until kickoff"}</p>
           {locked ? <p className="num text-2xl font-semibold text-sage">Closed</p> : <KickoffCountdown remaining={remaining} />}
         </div>
-      </Panel>
+      </Panel>}
       {locked && <p role="status" className="mb-4 rounded border border-card-y/35 bg-card-y/5 p-3 text-sm">{saved ? "This match’s saved lineup is locked." : "No match-specific lineup was saved. This match uses your current saved squad."}</p>}
       {message && <div className="mb-4" role="alert"><ErrorNote message={message} />{conflict && <Button variant="outline" className="mt-2" onClick={async () => {
         await refresh(); setEdit(null); setConfirmed(null); setConflict(false); setMessage(null);
       }}>Reload lineup</Button>}</div>}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)] lg:gap-6">
-        <section aria-label="Starting lineup" className="mx-auto w-full max-w-[520px] min-w-0 lg:max-w-none">
+        <section aria-label={preparing ? "Next match starters" : "Starting lineup"} className="mx-auto w-full max-w-[520px] min-w-0 lg:max-w-none">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2"><h2 className="text-xl">Starting lineup</h2><Badge tone="live">{starters.length}/{rules.starters}</Badge></div>
+            <div className="flex items-center gap-2"><h2 className="text-xl">{preparing ? "Next match starters" : "Starting lineup"}</h2><Badge tone="live">{starters.length}/{rules.starters}</Badge></div>
             <label className="flex items-center gap-2"><span className="text-xs font-semibold text-sage">Formation</span>
               <select className={fieldClass} value={shape.label} disabled={locked || saving} onChange={(e) => {
                 const formation = findFormation(e.target.value, rules.format);
@@ -176,8 +205,8 @@ export function NextMatchLineupScreen({ leagueId, leagueName, rules, data, fallb
           {!locked && !validation.ok && <ul className="space-y-1 text-sm text-card-y">{validation.errors.map((error) => <li key={error}>{error}</li>)}</ul>}
           <Panel className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-sage">{locked ? "Read-only lineup" : edit ? "Unsaved changes" : saved ? "Saved for this match" : "Draft copied from your previous match"}</p>
-              <Button className="min-h-11" disabled={locked || conflict || Boolean(loadError) || unavailable.length > 0 || !validation.ok || starters.length !== rules.starters} loading={saving} onClick={save}><Save aria-hidden="true" className="size-4" />Save changes</Button>
+              <p className="text-sm text-sage">{locked ? "Read-only lineup" : edit ? "Unsaved changes" : saved ? (preparing ? "Prepared for the next fixture" : "Saved for this match") : "Draft copied from your previous match"}</p>
+              <Button className="min-h-11" disabled={locked || conflict || Boolean(loadError) || unavailable.length > 0 || !validation.ok || starters.length !== rules.starters} loading={saving} onClick={save}><Save aria-hidden="true" className="size-4" />{preparing ? "Save next lineup" : "Save changes"}</Button>
             </div>
             {notice && <p role="status" className="mt-2 text-sm text-green-glow">{notice}</p>}
           </Panel>
