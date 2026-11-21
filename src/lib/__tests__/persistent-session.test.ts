@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { POST as login } from "@/app/api/auth/login/route";
 import { POST as logout } from "@/app/api/auth/logout/route";
-import { proxy } from "@/proxy";
+import { config, proxy } from "@/proxy";
+import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
+import { GET as session } from "@/app/api/auth/session/route";
 
 // Use the real Supabase SSR cookie storage with a fake Auth service. A new
 // request after restart receives only cookies with a positive lifetime.
@@ -23,6 +25,7 @@ const restart = () => {
 const navigate = (path: string) => proxy(new NextRequest(`${app}${path}`, {
   headers: { cookie: [...browser].map(([name, { value }]) => `${name}=${value}`).join("; ") },
 }));
+const readSession = () => session(new NextRequest(`${app}/api/auth/session`));
 const signIn = () => login(new NextRequest(`${app}/api/auth/login`, { method: "POST", body: JSON.stringify({ email: user.email, password: "test-password" }) }));
 
 let initialExpiry: number;
@@ -42,14 +45,21 @@ beforeEach(() => {
     }
     if (url.pathname.endsWith("/user")) return Response.json(user);
     if (url.pathname.endsWith("/logout")) return new Response(null, { status: 204 });
+    if (url.pathname.endsWith("/notifications")) return new Response(null, { headers: { "content-range": "*/0" } });
+    if (url.pathname.endsWith("/league_members") || url.pathname.endsWith("/league_standings")) return Response.json([]);
     return Response.json({ username: "person", display_name: "Person" });
   });
   vi.stubGlobal("fetch", upstream);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-it("keeps login persistent and resumes the app from home or the sign-in page after reopening", async () => {
-  expect((await navigate("/")).headers.get("location")).toBeNull();
+it("serves shared homepage links without running the proxy", () => {
+  expect(unstable_doesMiddlewareMatch({ config, nextConfig: {}, url: `${app}/?from=share` })).toBe(false);
+  expect(unstable_doesMiddlewareMatch({ config, nextConfig: {}, url: `${app}/login` })).toBe(true);
+  expect(unstable_doesMiddlewareMatch({ config, nextConfig: {}, url: `${app}/dashboard` })).toBe(true);
+});
+
+it("keeps sign-in persistent and verifies the reopened session separately from the public pages", async () => {
   expect((await signIn()).status).toBe(200);
   expect([...browser.values()].length).toBeGreaterThan(0);
   for (const { options } of browser.values()) {
@@ -57,24 +67,27 @@ it("keeps login persistent and resumes the app from home or the sign-in page aft
     expect(options.maxAge).toBeGreaterThan(86400);
   }
   restart();
-  expect((await navigate("/")).headers.get("location")).toBe("/dashboard");
-  expect((await navigate("/login?next=%2Fteam")).headers.get("location")).toBe("/team");
-  expect((await navigate("/login?next=%2F%2Foutside.example")).headers.get("location")).toBe("/dashboard");
-  expect((await navigate("/login?next=%2Flogin%3Fnext%3D%2Fteam")).headers.get("location")).toBe("/dashboard");
-  expect((await navigate("/login?auth_error=google_failed")).headers.get("location")).toBeNull();
+  upstream.mockClear();
+  for (const path of ["/", "/login?next=%2Fteam"]) {
+    const response = await navigate(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.has("x-middleware-override-headers")).toBe(false);
+  }
+  expect(upstream).not.toHaveBeenCalled();
+  expect(await (await readSession()).json()).toMatchObject({ user: { id: user.id }, leagues: [], unread: 0 });
   expect((await logout()).status).toBe(200);
   expect([...browser.values()].every(({ options }) => options.maxAge === 0)).toBe(true);
   restart();
-  expect((await navigate("/")).headers.get("location")).toBeNull();
+  expect(await (await readSession()).json()).toMatchObject({ user: null });
 });
 
-it("puts rotated cookies on the redirect response when reopening with an expired access token", async () => {
+it("keeps cookie rotation on protected navigation", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   expect((await signIn()).status).toBe(200);
   vi.setSystemTime(new Date((initialExpiry + 60) * 1000));
   restart();
-  const response = await navigate("/");
-  expect(response.headers.get("location")).toBe("/dashboard");
+  const response = await navigate("/dashboard");
   expect(response.headers.get("cache-control")).toBe("private, no-store");
   const rotated = response.cookies.getAll();
   expect(rotated.length).toBeGreaterThan(0);
@@ -86,7 +99,7 @@ it("puts rotated cookies on the redirect response when reopening with an expired
   restart();
   const count = () => upstream.mock.calls.filter(([url]) => String(url).includes("grant_type=refresh_token")).length;
   expect(count()).toBe(1);
-  expect((await navigate("/")).headers.get("location")).toBe("/dashboard");
+  expect(await (await readSession()).json()).toMatchObject({ user: { id: user.id } });
   expect(count()).toBe(1);
 });
 
@@ -94,10 +107,10 @@ it("does not resume a revoked session just because a cookie remains", async () =
   expect((await signIn()).status).toBe(200);
   restart();
   upstream.mockImplementation(async () => Response.json({ code: "session_not_found", message: "Session ended" }, { status: 403 }));
-  expect((await navigate("/login")).headers.get("location")).toBeNull();
+  expect(await (await readSession()).json()).toMatchObject({ user: null });
 });
 
-it("opens an old shared homepage link even with a malformed session cookie", async () => {
+it("opens an old shared homepage link even with a malformed session cookie and clears it on the background check", async () => {
   const key = "sb-example-project-auth-token";
   const options = { maxAge: 86400 };
   browser.set(`${key}.0`, { value: "base64-not%21", options });
@@ -106,10 +119,11 @@ it("opens an old shared homepage link even with a malformed session cookie", asy
   const response = await navigate("/");
   expect(response.status).toBe(200);
   expect(response.headers.get("location")).toBeNull();
-  expect(response.cookies.get(`${key}.0`)?.maxAge).toBe(0);
-  expect(response.cookies.get(`${key}.1`)?.maxAge).toBe(0);
-  expect(response.cookies.get("unrelated")).toBeUndefined();
-  expect(response.headers.get("x-middleware-request-cookie")).toBe("unrelated=keep");
+  expect(response.cookies.getAll()).toEqual([]);
+  expect(await (await readSession()).json()).toMatchObject({ user: null });
+  expect(browser.get(`${key}.0`)?.options.maxAge).toBe(0);
+  expect(browser.get(`${key}.1`)?.options.maxAge).toBe(0);
+  expect(browser.get("unrelated")?.value).toBe("keep");
   expect(upstream).not.toHaveBeenCalled();
 });
 
@@ -118,15 +132,16 @@ it("can sign in again directly when the browser sends an unreadable session cook
   browser.set(key, { value: "base64-!", options: { maxAge: 86400 } });
   expect((await signIn()).status).toBe(200);
   expect(browser.get(key)?.options.maxAge).toBeGreaterThan(86400);
-  expect((await navigate("/")).headers.get("location")).toBe("/dashboard");
+  expect(await (await readSession()).json()).toMatchObject({ user: { id: user.id } });
 });
 
-it("keeps readable cookies during a temporary Auth outage and lets the homepage load", async () => {
+it("keeps readable cookies and the homepage during a temporary Auth outage", async () => {
   expect((await signIn()).status).toBe(200);
   upstream.mockResolvedValueOnce(Response.json({ message: "Unavailable" }, { status: 503 }));
   const response = await navigate("/");
   expect(response.status).toBe(200);
   expect(response.headers.get("location")).toBeNull();
-  expect(response.cookies.getAll()).toEqual([]);
-  expect((await navigate("/")).headers.get("location")).toBe("/dashboard");
+  expect(await (await readSession()).json()).toMatchObject({ user: null });
+  expect([...browser.values()].every(({ options }) => (options.maxAge ?? 0) > 0)).toBe(true);
+  expect(await (await readSession()).json()).toMatchObject({ user: { id: user.id } });
 });
