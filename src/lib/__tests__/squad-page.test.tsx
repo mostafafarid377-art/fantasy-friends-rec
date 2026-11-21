@@ -260,7 +260,7 @@ it("previews real starters, captaincy and substitutes, refreshes an edited squad
   expect(screen.getByRole("link", { name: "Pick Your Squad" }).getAttribute("href")).toBe("/team/pick");
 });
 
-it("shows one official team total above the squad and opens individual history only on demand", async () => {
+it("shows individual points on the pitch and bench and keeps the separate official team total above the squad", async () => {
   const { saved, fetch, latest, histories, historyError, put } = fixture();
   saved.set(a.id, { ...empty(a), squad: { id: "s-a", formation: "1-2-1", captainId: "gk-a", viceCaptainId: null, completedAt: null, updatedAt: "2026-11-01T12:00:00Z" },
     players: [{ ...pool[0], slot: "starter", name: pool[0].fullName, order: 0 }, { ...pool[1], slot: "sub", name: pool[1].fullName, order: 0 },
@@ -277,9 +277,13 @@ it("shows one official team total above the squad and opens individual history o
   const page = renderInShell();
   const starter = await screen.findByRole("button", { name: "Ada Keeper, GK, captain" });
   const bench = screen.getByRole("button", { name: /Zed Keeper/ });
-  expect(within(starter).queryByText(/pts/)).toBeNull();
-  expect(within(bench).queryByText(/pts|—/)).toBeNull();
-  expect(fetch.mock.calls.some(([url]) => url.includes("/player-performance?") || url.endsWith("/performance"))).toBe(false);
+  expect(await within(starter).findByText("8 pts")).toBeTruthy();
+  expect(within(starter).getByText("C: 16 pts")).toBeTruthy();
+  expect(within(screen.getByRole("button", {name:"Dana Defender, DEF"})).getByText("—")).toBeTruthy();
+  expect(within(bench).getByText("—")).toBeTruthy();
+  expect(fetch.mock.calls.filter(([url]) => url.includes("/player-performance?")).map(([url]) => url.split("?")[1]))
+    .toEqual(["player=def-a&player=gk-a&player=gk-b"]);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/performance"))).toBe(false);
   const region = await screen.findByRole("region", { name: "Last match points" });
   const summary = within(region);
   expect(region.compareDocumentPosition(screen.getByRole("region", {name:"Starting lineup"})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -293,8 +297,12 @@ it("shows one official team total above the squad and opens individual history o
   expect(await summary.findByText("No squad score recorded")).toBeTruthy();
   refresh(0);
   expect(await summary.findByText("0 pts")).toBeTruthy();
+  latest["def-a"] = { ...latest["gk-a"], points: 0, captainPoints: undefined };
+  latest["gk-b"] = { ...latest["gk-a"], points: 4, captainPoints: undefined };
   refresh(lastMatch.points);
   expect(await summary.findByText("27.5 pts")).toBeTruthy();
+  expect(await within(screen.getByRole("button", {name:"Dana Defender, DEF"})).findByText("0 pts")).toBeTruthy();
+  expect(await within(bench).findByText("4 pts")).toBeTruthy();
   expect(summary.getByText(/Cup match/).querySelector("time")?.dateTime).toBe(lastMatch.kickOff);
   expect(summary.queryByText(/Ada Keeper|Zed Keeper/)).toBeNull();
   expect(summary.queryByRole("list")).toBeNull();

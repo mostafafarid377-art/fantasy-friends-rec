@@ -5,7 +5,7 @@ import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, Plus, Save } from "lucide
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
-import { PlayerPerformanceDialog, useLatestPlayerGames } from "./PlayerPerformance";
+import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "./PlayerPerformance";
 import { formatPlayerPoints } from "@/lib/player-performance";
 import { countdown, useKickoffClock } from "@/lib/match-deadline";
 import { fieldClass, SquadPicker } from "./SquadPicker";
@@ -75,8 +75,10 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   }, [locked]);
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
-  const inspectedPlayer = (edit?.players ?? squad.data?.players)?.find((player) => player.id === playerId);
-  const individual = useLatestPlayerGames(leagueId, inspectedPlayer && !moving ? [inspectedPlayer] : []);
+  const activePlayers = (editing ? edit?.players : undefined) ?? squad.data?.players ?? [];
+  const lineupScores = useLatestPlayerGames(leagueId, activePlayers.filter((player) => player.slot !== "reserve"));
+  const inspectedPlayer = activePlayers.find((player) => player.id === playerId && player.slot === "reserve");
+  const inspectedScores = useLatestPlayerGames(leagueId, inspectedPlayer && !moving ? [inspectedPlayer] : []);
   useLeagueContentUpdates(leagueId, squad.reload, false);
   useLeagueContentUpdates(leagueId, pool.reload, false);
 
@@ -177,7 +179,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   const benchRow = (p: SquadEntry, label: string) => <button type="button" disabled={saving} onClick={() => setPlayerId(p.id)}
     className="flex min-w-0 flex-1 items-center gap-2 rounded border border-line px-2 py-2 text-left text-chalk hover:border-green">
     <span className="num text-xs text-green">{label}</span><Avatar name={p.name} url={p.photoUrl} size={28} />
-    <span className="min-w-0 flex-1 break-words text-sm">{p.name}</span><span className="text-xs text-sage">{p.position}</span>
+    <span className="min-w-0 flex-1 break-words text-sm">{p.name}{lineupScores.data && <PlayerPointsLabel game={lineupScores.data[p.id]} />}</span><span className="text-xs text-sage">{p.position}</span>
   </button>;
   const priorityButton = "grid min-h-10 min-w-10 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-40";
   const addStarter = (position: Position) => openPicker({ slot: "starter", position });
@@ -228,7 +230,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             </select> : <Badge>{shape.label}</Badge>}
           </div>
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
-            disabled={saving} onAdd={locked ? undefined : addStarter} onSelect={setPlayerId} />
+            disabled={saving} latest={lineupScores.data ?? undefined} onAdd={locked ? undefined : addStarter} onSelect={setPlayerId} />
           {!!unplaced.length && <Panel className="p-3">
             <p className="mb-2 text-sm text-card-y">Some saved starters no longer fit. Move, replace or remove them to repair the lineup.</p>
             {unplaced.map((p) => <Button key={p.id} variant="ghost" onClick={() => setPlayerId(p.id)}>{p.name} · {p.position}</Button>)}
@@ -290,7 +292,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         replacement={Boolean(pick.replace)} allowed={eligiblePositions(pick)} selected={new Set(players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()}
         onPick={pickPlayer} onClose={() => setPick(null)} />}
       {selected && !moving && <PlayerPerformanceDialog key={selected.id} leagueId={leagueId} entry={selected}
-        latest={individual.data?.[selected.id]} onClose={() => setPlayerId(null)} actions={<>
+        latest={lineupScores.data?.[selected.id] ?? inspectedScores.data?.[selected.id]} onClose={() => setPlayerId(null)} actions={<>
         <p className="mb-2 text-xs text-sage">{LABEL[selected.slot]} · {selected.status !== "active" ? "Archived" : selected.availability}</p>
         {editing ? <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
           {selected.slot === "starter" && selected.status === "active" && <>
