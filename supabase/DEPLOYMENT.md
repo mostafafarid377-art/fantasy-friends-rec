@@ -23,7 +23,7 @@ missing forward migrations, in order:
 12. `0016_team_logos.sql` (private real-team logos and history reads)
 13. `0017_google_profile_names.sql` (first-login profile names)
 14. `0018_automatic_match_bonus.sql` (automatic competition ranking for bonuses)
-15. `0019_squad_points_and_real_lineups.sql` (fantasy-only kickoff lock, independent real lineups, latest individual scores, optional event minute)
+15. `0019_squad_points_and_real_lineups.sql` (fantasy-only kickoff lock, independent real lineups, individual player history, optional event minute)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -312,9 +312,10 @@ scoring, clean-sheet eligibility or the range allowed for recording match events
   The current real lineup remains editable without changing approved points.
   Existing match statistics no longer cascade on lineup replacement. Clear affected
   statistics explicitly before removing a participant in an unapproved match.
-- Last match points read the current approved individual scoring ledger, including
-  any recorded bonus, with title and kickoff date. A later unused bench slot does
-  not hide an earlier appearance. Use separate accounts to verify standings,
+- The Squad page's Last Match Points box uses the existing `last_game_points`
+  RPC to show the signed-in manager's official team total for the latest approved
+  match, with its title and kickoff date. Individual points remain in each
+  player's performance view. Use separate accounts to verify standings,
   correction updates and manager/organizer permissions on staging.
 - Newly logged regular match events may omit the minute. Historical event
   minutes stay stored, and substitution minutes are still required.

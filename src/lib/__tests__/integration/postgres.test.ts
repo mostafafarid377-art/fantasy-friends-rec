@@ -1258,6 +1258,8 @@ describe("automatic scoring from the recorded final result", () => {
       expect(await manager()).toMatchObject({ id: original.id, points: "44.00", match_version: 4, computed_at: original.computed_at,
         breakdown: { captainId: home[1], lines: expect.arrayContaining([{ playerId: home[1], base: 12, multiplier: 2, points: 24 }]) } });
       expect((await standings()).rows[0]).toEqual({ total_points: "44.00", matches_played: 1 });
+      const lastMatchTotal = () => sql(c, "SELECT * FROM public.last_game_points($1)", [league.id]);
+      expect((await lastMatchTotal()).rows).toMatchObject([{matchId:match,points:"44.00"}]);
       // The assigned organizer can correct too. A draw restores both sides' clean sheets.
       await setAuthUid(c, userCId);
       await correctScore(c, match, 0, 0, 4, "Corrected final score");
@@ -1269,6 +1271,7 @@ describe("automatic scoring from the recorded final result", () => {
       ]) });
       expect(hasCleanSheet((await individual(away[0])).rows[0])).toBe(true);
       expect((await standings()).rows[0]).toEqual({ total_points: "61.00", matches_played: 1 });
+      expect((await lastMatchTotal()).rows).toMatchObject([{matchId:match,points:"61.00"}]);
       expect((await sql(c, "SELECT points FROM fantasy_points_history WHERE match_id=$1", [match])).rows).toEqual([{ points: "61.00" }]);
       expect((await sql(c, playerHistorySql, [league.id, home[1], 1, null, null])).rows[0]).toMatchObject({ points: "19.00", breakdown: def.breakdown });
       expect((await sql(c, "SELECT home_score,away_score,status,version FROM real_matches WHERE id=$1", [match])).rows[0])
