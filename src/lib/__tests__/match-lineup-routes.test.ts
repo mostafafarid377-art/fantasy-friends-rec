@@ -9,15 +9,15 @@ const ctx = { params: Promise.resolve({ id: "match-a" }) };
 const selection = { starters: ["gk","d","m1","m2","f"], subs: ["sub"] };
 const payload = lineupPayload("home", selection);
 const positions = ["GK","DEF","MID","MID","FWD","MID"];
-let role: string, organizer: string, corrupt: boolean, readError: boolean, availability: string;
+let role: string, organizer: string, corrupt: boolean, readError: boolean, availability: string, status: string;
 const filters = vi.fn();
 beforeEach(() => {
-  vi.resetAllMocks(); role = "organizer"; organizer = "me"; corrupt = false; readError = false; availability = "available";
+  vi.resetAllMocks(); role = "organizer"; organizer = "me"; corrupt = false; readError = false; availability = "available"; status = "draft";
   db.user.mockResolvedValue({ data: { user: { id: "me" } }, error: null });
   db.rpc.mockResolvedValue({ data: [], error: null });
   db.from.mockImplementation((table: string) => ({
     select() { return this; }, eq(...a: unknown[]) { filters(table,...a); return this; },
-    maybeSingle() { return { data: table === "real_matches" ? { id: "match-a", league_id: "league-a", team_a_id: "home", team_b_id: "away", organizer_id: organizer, status: "draft" }
+    maybeSingle() { return { data: table === "real_matches" ? { id: "match-a", league_id: "league-a", team_a_id: "home", team_b_id: "away", organizer_id: organizer, status, kick_off: "2026-11-19T12:00:00Z" }
       : { role, leagues: { format: "5v5", starters: 5, subs_count: 2, squad_size: 10 } }, error: null }; },
     in() { return { data: [...selection.starters,...selection.subs].map((id,i) => ({ id, position: positions[i], team_id: "home", status: "active", availability: i ? "available" : availability })), error: null }; },
     order() { return { data: db.rpc.mock.calls[0][1].p_entries.map((r: object,i: number) => ({ id: `${i}`, match_id: "match-a", league_id: "league-a", team_id: "home", ...r, ...(corrupt && i === 0 ? { order: 99 } : {}) })),
@@ -64,10 +64,16 @@ it("never confirms a rejected mutation, unreadable result, or a mismatched read-
   expect((await mismatch.json()).lineups).toBeUndefined();
 });
 
-it("returns a conflict instead of pretending a direct lineup request after kickoff saved", async () => {
-  db.rpc.mockResolvedValueOnce({ data: null, error: { code: "P0001", message: "Lineup Locked: the match has started" } });
-  const result = await put();
-  expect(result.status).toBe(409);
-  expect((await result.json()).error).toContain("Lineup Locked");
-  expect(db.from).not.toHaveBeenCalledWith("match_lineups");
+it.each(["draft", "pending", "approved"])("saves a post-kickoff %s lineup only for authorized roles", async (currentStatus) => {
+  status = currentStatus;
+  role = "manager";
+  expect((await put()).status).toBe(403);
+  role = "organizer"; organizer = "another-user";
+  expect((await put()).status).toBe(403);
+  expect(db.rpc).not.toHaveBeenCalled();
+  organizer = "me";
+  expect((await put()).status).toBe(200);
+  role = "leader"; organizer = "another-user";
+  expect((await put()).status).toBe(200);
+  expect(db.rpc).toHaveBeenCalledTimes(2);
 });

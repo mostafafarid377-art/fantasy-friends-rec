@@ -2,7 +2,7 @@ import type { BreakdownLine } from "./scoring";
 import type { Position } from "./domain";
 
 export type LatestPlayerGame = { matchId: string; points: number | null; captainPoints?: number };
-export type LatestPlayerGames = Record<string, LatestPlayerGame>;
+export type LatestPlayerGames = Record<string, LatestPlayerGame & { title: string; kickOff: string }>;
 export type PlayerGame = LatestPlayerGame & {
   title: string;
   kickOff: string;

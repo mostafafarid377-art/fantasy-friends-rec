@@ -54,8 +54,8 @@ export function MatchStatistics({ matchId, version, started, status, correctable
       {edit && <div className="mt-3 grid gap-2 sm:grid-cols-2">{players.map((p) => <div key={p.id} className="rounded border border-line p-2">
         <p className="mb-1 text-sm text-chalk">{name(p)}</p>
         <div className={`grid gap-2 ${p.position === "GK" ? "grid-cols-2" : "grid-cols-1"}`}>
-          {p.position === "GK" && <Field label="Saves"><TextInput aria-label={`${p.name} saves`} inputMode="numeric" maxLength={3} placeholder="0" value={draft[p.id]?.[0] ?? ""} disabled={locked} onChange={(e) => update(p.id, 0, e.target.value)} /></Field>}
-          <Field label="Defensive contributions"><TextInput aria-label={`${p.name} defensive contributions`} inputMode="numeric" maxLength={3} placeholder="0" value={draft[p.id]?.[1] ?? ""} disabled={locked} onChange={(e) => update(p.id, 1, e.target.value)} /></Field>
+          {p.position === "GK" && <Field label="Saves" hint="+1 per 3 saves"><TextInput aria-label={`${p.name} saves`} inputMode="numeric" maxLength={3} placeholder="0" value={draft[p.id]?.[0] ?? ""} disabled={locked} onChange={(e) => update(p.id, 0, e.target.value)} /></Field>}
+          <Field label="Defensive contributions" hint={p.position === "GK" ? "No points for goalkeepers" : p.position === "DEF" ? "+2 per 10 contributions" : "+2 per 12 contributions"}><TextInput aria-label={`${p.name} defensive contributions`} inputMode="numeric" maxLength={3} placeholder="0" value={draft[p.id]?.[1] ?? ""} disabled={locked} onChange={(e) => update(p.id, 1, e.target.value)} /></Field>
         </div>
       </div>)}</div>}
       {edit && dirty && <div className="mt-3 space-y-2">

@@ -2,7 +2,7 @@
 
 import { RealTeamName } from "./TeamLogo";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, useApi } from "@/lib/client/api";
 import { useLeagueContentUpdates } from "@/lib/client/league-updates";
 import { formatPlayerPoints, type LatestPlayerGame, type LatestPlayerGames, type PlayerGame, type PlayerHistory, type PlayerPerformance } from "@/lib/player-performance";
@@ -10,10 +10,24 @@ import type { SquadEntry } from "@/lib/squad";
 import { Avatar, Button, ErrorNote, Modal } from "./ui";
 
 export function useLatestPlayerGames(leagueId: string, players: SquadEntry[]) {
-  const ids = players.filter((p) => p.slot !== "reserve").map((p) => p.id).sort();
+  const ids = [...new Set(players.map((p) => p.id))].sort();
   const query = new URLSearchParams(ids.map((id) => ["player", id]));
   const result = useApi<LatestPlayerGames>(ids.length ? `/api/leagues/${encodeURIComponent(leagueId)}/player-performance?${query}` : null);
-  useLeagueContentUpdates(leagueId, result.reload, false);
+  useLeagueContentUpdates(leagueId, result.reload);
+  const hasPlayers = ids.length > 0;
+  const { reload } = result;
+  useEffect(() => {
+    if (!hasPlayers) return;
+    const refresh = () => { if (document.visibilityState === "visible") void reload(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const timer = window.setInterval(refresh, 15000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.clearInterval(timer);
+    };
+  }, [hasPlayers, reload]);
   return result;
 }
 

@@ -23,13 +23,14 @@ it("submits ordered entries, does not show success on DB failure, and uses persi
       return Response.json({lineups:saved});
     }
     if (!url.endsWith("/m")) throw new Error(`Unexpected ${url}`);
-    return Response.json({match:{id:"m",leagueId:"league",title:"Game",status:"draft",kickOff:"2026-11-19T18:00:00Z",teamAId:"home",teamBId:"away",version:1},
+    return Response.json({serverNow:"2026-11-19T19:00:00Z",match:{id:"m",leagueId:"league",title:"Game",status:"draft",kickOff:"2026-11-19T18:00:00Z",teamAId:"home",teamBId:"away",version:1},
       rules:{format:"5v5",starters:5,subsCount:2,squadSize:10},canOrganize:true,teams,roster:players,
       lineups:saved,events:[],substitutions:[],approvals:[]});
   });
   vi.stubGlobal("fetch",fetch);
   const page = render(<MatchPage params={params}/>);
   const firstRow = await screen.findByText("Player 0");
+  expect(screen.queryByText("Lineup Locked.")).toBeNull();
   expect(firstRow.closest("li")).not.toBeNull();
   const save = () => screen.getAllByRole("button", { name:"Save line-up" })[0] as HTMLButtonElement;
   expect(save().disabled).toBe(true);
@@ -136,4 +137,26 @@ it("saves match statistics once without leaving a repeated save prompt or toast"
   expect((screen.getByRole("textbox", {name:"Player 0 saves"}) as HTMLInputElement).value).toBe("6");
   expect(screen.queryByRole("button", {name:"Save statistics"})).toBeNull();
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/statistics"))).toHaveLength(1);
+});
+
+it("records a match event without entering a minute, while keeping the substitution minute", async () => {
+  const fetch = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/events")) {
+      expect(JSON.parse(String(init.body))).toEqual({teamId:"home",playerId:"p0",assistPlayerId:null,eventType:"goal",note:null});
+      return Response.json({event:{id:"event"}});
+    }
+    if (!url.endsWith("/m")) throw new Error(`Unexpected ${url}`);
+    return Response.json({serverNow:"2026-11-19T19:00:00Z",
+      match:{id:"m",leagueId:"league",title:"Game",status:"draft",kickOff:"2026-11-19T18:00:00Z",teamAId:"home",teamBId:"away",version:1},
+      rules:{format:"5v5",starters:5,subsCount:2,squadSize:10},canOrganize:true,canEditEvents:true,teams,roster:players,
+      lineups:[{id:"line-0",teamId:"home",playerId:"p0",player:players[0],slot:"starter",order:0}],events:[],substitutions:[],approvals:[]});
+  });
+  vi.stubGlobal("fetch",fetch);
+  render(<MatchPage params={params}/>);
+  fireEvent.click(await screen.findByRole("button", {name:/^Events/}));
+  expect(screen.getAllByRole("spinbutton")).toHaveLength(1);
+  fireEvent.change(screen.getByLabelText("Player", {exact:true}), {target:{value:"p0"}});
+  fireEvent.click(screen.getByRole("button", {name:"Add event"}));
+  expect(await screen.findByText("Event recorded")).toBeTruthy();
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/events"))).toHaveLength(1);
 });

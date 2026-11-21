@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus, Trophy } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
-import { Avatar, Badge, Button, EmptyState, ErrorNote, Panel, Skeleton, Slate, TableSkeleton } from "@/components/ui";
+import { Avatar, Badge, EmptyState, ErrorNote, Panel, Skeleton, Slate, TableSkeleton } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
 import { useApi } from "@/lib/client/api";
 
@@ -48,21 +48,21 @@ export default function StandingsPage() {
 
   if (leagueLoading || (loading && !data))
     return (
-      <div className="mx-auto max-w-5xl px-4 py-6 md:px-8">
+      <div className="mx-auto w-full min-w-0 max-w-5xl px-4 py-6 md:px-8">
         <Skeleton className="mb-6 h-20" />
         <TableSkeleton rows={8} />
       </div>
     );
   if (error)
     return (
-      <div className="mx-auto max-w-5xl px-4 py-8">
+      <div className="mx-auto w-full min-w-0 max-w-5xl px-4 py-8">
         <ErrorNote message={error} onRetry={reload} />
       </div>
     );
   if (!data) return null;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
+    <div className="mx-auto w-full min-w-0 max-w-5xl [overflow-wrap:anywhere] px-2 py-6 sm:px-4 md:px-8 md:py-8">
       <PageHeader
         eyebrow={`${league?.name} · ${league?.format}`}
         title="League table"
@@ -92,12 +92,20 @@ export default function StandingsPage() {
           icon={<Trophy className="h-5 w-5" />}
         />
       ) : view === "table" ? (
-        <Panel className="overflow-x-auto">
-          <table className="w-full min-w-[620px] border-collapse">
+        <Panel className="min-w-0">
+          <table aria-label="League standings" className="w-full table-fixed border-collapse">
+            <colgroup>
+              <col className="w-[12%] sm:w-[10%]" />
+              <col className="w-[25%] sm:w-[27%]" />
+              <col className="w-[21%]" />
+              <col className="w-[9%] sm:w-[8%]" />
+              <col className="w-[18%] sm:w-[21%]" />
+              <col className="w-[15%] sm:w-[13%]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-line">
                 {["Rank", "Manager", "Team", "MP", "Form", "Points"].map((h) => (
-                  <th key={h} className={`slate px-4 py-3 ${h === "MP" || h === "Points" ? "text-right" : "text-left"}`}>
+                  <th key={h} scope="col" className={`slate px-1 py-2 text-[10px] tracking-normal sm:px-2 sm:py-3 sm:text-[11px] sm:tracking-wider xl:px-4 ${h === "MP" || h === "Points" ? "text-right" : "text-left"}`}>
                     {h}
                   </th>
                 ))}
@@ -115,45 +123,43 @@ export default function StandingsPage() {
                     className={`transition-colors hover:bg-pitch-800/70 ${me ? "bg-green/6" : ""}`}
                     style={{ animation: `rise .4s cubic-bezier(.2,.8,.2,1) ${i * 24}ms both` }}
                   >
-                    <td className="px-4 py-3.5">
-                      <span className="flex items-center gap-2">
-                        <span className={`num w-6 text-[16px] font-semibold ${row.rank <= 3 ? "text-green" : "text-chalk"}`}>
+                    <td className="px-1 py-2 align-top sm:px-2 sm:py-3.5 xl:px-4">
+                      <span className="flex flex-wrap items-center gap-x-1 sm:gap-x-2">
+                        <span className={`num text-xs font-semibold sm:text-base ${row.rank <= 3 ? "text-green" : "text-chalk"}`}>
                           {row.rank}
                         </span>
-                        {movement === "up" && <ArrowUpRight className="h-3.5 w-3.5 text-green" />}
-                        {movement === "down" && <ArrowDownRight className="h-3.5 w-3.5 text-card-r" />}
-                        {movement === "same" && <Minus className="h-3.5 w-3.5 text-sage-dim" />}
+                        {movement === "up" && <ArrowUpRight className="h-3 w-3 shrink-0 sm:h-3.5 sm:w-3.5 text-green" />}
+                        {movement === "down" && <ArrowDownRight className="h-3 w-3 shrink-0 sm:h-3.5 sm:w-3.5 text-card-r" />}
+                        {movement === "same" && <Minus className="h-3 w-3 shrink-0 sm:h-3.5 sm:w-3.5 text-sage-dim" />}
                         {movement === null && <span className="num text-[10px] text-sage-dim">new</span>}
                       </span>
                     </td>
-                    <td className="px-4 py-3.5">
-                      <span className="flex items-center gap-2.5">
-                        <Avatar name={row.displayName} url={row.avatarUrl} size={30} />
-                        <span className="min-w-0">
-                          <span className="block truncate text-[14.5px] font-semibold text-chalk">
-                            {row.displayName}
-                            {me && <span className="ml-2 text-[10.5px] uppercase tracking-widest text-green">you</span>}
-                          </span>
-                          <span className="block truncate text-[11.5px] text-sage-dim">@{row.username}</span>
-                        </span>
-                      </span>
+                    <td className="px-1 py-2 align-top sm:px-2 sm:py-3.5 xl:px-4">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <span className="hidden shrink-0 sm:inline-flex"><Avatar name={row.displayName} url={row.avatarUrl} size={30} decorative /></span>
+                        <div className="min-w-0 flex-1">
+                          <StandingName className="text-xs font-semibold text-chalk sm:text-sm" value={row.displayName} />
+                          <StandingName className="text-[10px] text-sage-dim sm:text-xs" value={`@${row.username}`} />
+                          {me && <span className="text-[9px] uppercase tracking-wider text-green">you</span>}
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-4 py-3.5">
-                      <span className="truncate text-[13.5px] text-sage">{row.teamName ?? "—"}</span>
+                    <td className="px-1 py-2 align-top sm:px-2 sm:py-3.5 xl:px-4">
+                      <StandingName className="text-[11px] text-sage sm:text-sm" value={row.teamName ?? "—"} />
                       {row.role === "leader" && (
-                        <Badge tone="info" className="ml-2">
+                        <Badge tone="info" className="mt-1 max-w-full px-0.5 py-0 text-[8px] tracking-normal sm:px-2 sm:text-[10px]">
                           Leader
                         </Badge>
                       )}
                     </td>
-                    <td className="num px-4 py-3.5 text-right text-[14px] text-sage">{row.matchesPlayed}</td>
-                    <td className="px-4 py-3.5">
-                      <span className="flex justify-start gap-1">
+                    <td className="num px-1 py-2 text-right align-top text-[11px] text-sage sm:px-2 sm:py-3.5 sm:text-sm xl:px-4">{row.matchesPlayed}</td>
+                    <td className="px-1 py-2 align-top sm:px-2 sm:py-3.5 xl:px-4">
+                      <span className="flex flex-wrap justify-start gap-0.5 sm:gap-1">
                         {form.slice(-5).map((f, idx) => (
                           <span
                             key={idx}
                             title={`${Number(f.points)} pts`}
-                            className={`num rounded px-1.5 py-0.5 text-[10.5px] ${
+                            className={`num max-w-full rounded px-0.5 py-0.5 text-[9px] sm:px-1.5 sm:text-[10.5px] ${
                               Number(f.points) >= 10
                                 ? "bg-green/18 text-green"
                                 : Number(f.points) > 0
@@ -167,7 +173,7 @@ export default function StandingsPage() {
                         {form.length === 0 && <span className="text-[11.5px] text-sage-dim">—</span>}
                       </span>
                     </td>
-                    <td className="num px-4 py-3.5 text-right text-[18px] font-semibold text-chalk">
+                    <td className="num px-1 py-2 text-right align-top text-xs font-semibold text-chalk sm:px-2 sm:py-3.5 sm:text-lg xl:px-4">
                       {Math.round(Number(row.totalPoints))}
                     </td>
                   </tr>
@@ -181,6 +187,17 @@ export default function StandingsPage() {
       )}
     </div>
   );
+}
+
+// Tap/click or use the keyboard to expand a name inline; tooltips alone
+// aren't accessible on touch screens.
+function StandingName({ value, className }: { value: string; className: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (value === "—") return <span className={className}>{value}</span>;
+  return <button type="button" aria-expanded={expanded} title={value} onClick={() => setExpanded((previous) => !previous)}
+    className={`block w-full text-left leading-snug hover:underline focus-visible:underline ${expanded ? "[overflow-wrap:anywhere]" : "truncate"} ${className}`}>
+    {value}
+  </button>;
 }
 
 function WeeklyHistory({

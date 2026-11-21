@@ -265,8 +265,7 @@ it("shows individual latest points on starters and bench, opens history on deman
   saved.set(a.id, { ...empty(a), squad: { id: "s-a", formation: "1-2-1", captainId: "gk-a", viceCaptainId: null, completedAt: null, updatedAt: "2026-11-01T12:00:00Z" },
     players: [{ ...pool[0], slot: "starter", name: pool[0].fullName, order: 0 }, { ...pool[1], slot: "sub", name: pool[1].fullName, order: 0 },
       { ...pool[4], slot: "starter", name: pool[4].fullName, order: 1 }] });
-  latest["gk-a"] = { matchId: "match-8", points: 8, captainPoints: 16 };
-  latest["gk-b"] = { matchId: "match-9", points: null };
+  latest["gk-a"] = { matchId: "match-8", title: "Cup match", kickOff: "2026-11-19T10:00:00Z", points: 8, captainPoints: 16 };
   histories.set("gk-a", { player: { name: "Ada Keeper", position: "GK", team: "Reds", photoUrl: "https://example.com/keeper.jpg" }, next: null, games: [
     { matchId: "match-8", kickOff: "2026-11-19T10:00:00Z", title: "Cup match", gameweek: 8, opponent: "Blues", participation: "played", points: 8,
       breakdown: [{ category: "penalty_saved", label: "Penalty saved", count: 1, pointsPer: 5, points: 5 }, { category: "assist", label: "Assist", count: 1, pointsPer: 3, points: 3 }] },
@@ -283,6 +282,18 @@ it("shows individual latest points on starters and bench, opens history on deman
   expect(within(bench).getByText("—")).toBeTruthy();
   expect(fetch.mock.calls.filter(([url]) => url.includes("/player-performance?"))).toHaveLength(1);
   expect(fetch.mock.calls.some(([url]) => url.endsWith("/performance"))).toBe(false);
+  const summary = within(await screen.findByRole("list", {name:"Last match points by player"}));
+  const rows = summary.getAllByRole("listitem");
+  expect(rows.find((li) => li.textContent?.includes("Ada Keeper"))?.textContent).toContain("Cup match");
+  expect(rows.find((li) => li.textContent?.includes("Ada Keeper"))?.querySelector("time")?.dateTime).toBe("2026-11-19T10:00:00Z");
+  expect(rows.find((li) => li.textContent?.includes("Zed Keeper"))?.textContent).toContain("BenchNo matches yet—");
+  expect(summary.queryByText(/16 pts/)).toBeNull();
+  latest["gk-a"] = { ...latest["gk-a"], points: 11, captainPoints: 22 };
+  fireEvent(window, new StorageEvent("storage", {key: `ff:league-content-changed:${a.id}`}));
+  expect(await summary.findByText("11 pts")).toBeTruthy();
+  latest["gk-a"] = { ...latest["gk-a"], points: 8, captainPoints: 16 };
+  fireEvent(window, new StorageEvent("storage", {key: `ff:league-content-changed:${a.id}`}));
+  expect(await summary.findByText("8 pts")).toBeTruthy();
   starter.focus(); fireEvent.click(starter);
   const history = within(await screen.findByRole("region", { name: "Finalized match history" }));
   expect(await history.findByText("Cup match · GW 8")).toBeTruthy();
@@ -309,7 +320,7 @@ it("shows individual latest points on starters and bench, opens history on deman
   expect(await screen.findByText("No finalized games yet.")).toBeTruthy();
   expect(put).not.toHaveBeenCalled();
   page.unmount(); renderInShell();
-  expect(await screen.findByText("8 pts")).toBeTruthy();
+  expect(await within(await screen.findByRole("list", {name:"Last match points by player"})).findByText("8 pts")).toBeTruthy();
   click("Ada Keeper, GK, captain");
   expect(await screen.findByText("Cup match · GW 8")).toBeTruthy();
 });

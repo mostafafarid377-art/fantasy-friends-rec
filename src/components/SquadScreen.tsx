@@ -6,6 +6,7 @@ import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
 import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "./PlayerPerformance";
+import { formatPlayerPoints } from "@/lib/player-performance";
 import { countdown, useKickoffClock } from "@/lib/match-deadline";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from "./ui";
@@ -17,6 +18,8 @@ import {
   type LeagueRules, type Position, type SquadPlayer,
 } from "@/lib/domain";
 import type { PlayerPool, PoolPlayer, SquadEntry, SquadResponse } from "@/lib/squad";
+
+const MATCH_DATE = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
 type Slot = SquadPlayer["slot"];
 const LABEL: Record<Slot, string> = { starter: "Starters", sub: "Substitutes", reserve: "Reserves" };
@@ -212,7 +215,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
           </div>
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
             disabled={saving} latest={latest} onAdd={locked ? undefined : addStarter} onSelect={setPlayerId} />
-          {scores.error ? <ErrorNote message={scores.error} onRetry={() => void scores.reload()} /> : scores.loading && <p role="status" className="text-xs text-sage">Loading latest player points…</p>}
           {!!unplaced.length && <Panel className="p-3">
             <p className="mb-2 text-sm text-card-y">Some saved starters no longer fit. Move, replace or remove them to repair the lineup.</p>
             {unplaced.map((p) => <Button key={p.id} variant="ghost" onClick={() => setPlayerId(p.id)}>{p.name} · {p.position}</Button>)}
@@ -234,7 +236,26 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
               onClick={() => openPicker({ slot: "sub" })}><Plus className="h-4 w-4" /> Add outfield sub</Button>}
           </Panel>}
         </section>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
+          <Panel className="space-y-2 p-4">
+            <h2 className="text-xl text-chalk">Last match points</h2>
+            <p className="text-xs text-sage">Individual totals include match bonus points, not the fantasy captain multiplier.</p>
+            {scores.error && <ErrorNote message={scores.error} onRetry={() => void scores.reload()} />}
+            {scores.loading && !scores.data && <p role="status" className="text-sm text-sage">Loading latest player points…</p>}
+            {!players.length && <p className="text-sm text-sage">No players picked yet.</p>}
+            {scores.data && players.length > 0 && <ul aria-label="Last match points by player" className="divide-y divide-line">
+              {[...players].sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot) || a.order - b.order).map((p) => {
+                const game = latest[p.id];
+                return <li key={p.id} className="flex items-baseline justify-between gap-2 py-2">
+                  <div className="min-w-0 break-words">
+                    <p className="text-sm text-chalk">{p.name} <span className="text-xs text-sage">· {p.slot === "starter" ? "Starter" : p.slot === "sub" ? "Bench" : "Reserve"}</span></p>
+                    <p className="text-xs text-sage">{game ? <>{game.title} · <time dateTime={game.kickOff}>{MATCH_DATE.format(new Date(game.kickOff))}</time></> : "No matches yet"}</p>
+                  </div>
+                  <span className={`num shrink-0 text-sm ${game?.points == null ? "text-sage" : "text-green"}`}>{formatPlayerPoints(game?.points)}</span>
+                </li>;
+              })}
+            </ul>}
+          </Panel>
           <Panel className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-xl text-chalk">Squad <span className="num text-green">{players.length}/{rules.squadSize}</span></h2>

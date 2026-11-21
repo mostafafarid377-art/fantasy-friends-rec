@@ -23,7 +23,7 @@ const STEPS = [
   {
     n: "03",
     title: "Record the real matches",
-    body: "The Match Organizer logs goals, assists, cards and subs minute by minute. Nothing scores until the League Leader approves the result.",
+    body: "The Match Organizer logs goals, assists, cards and substitutions. Nothing scores until the League Leader approves the result.",
   },
   {
     n: "04",
@@ -71,7 +71,7 @@ export default function LandingPage() {
 
             <p className="mt-7 max-w-xl text-[17px] leading-relaxed text-sage">
               Fantasy Friends runs your group's fantasy football properly: your own player
-              database, real matches recorded minute by minute, results that need approval
+              database, real matches with recorded events, results that need approval
               before they count, and a league table nobody can argue with.
             </p>
 

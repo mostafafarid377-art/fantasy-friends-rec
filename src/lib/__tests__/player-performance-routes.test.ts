@@ -23,12 +23,12 @@ beforeEach(() => {
   }));
 });
 
-it("batches selected player IDs, keeps null distinct from zero and separates captain points, and rejects oversized payloads", async () => {
-  db.rpc.mockResolvedValue({ data: [{ player_id: "player-a", match_id: "match-a", points: "0.00", captain_points: "0.00" }, { player_id: "player-b", match_id: "match-b", points: null }], error: null });
+it("batches player IDs, returns official match/date and zero points, and keeps captain points separate", async () => {
+  db.rpc.mockResolvedValue({ data: [{ player_id: "player-a", match_id: "match-a", title: "Home v Away", kick_off: date, points: "0.00", captain_points: "0.00" }], error: null });
   const res = await latest(request("?player=player-a&player=player-b&player=player-a"), { params });
   expect(res.headers.get("cache-control")).toBe("private, no-store");
-  expect(await res.json()).toEqual({ "player-a": { matchId: "match-a", points: 0, captainPoints: 0 }, "player-b": { matchId: "match-b", points: null } });
-  expect(db.rpc).toHaveBeenCalledExactlyOnceWith("latest_squad_player_games", { p_league: "league-a", p_players: ["player-a", "player-b"] });
+  expect(await res.json()).toEqual({ "player-a": { matchId: "match-a", title: "Home v Away", kickOff: date, points: 0, captainPoints: 0 } });
+  expect(db.rpc).toHaveBeenCalledExactlyOnceWith("latest_squad_scored_matches", { p_league: "league-a", p_players: ["player-a", "player-b"] });
   expect(db.from).not.toHaveBeenCalledWith("players");
   expect((await latest(request(`?${Array.from({ length: 16 }, (_, i) => `player=${i}`).join("&")}`), { params })).status).toBe(422);
 });

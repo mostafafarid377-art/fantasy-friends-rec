@@ -40,7 +40,7 @@ export const GET = handler(async (req: NextRequest, ctx: Ctx) => {
     supabase.from("real_matches").select("*").eq("league_id", id),
     supabase.from("scoring_rules").select("*").eq("league_id", id),
     supabase.from("match_events").select("*").eq("league_id", id),
-    supabase.from("match_lineups").select("*").eq("league_id", id),
+    supabase.from("match_scoring_lineups").select("*").eq("league_id", id),
   ]);
   const playerRows = (playerRowsResp as any)?.data ?? [];
   const matchRows = (matchRowsResp as any)?.data ?? [];

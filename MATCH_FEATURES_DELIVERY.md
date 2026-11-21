@@ -1,6 +1,6 @@
 # Fantasy Friends match features — delivery and verification
 
-> Historical report for the original rollout. Migration `0018` replaces manual bonus selection with automatic ranking; see `supabase/DEPLOYMENT.md`.
+> Historical report for the original rollout. Migration `0018` replaces manual bonus selection with automatic ranking, and `0019` removes the kickoff restriction on real lineups; see `supabase/DEPLOYMENT.md`.
 
 Branch: `arena/9da30ef6-fantasy-friends-rec` (base `afc242d`). No deployment, production migration, production-data change, or external configuration change was performed.
 
