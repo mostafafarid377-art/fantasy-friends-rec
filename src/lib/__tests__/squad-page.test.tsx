@@ -375,3 +375,18 @@ it("shows a countdown, locks at kickoff, and disables edit actions without sendi
   expect((screen.getByRole("button", { name: "Pick bench goalkeeper" }) as HTMLButtonElement).disabled).toBe(true);
   expect(put).not.toHaveBeenCalled();
 });
+
+it("adds a separate demo entry when enabled without showing Next Match for the live squad", async () => {
+  const { saved, put } = fixture();
+  saved.set(a.id, { ...empty(a), players: [{ ...pool[0], name: pool[0].fullName, slot: "starter", order: 0 }] });
+  const page = renderInShell();
+  await screen.findByRole("button", { name: "Edit squad" });
+  expect(screen.queryByRole("link", { name: "Lineup design preview" })).toBeNull();
+  page.unmount();
+  renderInShell(<SquadScreen showLineupPreview />);
+  await screen.findByRole("button", { name: "Edit squad" });
+  const preview = screen.getByRole("link", { name: "Lineup design preview" });
+  expect(preview.getAttribute("href")).toBe("/team/next-match-preview?from=squad");
+  expect(screen.queryByRole("link", { name: "Next match" })).toBeNull();
+  expect(put).not.toHaveBeenCalled();
+});
