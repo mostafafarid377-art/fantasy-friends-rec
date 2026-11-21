@@ -5,7 +5,7 @@
 # Usage: DATABASE_URL="postgres://user:pass@host:5432/dbname" ./scripts/deploy-fresh-db.sh
 #
 # This script:
-#   1. Applies migrations 0001 through 0019 in order
+#   1. Applies migrations 0001 through 0020 in order
 #   2. Verifies all tables, RLS, functions, and grants are in place
 #   3. Does NOT connect to or modify the remote Supabase project Hagz-fantasy
 #   4. Does NOT run the legacy destructive migration (0000_destructive_removal.sql)
@@ -99,6 +99,7 @@ MIGRATIONS=(
   "0017_google_profile_names.sql"
   "0018_automatic_match_bonus.sql"
   "0019_squad_points_and_real_lineups.sql"
+  "0020_next_match_lineups.sql"
 )
 
 for migration in "${MIGRATIONS[@]}"; do
@@ -200,7 +201,7 @@ echo "============================================================"
 echo "Fresh database deployment COMPLETE"
 echo "============================================================"
 echo ""
-echo "All migrations applied in order: 0001 through 0019"
+echo "All migrations applied in order: 0001 through 0020"
 echo "All tables created, RLS enabled, RPC grants in place."
 echo ""
 echo "Next steps:"

@@ -7,6 +7,7 @@ import { AppProvider } from "@/components/LeagueContext";
 import { AppShell } from "@/components/AppShell";
 import DashboardPage from "@/app/(app)/dashboard/page";
 import type { PlayerPerformance, LatestPlayerGames } from "@/lib/player-performance";
+import type { NextMatchLineup } from "@/lib/next-match-lineup";
 import type { SquadResponse, PoolPlayer } from "@/lib/squad";
 import type { SessionLeague, SessionPayload } from "@/lib/client/api";
 
@@ -43,6 +44,8 @@ let sequence = 0;
 function fixture() {
   const saved = new Map([[a.id, empty(a)], [b.id, empty(b)]]);
   const put = vi.fn();
+  const nextLineups = new Map<string, NextMatchLineup>();
+  const putNext = vi.fn();
   const latest: LatestPlayerGames = {};
   const histories = new Map<string, PlayerPerformance>();
   const historyError = new Set<string>();
@@ -51,6 +54,17 @@ function fixture() {
     if (url === "/api/auth/session") return Response.json(session);
     const parsed = new URL(url, "http://local.test");
     const [, , , leagueId, collection, playerId, action] = parsed.pathname.split("/");
+    if (collection === "next-match-lineup") {
+      const data = nextLineups.get(leagueId) ?? { previous: null, match: null, saved: null, serverNow: "2026-11-19T08:00:00Z" };
+      if (options?.method !== "PUT") return Response.json(data);
+      const body = JSON.parse(String(options.body));
+      putNext(leagueId, body);
+      if (!data.previous) return Response.json({ error: "No previous saved lineup" }, { status: 409 });
+      const saved = { revision: "2026-11-19T08:00:01.000001+00:00", lineup: { ...data.previous.lineup, formation: body.formation, captainId: body.captainId, viceId: body.viceId,
+        players: body.entries.map((e: { id: string; slot: string; order: number }) => ({ ...data.previous?.lineup.players.find((p) => p.id === e.id), ...e })) } };
+      nextLineups.set(leagueId, { ...data, saved });
+      return Response.json({ matchId: body.matchId, ...saved });
+    }
     if (collection === "player-performance") return Response.json(Object.fromEntries(parsed.searchParams.getAll("player")
       .filter((id) => latest[id]).map((id) => [id, latest[id]])));
     if (collection === "players" && action === "performance") {
@@ -77,7 +91,7 @@ function fixture() {
     return Response.json({ state: "applied", ...next });
   });
   vi.stubGlobal("fetch", fetch);
-  return { put, fetch, saved, latest, histories, historyError, older };
+  return { put, fetch, saved, latest, histories, historyError, older, nextLineups, putNext };
 }
 afterEach(() => { cleanup(); window.localStorage.clear(); vi.unstubAllGlobals(); });
 
@@ -388,5 +402,37 @@ it("adds a separate demo entry when enabled without showing Next Match for the l
   const preview = screen.getByRole("link", { name: "Lineup design preview" });
   expect(preview.getAttribute("href")).toBe("/team/next-match-preview?from=squad");
   expect(screen.queryByRole("link", { name: "Next match" })).toBeNull();
+  expect(put).not.toHaveBeenCalled();
+});
+
+
+it("gates the real Next Match view on verified history and saves a separate lineup only on explicit confirmation", async () => {
+  const { saved, nextLineups, putNext, put } = fixture();
+  const entries = [pool[0], pool[4], pool[5], pool[6], pool[8], pool[1]].map((p, order) => ({ ...p, name: p.fullName,
+    slot: order === 5 ? "sub" as const : "starter" as const, order: order === 5 ? 0 : order }));
+  saved.set(a.id, { ...empty(a), players: [entries[0]] });
+  const page = renderInShell(<SquadScreen enableNextMatch />);
+  expect(await screen.findByText("No previous lineup yet")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Next Match" })).toBeNull();
+  page.unmount();
+  const previous = { matchId: "played-match", title: "Previous fixture", kickOff: "2026-11-18T19:00:00Z",
+    lineup: { players: entries, formation: "1-2-1", captainId: entries[1].id, viceId: entries[2].id } };
+  nextLineups.set(a.id, { serverNow: "2026-11-19T08:00:00Z", previous, saved: null,
+    match: { id: "target-match", title: "Next fixture", kickOff: "2026-11-19T09:00:00Z", locked: false } });
+  renderInShell(<SquadScreen enableNextMatch />);
+  fireEvent.click(await screen.findByRole("button", { name: "Next Match" }));
+  expect(screen.getByRole("heading", { name: "Next Match Lineup" })).toBeTruthy();
+  expect((screen.getByRole("combobox", { name: "Captain" }) as HTMLSelectElement).value).toBe(entries[1].id);
+  expect(putNext).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole("combobox", { name: "Captain" }), { target: { value: entries[0].id } });
+  click("Edit Squad");
+  expect(screen.getByRole("heading", { name: "Edit squad" })).toBeTruthy();
+  click("Next Match");
+  expect((screen.getByRole("combobox", { name: "Captain" }) as HTMLSelectElement).value).toBe(entries[0].id);
+  expect(putNext).not.toHaveBeenCalled();
+  click("Save changes");
+  expect(await screen.findByText("Lineup saved for this match only.")).toBeTruthy();
+  expect(putNext).toHaveBeenCalledWith(a.id, expect.objectContaining({ matchId: "target-match", captainId: entries[0].id, expectedUpdatedAt: null }));
+  expect(nextLineups.get(a.id)?.previous?.lineup.captainId).toBe(entries[1].id);
   expect(put).not.toHaveBeenCalled();
 });

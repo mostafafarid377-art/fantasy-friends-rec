@@ -1713,3 +1713,84 @@ it("awards competition ranks per match and reranks on a score correction without
       .toEqual([{player_id:home[3],bonus_rank:1}]);
   } finally { c.release(); }
 });
+
+it("captures only forward fantasy lineups, scopes the draft to its manager and fixture, and scores the saved override or current squad", async () => {
+  const c = await freshClient();
+  try {
+    const { league, match: legacy, home, away } = await recordedResultFixture(c);
+    const view = async () => (await sql(c, "SELECT ff_next_match_lineup($1) AS result", [league.id])).rows[0].result;
+    const currentPlayers = matchEntries(home.slice(0, 5), [home[6]]);
+    const saveSquad = async (captain: string, revision: string | null) => (await sql(c,
+      "SELECT save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS result",
+      [league.id, captain, home[2], revision, JSON.stringify(currentPlayers)])).rows[0].result;
+    const makeNext = async () => {
+      const id = await league.makeMatch();
+      await persistLineup(c, id, league.home, matchEntries(home.slice(0, 5), home.slice(5)));
+      await persistLineup(c, id, league.away, matchEntries(away));
+      return id;
+    };
+    const kick = (id: string) => sql(admin, "UPDATE real_matches SET kick_off=clock_timestamp() WHERE id=$1", [id]);
+    const approve = async (id: string) => { await setAuthUid(c, userCId); await submitScore(c, id, 1, 0); await approveScore(c, id); };
+    const historical = async (id: string) => (await sql(admin, "SELECT lineup FROM fantasy_match_lineup_history WHERE match_id=$1 AND profile_id=$2", [id, userAId])).rows[0]?.lineup;
+    const official = async (id: string) => (await sql(admin, "SELECT breakdown FROM manager_points WHERE match_id=$1 AND profile_id=$2", [id, userAId])).rows[0].breakdown;
+
+    await setAuthUid(c, userAId);
+    const current = await saveSquad(home[1], null);
+    expect(await view()).toMatchObject({ previous: null, match: null, saved: null });
+    await sql(admin, "UPDATE real_matches SET kick_off=(SELECT enabled_at-interval '1 day' FROM fantasy_lineup_rollout) WHERE id=$1", [legacy]);
+    await approve(legacy);
+    expect(await historical(legacy)).toBeUndefined();
+    expect((await official(legacy)).captainId).toBe(home[1]);
+    const baseline = await makeNext();
+    await kick(baseline);
+    await approve(baseline);
+    const original = await historical(baseline);
+    expect(original).toMatchObject({ formation: "1-2-1", captainId: home[1], viceId: home[2], players: expect.arrayContaining([{id: home[1], slot:"starter", order:1, name:"Home 1", position:"DEF"}]) });
+
+    const next = await makeNext();
+    const otherLeague = await releaseLeague(c, 5);
+    const unrelated = await otherLeague.makeMatch();
+    const chosen = matchEntries([home[0], away[1], ...home.slice(2, 5)], [home[6]])
+      .map(({ player_id, ...rest }) => ({ id: player_id, ...rest }));
+    const save = async (id = next, entries = chosen, revision: string | null = null, captain = away[1]) => (await sql(c,
+      "SELECT ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,$5,$6) AS result",
+      [league.id, id, captain, home[2], revision, JSON.stringify(entries)])).rows[0].result;
+    await setAuthUid(c, userBId);
+    expect(await view()).toMatchObject({ previous: null, match: null, saved: null });
+    await expect(save()).rejects.toMatchObject({ code: "PT409" });
+    await expect(sql(c, "SELECT * FROM fantasy_match_lineup_history")).rejects.toMatchObject({ code: "42501" });
+    await expect(sql(c, "SELECT ff_previous_fantasy_lineup($1,$2,now())", [league.id, userAId])).rejects.toMatchObject({ code: "42501" });
+    await expect(sql(c, "UPDATE fantasy_match_lineup_drafts SET lineup='{}' WHERE match_id=$1", [next])).rejects.toMatchObject({ code: "42501" });
+    await setAuthUid(c, null);
+    await expect(view()).rejects.toMatchObject({ code: "42501" });
+
+    await setAuthUid(c, userAId);
+    await saveSquad(home[0], current.squad.updated_at);
+    expect(await view()).toMatchObject({ previous: { matchId: baseline, lineup: original }, match: { id: next, locked: false }, saved: null });
+    expect((await sql(admin,"SELECT * FROM fantasy_match_lineup_drafts WHERE match_id=$1",[next])).rowCount).toBe(0);
+    await expect(save(unrelated)).rejects.toMatchObject({ code: "42501" });
+    await expect(save(next, chosen.slice(1))).rejects.toMatchObject({ code: "22023" });
+    await expect(save(next, chosen, null, home[2])).rejects.toMatchObject({ code: "22023" });
+    const saved = await save();
+    expect(await view()).toMatchObject({ previous: { lineup: original }, saved });
+    await expect(save()).rejects.toMatchObject({ code: "PT409" });
+    await kick(next);
+    await expect(save(next, chosen, saved.revision)).rejects.toMatchObject({ code: "PT409" });
+    expect(await view()).toMatchObject({ match: { locked: true }, saved });
+    await approve(next);
+    expect(await historical(next)).toEqual(saved.lineup);
+    expect(await historical(baseline)).toEqual(original);
+    expect(await official(next)).toMatchObject({ captainId: away[1], lines: expect.arrayContaining([{ playerId: away[1], base: expect.any(Number), multiplier: 2, points: expect.any(Number) }]) });
+    await correctScore(c, next, 1, 1, 3);
+    expect(await historical(next)).toEqual(saved.lineup);
+    expect((await official(next)).captainId).toBe(away[1]);
+
+    const following = await makeNext();
+    await setAuthUid(c, userAId);
+    expect(await view()).toMatchObject({ previous: { matchId: next, lineup: saved.lineup }, match: { id: following }, saved: null });
+    await kick(following);
+    await approve(following);
+    expect((await historical(following)).captainId).toBe(home[0]);
+    expect((await official(following)).captainId).toBe(home[0]);
+  } finally { c.release(); }
+});

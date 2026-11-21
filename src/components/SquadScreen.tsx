@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, FlaskConical, Plus, Save } from "lucide-react";
+import { ArrowDown, ArrowLeftRight, ArrowUp, CalendarDays, Ellipsis, FlaskConical, Plus, Save } from "lucide-react";
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
+import { NextMatchLineupScreen } from "./NextMatchLineupScreen";
+import type { NextMatchLineup } from "@/lib/next-match-lineup";
 import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "./PlayerPerformance";
 import { formatPlayerPoints } from "@/lib/player-performance";
 import { countdown, useKickoffClock } from "@/lib/match-deadline";
@@ -38,16 +40,28 @@ function snapshot(data: SquadResponse): Draft {
     revision: data.squad?.updatedAt ?? null };
 }
 
-export function SquadScreen({ editInitially = false, showLineupPreview = false }: { editInitially?: boolean; showLineupPreview?: boolean }) {
+export function SquadScreen({ editInitially = false, showLineupPreview = false, enableNextMatch = false }: { editInitially?: boolean; showLineupPreview?: boolean; enableNextMatch?: boolean }) {
   const { league } = useActiveLeague();
   if (!league) return <div className="mx-auto max-w-5xl p-5"><Skeleton className="h-64" /></div>;
-  return <LeagueSquad key={league.id} leagueId={league.id} leagueName={league.name} editInitially={editInitially} showLineupPreview={showLineupPreview} />;
+  return <LeagueSquad key={league.id} leagueId={league.id} leagueName={league.name} editInitially={editInitially} showLineupPreview={showLineupPreview} enableNextMatch={enableNextMatch} />;
 }
 
-function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview }: { leagueId: string; leagueName: string; editInitially: boolean; showLineupPreview: boolean }) {
+function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, enableNextMatch }: { leagueId: string; leagueName: string; editInitially: boolean; showLineupPreview: boolean; enableNextMatch: boolean }) {
   const { isLeader } = useLeague();
   const route = `/api/leagues/${leagueId}/squad`;
   const squad = useApi<SquadResponse>(route);
+  const nextRoute = `/api/leagues/${leagueId}/next-match-lineup`;
+  const nextLineup = useApi<NextMatchLineup>(enableNextMatch ? nextRoute : null);
+  const [viewNext, setViewNext] = useState(false);
+  const [hasOpenedNext, setHasOpenedNext] = useState(false);
+  useEffect(() => {
+    if (!enableNextMatch) return;
+    const refresh = () => { if (document.visibilityState === "visible") void nextLineup.reload(); };
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener("focus", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [enableNextMatch, nextLineup.reload]);
+  useLeagueContentUpdates(enableNextMatch ? leagueId : undefined, nextLineup.reload);
   const [edit, setEdit] = useState<Draft | null>(null);
   const [initialMode, setInitialMode] = useState(editInitially);
   const [pick, setPick] = useState<PickTarget | null>(null);
@@ -85,6 +99,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview }:
   if (squad.error && !squad.data) return <div className="mx-auto max-w-5xl p-5"><ErrorNote message={squad.error} onRetry={() => void squad.reload()} /></div>;
   if (!squad.data) return <div className="mx-auto max-w-5xl space-y-4 p-5"><Skeleton className="h-24" /><Skeleton className="h-80" /></div>;
   const stored = squad.data;
+  const showingNext = viewNext && Boolean(nextLineup.data?.previous);
   const current = (editing ? edit : null) ?? snapshot(stored);
   const { formation, captainId, viceId } = current;
   // Refresh photo presentation without touching the unsaved slot choices or
@@ -189,15 +204,25 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview }:
       <Save className="h-4 w-4" /> {complete ? "Save squad" : "Save draft"}
     </Button>
   </> : (
-    <Button onClick={begin}><Plus className="h-4 w-4" />{players.length === 0 ? "Pick squad" : "Edit squad"}</Button>
+    <Button onClick={begin}><Plus className="h-4 w-4" />{players.length === 0 && !enableNextMatch ? "Pick squad" : "Edit squad"}</Button>
   );
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+    <>
+    {hasOpenedNext && nextLineup.data?.previous && <div hidden={!showingNext}><NextMatchLineupScreen key={nextLineup.data.match?.id ?? "unscheduled"}
+      leagueId={leagueId} leagueName={leagueName} rules={stored.rules} data={nextLineup.data} fallback={snapshot(stored)}
+      route={nextRoute} refresh={nextLineup.reload} loadError={nextLineup.error}
+      onBack={() => { if (!editing && !locked) setInitialMode(true); setViewNext(false); }} /></div>}
+    <div hidden={showingNext} className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
       <PageHeader eyebrow={`${leagueName} · ${rules.format} fantasy`} title={editing ? (stored.players.length ? "Edit squad" : "Pick squad") : "My squad"}
         subtitle={editing ? "Tap a pitch slot to pick, or tap a player for their performance and squad actions. Changes only count after saving."
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
-        actions={<>{pickActions}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
+        actions={<>{pickActions}{nextLineup.data?.previous && <Button variant="outline" onClick={() => { setHasOpenedNext(true); setViewNext(true); setPlayerId(null); setPick(null); setMoving(null); }}><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button>}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
+      {enableNextMatch && nextLineup.error && <div className="mb-4"><ErrorNote message={nextLineup.error} onRetry={() => void nextLineup.reload()} /></div>}
+      {enableNextMatch && nextLineup.data && !nextLineup.data.previous && <Panel className="mb-4 p-3">
+        <p className="text-sm font-semibold text-chalk">No previous lineup yet</p>
+        <p className="mt-1 text-xs text-sage">Next Match appears once your saved starting lineup is recorded for a previous match. Until then, use Edit Squad.</p>
+      </Panel>}
       {showLineupPreview && <Button className="mb-4" href="/team/next-match-preview?from=squad" variant="ghost"><FlaskConical aria-hidden="true" className="size-4" />Lineup design preview</Button>}
       {locked ? <p role="status" className="mb-4 rounded border border-line p-3 text-sm text-chalk"><strong>Squad Locked.</strong> {deadline?.title ?? "The match"} has started. Your saved squad stays unchanged until the match is finalized.</p>
         : remaining != null && <p className="mb-4 text-sm text-chalk">{deadline?.title} kicks off in <span className="num text-green">{countdown(remaining)}</span>.</p>}
@@ -311,6 +336,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview }:
         onMove={changePlayers} onBack={() => setMoving(null)} />}
       {notice && !editing && <Toast message={notice} onClose={() => setNotice(null)} />}
     </div>
+    </>
   );
 }
 

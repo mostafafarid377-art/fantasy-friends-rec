@@ -434,6 +434,27 @@ export const finalizedMatchLineups = pgTable("finalized_match_lineups", {
   entries: jsonb("entries").notNull(),
 }, () => [check("finalized_match_lineups_entries_check", sql`jsonb_typeof(entries) = 'array'`)]).enableRLS();
 
+export const fantasyLineupRollout = pgTable("fantasy_lineup_rollout", {
+  singleton: boolean("singleton").primaryKey().default(true),
+  enabledAt: timestamp("enabled_at", { withTimezone: true }).notNull(),
+}, (t) => [check("fantasy_lineup_rollout_singleton_check", sql`${t.singleton}`)]).enableRLS();
+
+export const fantasyMatchLineupDrafts = pgTable("fantasy_match_lineup_drafts", {
+  matchId: text("match_id").notNull().references(() => realMatches.id, { onDelete: "cascade" }),
+  profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  lineup: jsonb("lineup").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (t) => [primaryKey({ columns: [t.matchId, t.profileId] }),
+  check("fantasy_match_lineup_drafts_lineup_check", sql`jsonb_typeof(${t.lineup}) = 'object'`)]).enableRLS();
+
+export const fantasyMatchLineupHistory = pgTable("fantasy_match_lineup_history", {
+  matchId: text("match_id").notNull().references(() => realMatches.id, { onDelete: "cascade" }),
+  profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  lineup: jsonb("lineup").notNull(),
+}, (t) => [primaryKey({ columns: [t.matchId, t.profileId] }),
+  check("fantasy_match_lineup_history_lineup_check", sql`jsonb_typeof(${t.lineup}) = 'object'`),
+  index("fantasy_match_lineup_history_profile_idx").on(t.profileId, t.matchId)]).enableRLS();
+
 export const matchPlayerStatistics = pgTable("match_player_statistics", {
   matchId: text("match_id").notNull(),
   playerId: text("player_id").notNull(),
