@@ -23,25 +23,38 @@ function query(data: unknown, table: string) {
   return { select() { return this; }, eq(...args: unknown[]) { filters(table, ...args); return this; },
     in(...args: unknown[]) { filters(table, ...args); return { data, error: null }; }, maybeSingle: () => ({ data, error: null }) };
 }
-let membershipRow: unknown, players: unknown, squad: unknown;
+let membershipRow: unknown, players: unknown, squad: unknown, lastGame: unknown;
 beforeEach(() => {
   vi.resetAllMocks();
   membershipRow = membership;
   players = [keeper];
   squad = null;
+  lastGame = [];
   db.getUser.mockResolvedValue({ data: { user: { id: "me" } }, error: null });
-  db.from.mockImplementation((table: string) => query(({ league_members: membershipRow, players, fantasy_squads: squad } as Record<string, unknown>)[table], table));
-  db.rpc.mockImplementation(async (name) => ({ data: name === "recent_fantasy_substitutions" ? [] : name === "ff_squad_deadline" ? { locked: false, kickOff: null, matchId: null, title: null, serverNow: revision } : receipt, error: null }));
+  db.from.mockImplementation((table: string) => query(({ league_members: membershipRow, players, fantasy_squads: squad, real_matches: { kick_off: revision } } as Record<string, unknown>)[table], table));
+  db.rpc.mockImplementation(async (name) => ({ data: name === "last_game_points" ? lastGame : name === "recent_fantasy_substitutions" ? [] : name === "ff_squad_deadline" ? { locked: false, kickOff: null, matchId: null, title: null, serverNow: revision } : receipt, error: null }));
 });
 
 describe("league squad route", () => {
   it("reads only this member's squad and never creates one on an empty GET", async () => {
     const res = await GET(request(), ctx);
-    expect(await res.json()).toMatchObject({ squad: null, players: [], rules: { squadSize: 8, subsCount: 2 } });
+    expect(await res.json()).toMatchObject({ squad: null, players: [], lastMatch: null, rules: { squadSize: 8, subsCount: 2 } });
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "league_id", "league-a");
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "profile_id", "me");
     expect(db.rpc).toHaveBeenCalledWith("recent_fantasy_substitutions", { p_league: "league-a" });
     expect(db.rpc).toHaveBeenCalledWith("ff_squad_deadline", { p_league: "league-a" });
+  });
+
+  it("loads the official team total and the date of that exact match, preserving zero and unscored results", async () => {
+    for (const [stored, points] of [["27.50", 27.5], ["0.00", 0], [null, null]]) {
+      lastGame = [{ matchId: "match-a", title: "Cup final", points: stored }];
+      const res = await GET(request(), ctx);
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+      expect((await res.json()).lastMatch).toEqual({matchId:"match-a", title:"Cup final", kickOff:revision, points});
+    }
+    expect(db.rpc).toHaveBeenCalledWith("last_game_points", {p_league:"league-a"});
+    expect(filters).toHaveBeenCalledWith("real_matches", "league_id", "league-a");
+    expect(filters).toHaveBeenCalledWith("real_matches", "id", "match-a");
   });
 
   it("returns a kept draft and its full-precision revision from the same read", async () => {

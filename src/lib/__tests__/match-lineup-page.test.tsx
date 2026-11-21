@@ -106,37 +106,50 @@ it("records a 2–0 result, approves it, and reopens the corrected score and his
   expect(screen.getByText("2–0 corrected to 2–1")).toBeTruthy();
 });
 
-it("saves match statistics once without leaving a repeated save prompt or toast", async () => {
+it("records saves and contributions in the event picker, preserving other saved totals", async () => {
   let version = 1;
-  let saves = 0;
+  let statistics = [{playerId:"p0",saves:0,defensiveContributions:2,position:"GK"}, {playerId:"p1",saves:0,defensiveContributions:10,position:"DEF"}];
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     if (url.endsWith("/statistics")) {
       expect(init.method).toBe("PUT");
-      expect(JSON.parse(String(init.body))).toEqual({version: 1, stats: [{playerId: "p0", saves: 6, defensiveContributions: 0}]});
-      saves = 6;
-      return Response.json({matchId: "m", version: ++version});
+      const body = JSON.parse(String(init.body));
+      expect(body).toEqual({version, stats: version === 1 ? [{playerId:"p1",saves:0,defensiveContributions:10}, {playerId:"p0",saves:6,defensiveContributions:2}]
+        : [{playerId:"p0",saves:6,defensiveContributions:2}, {playerId:"p1",saves:0,defensiveContributions:12}]});
+      statistics = body.stats.map((stat: {playerId: string}) => ({...stat,position:stat.playerId === "p0" ? "GK" : "DEF"}));
+      return Response.json({matchId:"m",version:++version});
     }
     if (!url.endsWith("/m")) throw new Error(`Unexpected ${url}`);
     return Response.json({serverNow:"2026-11-19T19:00:00Z",
       match:{id:"m",leagueId:"league",title:"Game",status:"draft",kickOff:"2026-11-19T18:00:00Z",teamAId:"home",teamBId:"away",version},
-      rules:{format:"5v5",starters:5,subsCount:2,squadSize:10},canOrganize:true,teams,roster:players,
-      statistics:saves ? [{playerId:"p0",saves,defensiveContributions:0,position:"GK"}] : [],
-      lineups:[{id:"line-0",teamId:"home",playerId:"p0",player:players[0],slot:"starter",order:0}],events:[],substitutions:[],approvals:[]});
+      rules:{format:"5v5",starters:5,subsCount:2,squadSize:10},canOrganize:true,canEditEvents:true,teams,roster:players,statistics,
+      lineups:players.slice(0,3).map((player,order) => ({id:`line-${order}`,teamId:"home",playerId:player.id,player,slot:order === 2 ? "sub" : "starter",order})),events:[],substitutions:[],approvals:[]});
   });
   vi.stubGlobal("fetch",fetch);
   render(<MatchPage params={params}/>);
-  fireEvent.click(await screen.findByText("Match statistics", {exact:true}));
-  expect(screen.queryByRole("button", {name:"Save statistics"})).toBeNull();
-  fireEvent.change(screen.getByRole("textbox", {name:"Player 0 saves"}), {target:{value:"6"}});
-  fireEvent.click(screen.getByRole("button", {name:"Save statistics"}));
+  fireEvent.click(await screen.findByRole("button", {name:/^Events/}));
+  const choose = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label, {exact:true}), {target:{value}});
+  choose("Player", "p0");
+  expect(screen.queryByRole("textbox", {name:/Number of/})).toBeNull();
+  choose("Event", "saves");
+  expect(screen.queryByRole("option", {name:/DEF · Player 1/})).toBeNull();
+  fireEvent.change(screen.getByRole("textbox", {name:"Number of saves"}), {target:{value:"6"}});
+  const save = screen.getByRole("button", {name:"Save statistics"});
+  fireEvent.click(save);
+  fireEvent.click(save);
   await screen.findByText(/v2$/);
+  expect((screen.getByRole("textbox", {name:"Number of saves"}) as HTMLInputElement).value).toBe("6");
+  expect(screen.queryByRole("button", {name:"Save statistics"})).toBeNull();
+  choose("Event", "defensiveContributions");
+  expect(screen.queryByRole("option", {name:/MID · Player 2/})).toBeNull();
+  choose("Player", "p1");
+  expect((screen.getByRole("textbox", {name:"Number of defensive contributions"}) as HTMLInputElement).value).toBe("10");
+  fireEvent.change(screen.getByRole("textbox", {name:"Number of defensive contributions"}), {target:{value:"12"}});
+  fireEvent.click(screen.getByRole("button", {name:"Save statistics"}));
+  await screen.findByText(/v3$/);
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/statistics"))).toHaveLength(2);
   expect(screen.getAllByText("Match statistics", {exact:true})).toHaveLength(1);
   expect(screen.getAllByRole("region", {name:"Match result"})).toHaveLength(1);
   expect(screen.queryByText("Match statistics saved")).toBeNull();
-  fireEvent.click(screen.getByText("Match statistics", {exact:true}));
-  expect((screen.getByRole("textbox", {name:"Player 0 saves"}) as HTMLInputElement).value).toBe("6");
-  expect(screen.queryByRole("button", {name:"Save statistics"})).toBeNull();
-  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/statistics"))).toHaveLength(1);
 });
 
 it("records a match event without entering a minute, while keeping the substitution minute", async () => {
@@ -159,4 +172,35 @@ it("records a match event without entering a minute, while keeping the substitut
   fireEvent.click(screen.getByRole("button", {name:"Add event"}));
   expect(await screen.findByText("Event recorded")).toBeTruthy();
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/events"))).toHaveLength(1);
+});
+
+it("corrects approved statistics from Events using the official participants and a reason", async () => {
+  let version = 4;
+  const fetch = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/statistics")) {
+      expect(JSON.parse(String(init.body))).toEqual({version:4, stats:[], reason:"Confirmed with referee"});
+      return Response.json({matchId:"m",version:++version});
+    }
+    if (!url.endsWith("/m")) throw new Error(`Unexpected ${url}`);
+    return Response.json({serverNow:"2026-11-19T19:00:00Z",
+      match:{id:"m",leagueId:"league",title:"Game",status:"approved",homeScore:1,awayScore:0,kickOff:"2026-11-19T18:00:00Z",teamAId:"home",teamBId:"away",version},
+      rules:{format:"5v5",starters:5,subsCount:2,squadSize:10},canOrganize:true,canEditEvents:false,teams,roster:players,
+      statistics:version === 4 ? [{playerId:"p0",saves:3,defensiveContributions:0,position:"GK"}] : [],
+      lineups:[],scoringLineups:[{teamId:"home",playerId:"p0",player:players[0],slot:"starter"}],events:[],substitutions:[],approvals:[]});
+  });
+  vi.stubGlobal("fetch",fetch);
+  render(<MatchPage params={params}/>);
+  fireEvent.click(await screen.findByRole("button", {name:/^Events/}));
+  expect(screen.queryByRole("option",{name:"Goal"})).toBeNull();
+  fireEvent.change(screen.getByLabelText("Player",{exact:true}),{target:{value:"p0"}});
+  const saves = screen.getByLabelText("Number of saves") as HTMLInputElement;
+  expect(saves.value).toBe("3");
+  fireEvent.change(saves,{target:{value:"0"}});
+  const save = screen.getByRole("button",{name:"Save statistics correction"}) as HTMLButtonElement;
+  expect(save.disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Statistics correction reason"),{target:{value:"Confirmed with referee"}});
+  fireEvent.click(save);
+  await screen.findByText(/v5$/);
+  expect(saves.value).toBe("0");
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/statistics"))).toHaveLength(1);
 });

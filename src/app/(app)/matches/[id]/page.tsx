@@ -105,6 +105,7 @@ type MatchData = {
   teams: { id: string; name: string; crestUrl?: string | null }[];
 };
 
+const STAT_LABEL = { saves: "Goalkeeper saves", defensiveContributions: "Defensive contributions" };
 const EVENT_LABEL: Record<string, string> = {
   goal: "Goal",
   own_goal: "Own goal",
@@ -142,10 +143,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [Boolean(data?.serverNow), reload]);
-  const [statisticsDirty, setStatisticsDirty] = useState(false);
   const [newKickoff, setNewKickoff] = useState("");
   const [rescheduling, setRescheduling] = useState(false);
-  useEffect(() => { setStatisticsDirty(false); }, [data?.match.id, data?.match.version]);
   const [tab, setTab] = useState<"lineups" | "events" | "history">("lineups");
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -163,6 +162,13 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const [evAssist, setEvAssist] = useState("");
   const [evType, setEvType] = useState<string>("goal");
   const [evNote, setEvNote] = useState("");
+  const [statCount, setStatCount] = useState<string | null>(null);
+  const [statReason, setStatReason] = useState("");
+  const [statError, setStatError] = useState<string | null>(null);
+  const savingStatistic = useRef(false);
+  const statisticsDirty = statCount !== null;
+  const resetStatistic = () => { setStatCount(null); setStatReason(""); setStatError(null); };
+  useEffect(() => { resetStatistic(); }, [data?.match.id, data?.match.version]);
 
   // substitution form
   const [subTeam, setSubTeam] = useState("");
@@ -252,8 +258,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
     });
   };
 
-  const recordEvent = async () => {
-    if (!matchId) return;
+  const recordEvent = async (eventType: string) => {
+    if (!matchId || !data?.canEditEvents || busy) return;
     if (!evTeam || !evPlayer) {
       notify("Team and player are required", "error");
       return;
@@ -265,8 +271,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
         body: {
           teamId: evTeam,
           playerId: evPlayer,
-          assistPlayerId: evAssist || null,
-          eventType: evType,
+          assistPlayerId: eventType === "goal" ? evAssist || null : null,
+          eventType,
           note: evNote || null,
         },
         idempotent: true,
@@ -391,8 +397,46 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
   const teamLabel = (id: string) => <RealTeamName name={teamName(id)} logo={logoOf(id)} />;
   const participants = (data.scoringLineups ?? data.lineups).flatMap((l) => {
     if (!l.player || ![m.teamAId, m.teamBId].includes(l.teamId) || (l.slot !== "starter" && !data.substitutions.some((sub) => sub.teamId === l.teamId && sub.playerOnId === l.playerId))) return [];
-    return [{ id: l.playerId, name: l.player.fullName, position: data.statistics?.find((r) => r.playerId === l.playerId)?.position ?? l.matchPosition ?? l.player.position, team: teamName(l.teamId) }];
+    return [{ id: l.playerId, teamId: l.teamId, name: l.player.fullName, position: data.statistics?.find((r) => r.playerId === l.playerId)?.position ?? l.matchPosition ?? l.player.position }];
   });
+  const correctingStatistics = m.status === "approved" && m.homeScore != null && m.awayScore != null;
+  const canRecordStatistics = started && data.canOrganize && data.statistics != null && (editable || correctingStatistics);
+  const eventOptions = [...(editable ? EVENT_TYPES : []), ...(canRecordStatistics ? ["saves", "defensiveContributions"] as const : [])];
+  const eventChoice = eventOptions.some((type) => type === evType) ? evType : eventOptions[0];
+  const statType = eventChoice === "saves" || eventChoice === "defensiveContributions" ? eventChoice : null;
+  const eligibleParticipants = statType ? participants.filter((p) => p.teamId === evTeam && (statType !== "saves" || p.position === "GK")) : [];
+  const statPlayer = eligibleParticipants.find((p) => p.id === evPlayer);
+  const statRow = data.statistics?.find((p) => p.playerId === statPlayer?.id);
+  const count = statType && statPlayer ? statCount ?? String(statRow?.[statType] ?? 0) : "";
+  const validStat = /^\d{1,3}$/.test(count);
+
+  const saveStatistic = async () => {
+    if (savingStatistic.current || busy || !canRecordStatistics || !statType || !statPlayer || !statisticsDirty || !validStat
+        || (correctingStatistics && !statReason.trim())) return;
+    savingStatistic.current = true;
+    setBusy(true); setStatError(null);
+    try {
+      // The RPC replaces the match's statistics atomically; retain every other saved count.
+      const stats = (data.statistics ?? []).filter((s) => s.playerId !== statPlayer.id && (s.saves || s.defensiveContributions))
+        .map(({ playerId, saves, defensiveContributions }) => ({ playerId, saves, defensiveContributions }));
+      const updated = { playerId: statPlayer.id, saves: statRow?.saves ?? 0, defensiveContributions: statRow?.defensiveContributions ?? 0,
+        [statType]: Number(count) };
+      if (updated.saves || updated.defensiveContributions) stats.push(updated);
+      const receipt = await api<{ matchId: string; version: number }>(`/api/matches/${m.id}/statistics`, {
+        method: "PUT", body: { version: m.version, stats, ...(correctingStatistics ? { reason: statReason.trim() } : {}) },
+      });
+      if (receipt?.matchId !== m.id || receipt.version !== m.version + 1) throw new Error("The save could not be confirmed. Reload before retrying.");
+      if (correctingStatistics) notifyLeagueContentChanged(m.leagueId);
+      await reload();
+      resetStatistic();
+    } catch (error) {
+      setStatError(error instanceof Error ? error.message : "Could not save match statistics");
+    } finally {
+      savingStatistic.current = false;
+      setBusy(false);
+    }
+  };
+
   const reschedule = async () => {
     if (started || !newKickoff || busy) return;
     setBusy(true);
@@ -429,12 +473,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
           <Button size="sm" onClick={reschedule} disabled={!newKickoff || busy}>Save kickoff</Button><Button variant="ghost" size="sm" onClick={() => setRescheduling(false)}>Cancel</Button></>
           : <Button size="sm" variant="outline" onClick={() => setRescheduling(true)}>Change kickoff</Button>}
       </div>}
-      {data.statistics && <MatchStatistics key={`statistics:${m.id}:${m.version}`} matchId={m.id} version={m.version} status={m.status}
-        started={started} correctable={m.homeScore != null && m.awayScore != null} canManage={data.canOrganize}
-        players={participants} saved={data.statistics} bonusAwards={data.bonusAwards} workflowBusy={busy} onDirty={setStatisticsDirty} onSaved={async () => {
-          if (m.status === "approved") notifyLeagueContentChanged(m.leagueId);
-          await reload();
-        }} />}
+      {data.statistics && <MatchStatistics finalized={m.status === "approved"}
+        players={data.roster.map((p) => ({ id: p.id, name: p.fullName }))} saved={data.statistics} bonusAwards={data.bonusAwards} />}
       <MatchResult key={`result:${m.id}:${m.version}`} match={m} home={teamName(m.teamAId)} away={teamName(m.teamBId)} homeLogo={logoOf(m.teamAId)} awayLogo={logoOf(m.teamBId)}
         canManage={data.canOrganize} busy={busy} unsavedStatistics={statisticsDirty} onSave={flow} />
 
@@ -616,69 +656,63 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
           <div className="space-y-5">
             <Panel className="p-4">
               <Slate className="mb-3 block">Record an event</Slate>
-              {!editable ? (
-                <p className="text-[13.5px] text-sage">
-                  Events are locked while the match is {m.status}. A rejected match reopens for
-                  correction automatically.
-                </p>
+              {!eventOptions.length ? (
+                <p className="text-[13.5px] text-sage">Event entry is not available for this match.</p>
               ) : (
                 <div className="space-y-3">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field label="Team">
-                      <Select value={evTeam} onChange={(e) => setEvTeam(e.target.value)}>
-                        {[m.teamAId, m.teamBId].map((t) => (
-                          <option key={t} value={t}>
-                            {teamName(t)}
-                          </option>
-                        ))}
+                      <Select value={evTeam} disabled={busy} onChange={(e) => { setEvTeam(e.target.value); setEvPlayer(""); setEvAssist(""); resetStatistic(); }}>
+                        {[m.teamAId, m.teamBId].map((t) => <option key={t} value={t}>{teamName(t)}</option>)}
                       </Select>
                     </Field>
                     <Field label="Event">
-                      <Select value={evType} onChange={(e) => setEvType(e.target.value)}>
-                        {EVENT_TYPES.map((t) => (
-                          <option key={t} value={t}>
-                            {EVENT_LABEL[t] ?? t}
-                          </option>
-                        ))}
+                      <Select value={eventChoice} disabled={busy} onChange={(e) => { setEvType(e.target.value); resetStatistic(); }}>
+                        {eventOptions.map((type) => <option key={type} value={type}>
+                          {type === "saves" || type === "defensiveContributions" ? STAT_LABEL[type] : EVENT_LABEL[type] ?? type}
+                        </option>)}
                       </Select>
                     </Field>
                   </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Player">
-                      <Select value={evPlayer} onChange={(e) => setEvPlayer(e.target.value)}>
-                        <option value="">Select player</option>
-                        {eventRoster(evTeam).map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.position} · {p.fullName}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                  </div>
-
-                  {evType === "goal" && (
-                    <Field label="Assist" hint="Optional">
-                      <Select value={evAssist} onChange={(e) => setEvAssist(e.target.value)}>
-                        <option value="">No assist</option>
-                        {eventRoster(evTeam)
-                          .filter((p) => p.id !== evPlayer)
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.fullName}
-                            </option>
-                          ))}
-                      </Select>
-                    </Field>
-                  )}
-
-                  <Field label="Note" hint="Optional">
-                    <TextInput value={evNote} onChange={(e) => setEvNote(e.target.value)} placeholder="Free kick from 20 yards" />
+                  <Field label="Player">
+                    <Select value={statType ? statPlayer?.id ?? "" : evPlayer} disabled={busy}
+                      onChange={(e) => { setEvPlayer(e.target.value); if (e.target.value === evAssist) setEvAssist(""); resetStatistic(); }}>
+                      <option value="">Select player</option>
+                      {statType ? eligibleParticipants.map((p) => <option key={p.id} value={p.id}>{p.position} · {p.name}</option>)
+                        : eventRoster(evTeam).map((p) => <option key={p.id} value={p.id}>{p.position} · {p.fullName}</option>)}
+                    </Select>
                   </Field>
 
-                  <Button onClick={recordEvent} loading={busy} className="w-full">
-                    Add event
-                  </Button>
+                  {statType ? <>
+                    {!eligibleParticipants.length && <p className="text-sm text-sage">{statType === "saves" ? "No participating goalkeeper for this team." : "No participants for this team yet."}</p>}
+                    {statPlayer && <Field label={statType === "saves" ? "Number of saves" : "Number of defensive contributions"}
+                      hint={`Enter the total for this match, replacing the saved number.${statType === "defensiveContributions" && statPlayer.position === "GK" ? " Goalkeepers do not earn contribution points." : ""}`}
+                      error={!validStat ? "Use a whole number from 0 to 999." : undefined}>
+                      <TextInput aria-label={statType === "saves" ? "Number of saves" : "Number of defensive contributions"}
+                        inputMode="numeric" maxLength={3} value={count} disabled={busy} onChange={(e) => { setStatCount(e.target.value); setStatError(null); }} />
+                    </Field>}
+                    {correctingStatistics && statisticsDirty && <Field label="Statistics correction reason">
+                      <TextInput maxLength={400} value={statReason} disabled={busy} onChange={(e) => setStatReason(e.target.value)} />
+                    </Field>}
+                    {statError && <ErrorNote message={statError} />}
+                    {statisticsDirty && <div className="flex flex-wrap gap-2">
+                      <Button onClick={saveStatistic} loading={busy} disabled={!statPlayer || !statisticsDirty || !validStat || (correctingStatistics && !statReason.trim())}>
+                        {correctingStatistics ? "Save statistics correction" : "Save statistics"}
+                      </Button>
+                      <Button variant="ghost" disabled={busy} onClick={resetStatistic}>Discard changes</Button>
+                    </div>}
+                  </> : <>
+                    {eventChoice === "goal" && <Field label="Assist" hint="Optional">
+                      <Select value={evAssist} disabled={busy} onChange={(e) => setEvAssist(e.target.value)}>
+                        <option value="">No assist</option>
+                        {eventRoster(evTeam).filter((p) => p.id !== evPlayer).map((p) => <option key={p.id} value={p.id}>{p.fullName}</option>)}
+                      </Select>
+                    </Field>}
+                    <Field label="Note" hint="Optional">
+                      <TextInput value={evNote} disabled={busy} onChange={(e) => setEvNote(e.target.value)} placeholder="Free kick from 20 yards" />
+                    </Field>
+                    <Button onClick={() => recordEvent(eventChoice)} loading={busy} className="w-full">Add event</Button>
+                  </>}
                 </div>
               )}
             </Panel>

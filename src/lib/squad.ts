@@ -8,6 +8,7 @@ export type SquadEntry = SquadPlayer & Pick<PoolPlayer, "photoUrl" | "shirtNumbe
 export type AutoSubReport = { matchId: string; title: string; substitutions: {
   outId: string; outName: string; inId: string; inName: string; position: Position; priority: number;
 }[] };
+export type LastSquadMatch = { matchId: string; title: string; kickOff: string | null; points: number | null };
 export type SquadResponse = {
   squad: { id: string; formation: string; captainId: string | null; viceCaptainId: string | null; completedAt: string | null; updatedAt: string } | null;
   players: SquadEntry[];
@@ -15,6 +16,7 @@ export type SquadResponse = {
   vicePolicy: string;
   deadline?: SquadDeadline;
   recentSubs?: AutoSubReport[];
+  lastMatch?: LastSquadMatch | null;
 };
 
 export function filterSquadPool<T extends Pick<PoolPlayer, "fullName" | "position" | "teamId">>(

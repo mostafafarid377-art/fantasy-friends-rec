@@ -31,14 +31,16 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const sb = await getSupabase();
   const membership = await requireMember(id, sb);
   // Parent revision and its entries are read in the same snapshot.
-  const [{ data, error }, recent, deadline] = await Promise.all([
+  const [{ data, error }, recent, deadline, lastGame] = await Promise.all([
     sb.from("fantasy_squads").select(`${SQUAD},fantasy_squad_players(player_id,slot,order,players(${PLAYER}))`)
       .eq("league_id", id).eq("profile_id", membership.profileId).maybeSingle(),
     sb.rpc("recent_fantasy_substitutions", { p_league: id }),
     sb.rpc("ff_squad_deadline", { p_league: id }),
+    sb.rpc("last_game_points", { p_league: id }),
   ]);
   checkDb(deadline.error, "Could not load the squad deadline");
   checkDb(recent.error, "Could not load automatic substitutions");
+  checkDb(lastGame.error, "Could not load last match points");
   checkDb(error, "Could not load your squad");
   const row = data as unknown as (SavedSquad & { fantasy_squad_players: {
     player_id: string; slot: Entry["slot"]; order: number; players: PlayerRow | null }[] }) | null;
@@ -46,8 +48,16 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     if (!e.players || e.players.id !== e.player_id) throw new ApiError("A saved squad player could not be loaded", 409);
     return entryDto(e.players, { playerId: e.player_id, slot: e.slot, order: e.order }, id);
   });
-  return Response.json({ squad: row ? squadDto(row) : null, players,
-    rules: leagueRules(membership.league), vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[], deadline: deadline.data } satisfies SquadResponse);
+  // The score and match ID come from the same official ledger snapshot. Fetch
+  // the kickoff for that specific match rather than looking up "latest" again.
+  const game = lastGame.data?.[0] as { matchId: string; title: string; points: number | string | null } | undefined;
+  const match = game ? await sb.from("real_matches").select("kick_off").eq("league_id", id).eq("id", game.matchId).maybeSingle() : null;
+  checkDb(match?.error ?? null, "Could not load last match date");
+  const lastMatch = game ? { matchId: game.matchId, title: game.title, kickOff: match?.data?.kick_off ?? null,
+    points: game.points == null ? null : Number(game.points) } : null;
+  return Response.json({ squad: row ? squadDto(row) : null, players, rules: leagueRules(membership.league),
+    vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[], deadline: deadline.data, lastMatch
+  } satisfies SquadResponse, { headers: { "Cache-Control": "private, no-store" } });
 });
 
 const putSchema = z.object({

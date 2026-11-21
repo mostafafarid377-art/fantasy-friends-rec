@@ -260,7 +260,7 @@ it("previews real starters, captaincy and substitutes, refreshes an edited squad
   expect(screen.getByRole("link", { name: "Pick Your Squad" }).getAttribute("href")).toBe("/team/pick");
 });
 
-it("shows individual latest points on starters and bench, opens history on demand, and keeps results after refresh", async () => {
+it("shows one official team total above the squad and opens individual history only on demand", async () => {
   const { saved, fetch, latest, histories, historyError, put } = fixture();
   saved.set(a.id, { ...empty(a), squad: { id: "s-a", formation: "1-2-1", captainId: "gk-a", viceCaptainId: null, completedAt: null, updatedAt: "2026-11-01T12:00:00Z" },
     players: [{ ...pool[0], slot: "starter", name: pool[0].fullName, order: 0 }, { ...pool[1], slot: "sub", name: pool[1].fullName, order: 0 },
@@ -276,24 +276,28 @@ it("shows individual latest points on starters and bench, opens history on deman
   ] });
   const page = renderInShell();
   const starter = await screen.findByRole("button", { name: "Ada Keeper, GK, captain" });
-  expect(await within(starter).findByText("8 pts")).toBeTruthy();
-  expect(within(starter).getByText("C: 16 pts")).toBeTruthy();
   const bench = screen.getByRole("button", { name: /Zed Keeper/ });
-  expect(within(bench).getByText("—")).toBeTruthy();
-  expect(fetch.mock.calls.filter(([url]) => url.includes("/player-performance?"))).toHaveLength(1);
-  expect(fetch.mock.calls.some(([url]) => url.endsWith("/performance"))).toBe(false);
-  const summary = within(await screen.findByRole("list", {name:"Last match points by player"}));
-  const rows = summary.getAllByRole("listitem");
-  expect(rows.find((li) => li.textContent?.includes("Ada Keeper"))?.textContent).toContain("Cup match");
-  expect(rows.find((li) => li.textContent?.includes("Ada Keeper"))?.querySelector("time")?.dateTime).toBe("2026-11-19T10:00:00Z");
-  expect(rows.find((li) => li.textContent?.includes("Zed Keeper"))?.textContent).toContain("BenchNo matches yet—");
-  expect(summary.queryByText(/16 pts/)).toBeNull();
-  latest["gk-a"] = { ...latest["gk-a"], points: 11, captainPoints: 22 };
-  fireEvent(window, new StorageEvent("storage", {key: `ff:league-content-changed:${a.id}`}));
-  expect(await summary.findByText("11 pts")).toBeTruthy();
-  latest["gk-a"] = { ...latest["gk-a"], points: 8, captainPoints: 16 };
-  fireEvent(window, new StorageEvent("storage", {key: `ff:league-content-changed:${a.id}`}));
-  expect(await summary.findByText("8 pts")).toBeTruthy();
+  expect(within(starter).queryByText(/pts/)).toBeNull();
+  expect(within(bench).queryByText(/pts|—/)).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => url.includes("/player-performance?") || url.endsWith("/performance"))).toBe(false);
+  const region = await screen.findByRole("region", { name: "Last match points" });
+  const summary = within(region);
+  expect(region.compareDocumentPosition(screen.getByRole("region", {name:"Starting lineup"})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(summary.getByText("No finalized match yet")).toBeTruthy();
+  const lastMatch = { matchId: "match-8", title: "Cup match", kickOff: "2026-11-19T10:00:00Z", points: 27.5 };
+  const refresh = (points: number | null) => {
+    saved.set(a.id, { ...saved.get(a.id)!, lastMatch: { ...lastMatch, points } });
+    fireEvent(window, new StorageEvent("storage", {key: `ff:league-content-changed:${a.id}`}));
+  };
+  refresh(null);
+  expect(await summary.findByText("No squad score recorded")).toBeTruthy();
+  refresh(0);
+  expect(await summary.findByText("0 pts")).toBeTruthy();
+  refresh(lastMatch.points);
+  expect(await summary.findByText("27.5 pts")).toBeTruthy();
+  expect(summary.getByText(/Cup match/).querySelector("time")?.dateTime).toBe(lastMatch.kickOff);
+  expect(summary.queryByText(/Ada Keeper|Zed Keeper/)).toBeNull();
+  expect(summary.queryByRole("list")).toBeNull();
   starter.focus(); fireEvent.click(starter);
   const history = within(await screen.findByRole("region", { name: "Finalized match history" }));
   expect(await history.findByText("Cup match · GW 8")).toBeTruthy();
@@ -301,7 +305,7 @@ it("shows individual latest points on starters and bench, opens history on deman
     .toEqual([expect.stringContaining("Cup match"), expect.stringContaining("Opening match")]);
   expect(history.getByText("0 pts")).toBeTruthy();
   expect(dialog().getByText("Reds")).toBeTruthy();
-  expect(dialog().getByText("16 pts (C ×2)")).toBeTruthy();
+  expect(await dialog().findByText("16 pts (C ×2)")).toBeTruthy();
   const cupSummary = history.getByText("Cup match · GW 8").closest("summary")!;
   fireEvent.click(cupSummary);
   expect(cupSummary.closest("details")?.open).toBe(true);
@@ -320,7 +324,7 @@ it("shows individual latest points on starters and bench, opens history on deman
   expect(await screen.findByText("No finalized games yet.")).toBeTruthy();
   expect(put).not.toHaveBeenCalled();
   page.unmount(); renderInShell();
-  expect(await within(await screen.findByRole("list", {name:"Last match points by player"})).findByText("8 pts")).toBeTruthy();
+  expect(await within(await screen.findByRole("region", {name:"Last match points"})).findByText("27.5 pts")).toBeTruthy();
   click("Ada Keeper, GK, captain");
   expect(await screen.findByText("Cup match · GW 8")).toBeTruthy();
 });

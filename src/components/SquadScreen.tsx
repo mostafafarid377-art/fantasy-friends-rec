@@ -5,7 +5,7 @@ import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, Plus, Save } from "lucide
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
-import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "./PlayerPerformance";
+import { PlayerPerformanceDialog, useLatestPlayerGames } from "./PlayerPerformance";
 import { formatPlayerPoints } from "@/lib/player-performance";
 import { countdown, useKickoffClock } from "@/lib/match-deadline";
 import { fieldClass, SquadPicker } from "./SquadPicker";
@@ -75,8 +75,8 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   }, [locked]);
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
-  const scores = useLatestPlayerGames(leagueId, edit?.players ?? squad.data?.players ?? []);
-  const latest = scores.data ?? {};
+  const inspectedPlayer = (edit?.players ?? squad.data?.players)?.find((player) => player.id === playerId);
+  const individual = useLatestPlayerGames(leagueId, inspectedPlayer && !moving ? [inspectedPlayer] : []);
   useLeagueContentUpdates(leagueId, squad.reload, false);
   useLeagueContentUpdates(leagueId, pool.reload, false);
 
@@ -146,7 +146,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         entries: players.map((p) => ({ playerId: p.id, slot: p.slot, order: p.order })),
       } });
       if (result.state !== "applied" || !result.squad?.id || !result.squad.updatedAt) throw new ApiRequestError("Save was not confirmed. Reload before retrying.", 409);
-      squad.setData((previous) => ({ ...result, deadline: previous?.deadline, recentSubs: previous?.recentSubs }));
+      squad.setData((previous) => ({ ...result, deadline: previous?.deadline, recentSubs: previous?.recentSubs, lastMatch: previous?.lastMatch }));
       notifyLeagueContentChanged(leagueId);
       cancel();
       setNotice(result.squad.completedAt ? "Squad saved." : "Squad draft saved.");
@@ -177,7 +177,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
   const benchRow = (p: SquadEntry, label: string) => <button type="button" disabled={saving} onClick={() => setPlayerId(p.id)}
     className="flex min-w-0 flex-1 items-center gap-2 rounded border border-line px-2 py-2 text-left text-chalk hover:border-green">
     <span className="num text-xs text-green">{label}</span><Avatar name={p.name} url={p.photoUrl} size={28} />
-    <span className="min-w-0 flex-1 break-words text-sm">{p.name}<PlayerPointsLabel game={latest[p.id]} /></span><span className="text-xs text-sage">{p.position}</span>
+    <span className="min-w-0 flex-1 break-words text-sm">{p.name}</span><span className="text-xs text-sage">{p.position}</span>
   </button>;
   const priorityButton = "grid min-h-10 min-w-10 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-40";
   const addStarter = (position: Position) => openPicker({ slot: "starter", position });
@@ -203,6 +203,20 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         {conflict && <Button variant="outline" className="mt-2" onClick={() => { cancel(); void squad.reload(); }}>Discard changes & reload</Button>}
       </div>}
       {notice && editing && <p role="status" className="mb-4 text-sm text-card-y">{notice}</p>}
+      <section aria-labelledby="last-squad-match" className="mb-5">
+        <Panel className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 p-4">
+          <div className="min-w-0 break-words">
+            <h2 id="last-squad-match" className="text-xl text-chalk">Last match points</h2>
+            <p className="mt-1 text-sm text-sage">{stored.lastMatch ? <>{stored.lastMatch.title}
+              {stored.lastMatch.kickOff && <> · <time dateTime={stored.lastMatch.kickOff}>{MATCH_DATE.format(new Date(stored.lastMatch.kickOff))}</time></>}
+            </> : "No finalized match yet"}</p>
+          </div>
+          <div aria-live="polite" className="min-w-0 text-left sm:text-right">
+            <p className="num break-words text-3xl font-bold text-green">{formatPlayerPoints(stored.lastMatch?.points)}</p>
+            <p className="text-xs text-sage">{stored.lastMatch && stored.lastMatch.points == null ? "No squad score recorded" : "Fantasy squad total"}</p>
+          </div>
+        </Panel>
+      </section>
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
         <section className="mx-auto w-full max-w-[470px] space-y-3" aria-label="Starting lineup">
           <div className="flex min-h-10 flex-wrap items-center justify-between gap-2">
@@ -214,7 +228,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
             </select> : <Badge>{shape.label}</Badge>}
           </div>
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
-            disabled={saving} latest={latest} onAdd={locked ? undefined : addStarter} onSelect={setPlayerId} />
+            disabled={saving} onAdd={locked ? undefined : addStarter} onSelect={setPlayerId} />
           {!!unplaced.length && <Panel className="p-3">
             <p className="mb-2 text-sm text-card-y">Some saved starters no longer fit. Move, replace or remove them to repair the lineup.</p>
             {unplaced.map((p) => <Button key={p.id} variant="ghost" onClick={() => setPlayerId(p.id)}>{p.name} · {p.position}</Button>)}
@@ -237,25 +251,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
           </Panel>}
         </section>
         <div className="min-w-0 space-y-4">
-          <Panel className="space-y-2 p-4">
-            <h2 className="text-xl text-chalk">Last match points</h2>
-            <p className="text-xs text-sage">Individual totals include match bonus points, not the fantasy captain multiplier.</p>
-            {scores.error && <ErrorNote message={scores.error} onRetry={() => void scores.reload()} />}
-            {scores.loading && !scores.data && <p role="status" className="text-sm text-sage">Loading latest player points…</p>}
-            {!players.length && <p className="text-sm text-sage">No players picked yet.</p>}
-            {scores.data && players.length > 0 && <ul aria-label="Last match points by player" className="divide-y divide-line">
-              {[...players].sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot) || a.order - b.order).map((p) => {
-                const game = latest[p.id];
-                return <li key={p.id} className="flex items-baseline justify-between gap-2 py-2">
-                  <div className="min-w-0 break-words">
-                    <p className="text-sm text-chalk">{p.name} <span className="text-xs text-sage">· {p.slot === "starter" ? "Starter" : p.slot === "sub" ? "Bench" : "Reserve"}</span></p>
-                    <p className="text-xs text-sage">{game ? <>{game.title} · <time dateTime={game.kickOff}>{MATCH_DATE.format(new Date(game.kickOff))}</time></> : "No matches yet"}</p>
-                  </div>
-                  <span className={`num shrink-0 text-sm ${game?.points == null ? "text-sage" : "text-green"}`}>{formatPlayerPoints(game?.points)}</span>
-                </li>;
-              })}
-            </ul>}
-          </Panel>
           <Panel className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-xl text-chalk">Squad <span className="num text-green">{players.length}/{rules.squadSize}</span></h2>
@@ -295,7 +290,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         replacement={Boolean(pick.replace)} allowed={eligiblePositions(pick)} selected={new Set(players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()}
         onPick={pickPlayer} onClose={() => setPick(null)} />}
       {selected && !moving && <PlayerPerformanceDialog key={selected.id} leagueId={leagueId} entry={selected}
-        latest={latest[selected.id]} onClose={() => setPlayerId(null)} actions={<>
+        latest={individual.data?.[selected.id]} onClose={() => setPlayerId(null)} actions={<>
         <p className="mb-2 text-xs text-sage">{LABEL[selected.slot]} · {selected.status !== "active" ? "Archived" : selected.availability}</p>
         {editing ? <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
           {selected.slot === "starter" && selected.status === "active" && <>
