@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, Plus, Save } from "lucide-react";
+import { ArrowDown, ArrowLeftRight, ArrowUp, Ellipsis, FlaskConical, Plus, Save } from "lucide-react";
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
@@ -38,13 +38,13 @@ function snapshot(data: SquadResponse): Draft {
     revision: data.squad?.updatedAt ?? null };
 }
 
-export function SquadScreen({ editInitially = false }: { editInitially?: boolean }) {
+export function SquadScreen({ editInitially = false, showLineupPreview = false }: { editInitially?: boolean; showLineupPreview?: boolean }) {
   const { league } = useActiveLeague();
   if (!league) return <div className="mx-auto max-w-5xl p-5"><Skeleton className="h-64" /></div>;
-  return <LeagueSquad key={league.id} leagueId={league.id} leagueName={league.name} editInitially={editInitially} />;
+  return <LeagueSquad key={league.id} leagueId={league.id} leagueName={league.name} editInitially={editInitially} showLineupPreview={showLineupPreview} />;
 }
 
-function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string; leagueName: string; editInitially: boolean }) {
+function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview }: { leagueId: string; leagueName: string; editInitially: boolean; showLineupPreview: boolean }) {
   const { isLeader } = useLeague();
   const route = `/api/leagues/${leagueId}/squad`;
   const squad = useApi<SquadResponse>(route);
@@ -198,6 +198,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially }: { leagueId: string
         subtitle={editing ? "Tap a pitch slot to pick, or tap a player for their performance and squad actions. Changes only count after saving."
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
         actions={<>{pickActions}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
+      {showLineupPreview && <Button className="mb-4" href="/team/next-match-preview?from=squad" variant="ghost"><FlaskConical aria-hidden="true" className="size-4" />Lineup design preview</Button>}
       {locked ? <p role="status" className="mb-4 rounded border border-line p-3 text-sm text-chalk"><strong>Squad Locked.</strong> {deadline?.title ?? "The match"} has started. Your saved squad stays unchanged until the match is finalized.</p>
         : remaining != null && <p className="mb-4 text-sm text-chalk">{deadline?.title} kicks off in <span className="num text-green">{countdown(remaining)}</span>.</p>}
       {(message || squad.error) && <div className="mb-4" role="alert">
