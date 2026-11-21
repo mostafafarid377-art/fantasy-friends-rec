@@ -157,6 +157,10 @@ describe("Google OAuth", () => {
     expect(payload.auth_code).toBe("valid-code");
     expect(createHash("sha256").update(payload.code_verifier).digest("base64url")).toBe(auth.searchParams.get("code_challenge"));
     expect([...jar.keys()].some((key) => /^sb-.*-auth-token(?:\.\d+)?$/.test(key))).toBe(true);
+    expect(writes).toHaveBeenCalledWith(expect.stringMatching(/^sb-.*-auth-token(?:\.\d+)?$/), expect.any(String),
+      expect.objectContaining({ httpOnly: true, secure: true, sameSite: "lax", maxAge: expect.any(Number) }));
+    const sessionWrites = writes.mock.calls.filter(([name]) => /^sb-.*-auth-token(?:\.\d+)?$/.test(name));
+    expect(sessionWrites.every(([, , options]) => options.maxAge > 86400)).toBe(true);
     expect([...jar.keys()].some((key) => verifier.test(key))).toBe(false);
   });
 

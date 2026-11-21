@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { safeAuthPath } from "@/lib/auth-redirect";
+import { authCookieOptions } from "@/lib/supabase/auth-cookies";
 import { getSupabasePublicConfig } from "@/lib/supabase/config";
 
 /**
@@ -15,22 +17,39 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
-  let response = NextResponse.next({ request });
+  const pending = new Map<string, { value: string; options: CookieOptions }>();
+  const withCookies = (response: NextResponse) => {
+    for (const [name, { value, options }] of pending) response.cookies.set(name, value, options);
+    if (pending.size) response.headers.set("Cache-Control", "private, no-store");
+    return response;
+  };
   const supabase = createServerClient(config.url, config.publishableKey, {
     cookies: {
       getAll: () => request.cookies.getAll(),
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) => {
-          response.cookies.set(name, value, options);
-        });
+        for (const { name, value, options } of cookiesToSet) {
+          if (options.maxAge === 0) request.cookies.delete(name);
+          else request.cookies.set(name, value);
+          pending.set(name, { value, options: authCookieOptions(name, options) });
+        }
       },
     },
   });
 
-  await supabase.auth.getClaims();
-  return response;
+  const { pathname, searchParams } = request.nextUrl;
+  if ((pathname === "/" || pathname === "/login") && !searchParams.has("auth_error")) {
+    // Verify with Auth, rather than trusting a cookie or JWT alone to redirect.
+    // This avoids sending a revoked session back to a protected route in a loop.
+    const { data, error } = await supabase.auth.getUser();
+    if (!error && data.user) {
+      const next = pathname === "/login" ? safeAuthPath(searchParams.get("next")) : "/dashboard";
+      const destination = /^\/login\/?(?:[?#]|$)/.test(next) ? "/dashboard" : next;
+      return withCookies(new NextResponse(null, { status: 307, headers: { Location: destination, "Cache-Control": "private, no-store" } }));
+    }
+  } else {
+    await supabase.auth.getClaims();
+  }
+  return withCookies(NextResponse.next({ request }));
 }
 
 export const config = {
