@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getSupabase } from "@/db";
-import { checkDb, handler, memberProfiles, requireMember } from "@/lib/server";
+import { checkDb, handler, requireMember } from "@/lib/server";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -8,10 +8,13 @@ export const dynamic = "force-dynamic";
 
 export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
-  const membership = await requireMember(id);
   const supabase = await getSupabase();
+  const membership = await requireMember(id, supabase);
 
-  const [standingsResp, historyResp, ledgerResp] = await Promise.all([
+  // The three reads below do not depend on each other, so they run together.
+  // The member read used to run after this batch, which put a second database
+  // round trip in front of every standings page load.
+  const [standingsResp, historyResp, membersResp] = await Promise.all([
     supabase.rpc("ff_display_standings", { p_league: id }).order("rank"),
     supabase
       .from("fantasy_points_history")
@@ -19,16 +22,14 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       .eq("league_id", id)
       .order("created_at", { ascending: true })
       .limit(200),
-    supabase
-      .from("manager_points")
-      .select("profile_id, match_id, points, computed_at, breakdown")
-      .eq("league_id", id),
+    // The standings row already carries the display name, username and
+    // avatar, so only the team name and the role are still missing.
+    supabase.from("league_members").select("profile_id,role,team_name").eq("league_id", id),
   ]);
-  for (const result of [standingsResp, historyResp, ledgerResp]) checkDb(result.error, "Could not load league standings");
-  const members = new Map((await memberProfiles(id)).map((m) => [m.profileId, m]));
+  for (const result of [standingsResp, historyResp, membersResp]) checkDb(result.error, "Could not load league standings");
+  const members = new Map((membersResp.data ?? []).map((m: any) => [m.profile_id, m]));
   const rows = (standingsResp as any)?.data ?? [];
   const history = (historyResp as any)?.data ?? [];
-  const ledger = (ledgerResp as any)?.data ?? [];
 
   return Response.json({
     provisional: rows.some((row: { provisional: boolean }) => row.provisional),
@@ -43,7 +44,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       username: s.profiles?.username,
       displayName: s.profiles?.display_name,
       avatarUrl: s.profiles?.avatar_url,
-      teamName: members.get(s.profile_id)?.teamName ?? null,
+      teamName: members.get(s.profile_id)?.team_name ?? null,
       role: members.get(s.profile_id)?.role ?? "manager",
     })),
     history: (history ?? []).map((h: any) => ({
@@ -56,7 +57,6 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       displayName: h.profiles?.display_name,
       username: h.profiles?.username,
     })),
-    ledger: ledger ?? [],
     you: membership.profileId,
   });
 });

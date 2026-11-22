@@ -258,7 +258,8 @@ it("previews real starters, captaincy and substitutes, refreshes an edited squad
     if (url.includes("/player-performance?")) return Response.json({ "gk-a": { matchId: "game-a", points: 8 } });
     const l = url.endsWith(b.id) ? b : a;
     return Response.json({ league: { ...l, squadSize: 9 }, squad: l === a ? { formation: "1-2-1", captainId: "gk-a", viceCaptainId: "def-a", players } : null,
-      standings: [], myRank: null, lastGame: null, fixtures: [], matches: [], notifications: [], rulesApproved: true, emailVerified: true, memberCount: 1 });
+      standings: [], myRank: null, lastGame: null, fixtures: [], matches: [], notifications: [], rulesApproved: true, emailVerified: true, memberCount: 1,
+      latestPlayerGames: l === a ? { "gk-a": { matchId: "game-a", points: 8 } } : {} });
   }));
   renderInShell(<DashboardPage />);
   const pitch = within(await screen.findByRole("region", { name: "5v5 football pitch, formation 1-2-1" }));

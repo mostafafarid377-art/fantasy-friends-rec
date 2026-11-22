@@ -52,12 +52,10 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
     if (!e.players || e.players.id !== e.player_id) throw new ApiError("A saved squad player could not be loaded", 409);
     return entryDto(e.players, { playerId: e.player_id, slot: e.slot, order: e.order }, id);
   });
-  // The score and match ID come from the same official ledger snapshot. Fetch
-  // the kickoff for that specific match rather than looking up "latest" again.
-  const game = lastGame.data?.[0] as { matchId: string; title: string; points: number | string | null } | undefined;
-  const match = game ? await sb.from("real_matches").select("kick_off").eq("league_id", id).eq("id", game.matchId).maybeSingle() : null;
-  checkDb(match?.error ?? null, "Could not load last match date");
-  const lastMatch = game ? { matchId: game.matchId, title: game.title, kickOff: match?.data?.kick_off ?? null,
+  // The score, the title and the kickoff come from the same official ledger
+  // snapshot, so the match never has to be looked up again afterwards.
+  const game = lastGame.data?.[0] as { matchId: string; title: string; kickOff: string | null; points: number | string | null } | undefined;
+  const lastMatch = game ? { matchId: game.matchId, title: game.title, kickOff: game.kickOff ?? null,
     points: game.points == null ? null : Number(game.points) } : null;
   return Response.json({ squad: row ? squadDto(row) : null, players, rules: leagueRules(membership.league),
     vicePolicy: membership.league.vice_policy, recentSubs: (recent.data ?? []) as AutoSubReport[], deadline: deadline.data, lastMatch, liveMatches: ((liveGames.data ?? []) as LiveMatchPoints[]).filter((m) => m.matchId !== lastMatch?.matchId)

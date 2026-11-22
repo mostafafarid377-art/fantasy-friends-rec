@@ -3,6 +3,7 @@ import { getSupabase } from "@/db";
 import { ApiError, checkDb, handler, leagueRules, requireMember } from "@/lib/server";
 
 import { playerPhotoUrl } from "@/lib/player-photo";
+import { toLatestPlayerGames } from "@/lib/player-performance";
 import type { SquadEntry } from "@/lib/squad";
 import { deriveFormation, validateSquad, type Position, type SquadPlayer } from "@/lib/domain";
 
@@ -13,7 +14,7 @@ export const GET = handler(async (req: NextRequest) => {
   const sb = await getSupabase();
   const membership = await requireMember(leagueId, sb);
   const user = membership.profileId;
-  const [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames] = await Promise.all([
+  const [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames] = await Promise.all([
     sb.from("fantasy_squads").select(
       "id,formation,captain_id,vice_captain_id,completed_at,fantasy_squad_players(player_id,slot,order,players(full_name,position,status,photo_url,team_id,shirt_number,availability,league_id))",
     ).eq("league_id", leagueId).eq("profile_id", user).maybeSingle(),
@@ -26,10 +27,13 @@ export const GET = handler(async (req: NextRequest) => {
       .eq("profile_id", user).eq("league_id", leagueId).order("created_at", { ascending: false }).limit(4),
     sb.from("scoring_rules").select("status").eq("league_id", leagueId),
     sb.from("league_members").select("profile_id,team_name", { count: "exact" }).eq("league_id", leagueId),
-    sb.rpc("last_game_points", { p_league: leagueId }).maybeSingle<{ matchId: string; title: string; points: number | null }>(),
+    sb.rpc("last_game_points", { p_league: leagueId }).maybeSingle<{ matchId: string; title: string; kickOff: string | null; points: number | null }>(),
     sb.rpc("ff_my_live_match_points", { p_league: leagueId }),
+    // The latest points of the manager's own squad players travel with the
+    // dashboard, so the pitch never has to wait for a second request.
+    sb.rpc("ff_my_latest_display_player_points", { p_league: leagueId }),
   ]);
-  for (const result of [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames]) {
+  for (const result of [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames]) {
     checkDb(result.error, "Could not load dashboard");
   }
   const names = new Map((members.data ?? []).map((m) => [m.profile_id, m.team_name]));
@@ -57,7 +61,10 @@ export const GET = handler(async (req: NextRequest) => {
       profileId: s.profile_id, rank: s.rank, prevRank: s.prev_rank, totalPoints: Number(s.total_points),
       matchesPlayed: s.matches_played, displayName: s.profiles?.display_name, teamName: names.get(s.profile_id) ?? null,
     })),
-    myRank: myStanding?.rank ?? null, lastGame: lastGame.data, liveMatches: (liveGames.data ?? []).filter((m: { matchId: string }) => m.matchId !== lastGame.data?.matchId),
+    myRank: myStanding?.rank ?? null,
+    lastGame: lastGame.data ? { matchId: lastGame.data.matchId, title: lastGame.data.title, points: lastGame.data.points } : null,
+    liveMatches: (liveGames.data ?? []).filter((m: { matchId: string }) => m.matchId !== lastGame.data?.matchId),
+    latestPlayerGames: toLatestPlayerGames(playerGames.data ?? []),
     provisional: (standings.data ?? []).some((s: { provisional: boolean }) => s.provisional),
     fixtures: (fixtures.data ?? []).map((r) => ({ id: r.id, title: r.title, gameweek: r.gameweek, scheduledAt: r.scheduled_at, status: r.status })),
     matches: (matches.data ?? []).map((r) => ({ id: r.id, title: r.title, status: r.status, kickOff: r.kick_off, eventCount: r.match_events?.[0]?.count ?? 0 })),

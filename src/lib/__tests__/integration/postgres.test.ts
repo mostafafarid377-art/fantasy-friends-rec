@@ -666,13 +666,52 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       expect((await latest()).rows[0]).toEqual(fresh);
       await sql(admin, "UPDATE real_matches SET status='approved',version=3 WHERE id=$1", [pending]);
       await sql(admin, "INSERT INTO manager_points(id,league_id,match_id,profile_id,match_version,points,breakdown) VALUES(gen_random_uuid()::text,$1,$2,$3,2,99,'{}')", [leagueAId, pending, userAId]);
-      expect((await latest()).rows).toEqual([{ matchId: pending, title: "Future pending", points: null }]);
+      expect((await latest()).rows).toMatchObject([{ matchId: pending, title: "Future pending", points: null }]);
       await sql(admin, "UPDATE manager_points SET match_version=3,points=0 WHERE match_id=$1 AND profile_id=$2", [pending, userAId]);
       expect((await latest()).rows[0]).toMatchObject({ matchId: pending, points: "0.00" });
       await setAuthUid(c, userCId);
       expect((await latest()).rows[0]).toMatchObject({ matchId: pending, points: null });
       await setAuthUid(c, randomUUID());
       expect((await latest()).rows).toEqual([]);
+    } finally { c.release(); }
+  });
+
+  it("returns the kickoff of the last approved match together with its points", async () => {
+    const c = await freshClient();
+    try {
+      await setAuthUid(c, userAId);
+      const { rows: [approved] } = await sql(c,
+        "SELECT id,kick_off FROM real_matches WHERE league_id=$1 AND status='approved' ORDER BY kick_off DESC,id DESC LIMIT 1", [leagueAId]);
+      const { rows: [row] } = await sql(c, "SELECT * FROM public.last_game_points($1)", [leagueAId]);
+      expect(row).toMatchObject({ matchId: approved.id });
+      expect(new Date(row.kickOff).toISOString()).toBe(new Date(approved.kick_off).toISOString());
+    } finally { c.release(); }
+  });
+
+  it("answers the squad's latest player points for the caller only", async () => {
+    const c = await freshClient();
+    try {
+      await setAuthUid(c, userAId);
+      const { rows: [goal] } = await sql(c, "SELECT player_id FROM match_events WHERE match_id=$1 AND event_type='goal' LIMIT 1", [matchId]);
+      const { rows: [absent] } = await sql(c,
+        "SELECT id FROM players WHERE league_id=$1 AND position='GK' AND status='active' AND id NOT IN (SELECT player_id FROM match_lineups WHERE match_id=$2) LIMIT 1", [leagueAId, matchId]);
+      const { rows: [current] } = await sql(c, "SELECT updated_at::text AS revision FROM fantasy_squads WHERE league_id=$1 AND profile_id=$2", [leagueAId, userAId]);
+      const picks = [absent.id, goal.player_id].map((player_id, order) => ({ player_id, slot: "starter", order }));
+      await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS result",
+        [leagueAId, absent.id, goal.player_id, current.revision, JSON.stringify(picks)]);
+      const { rows: squadPlayers } = await sql(c,
+        "SELECT sp.player_id FROM fantasy_squads s JOIN fantasy_squad_players sp ON sp.squad_id=s.id WHERE s.league_id=$1 AND s.profile_id=$2 ORDER BY sp.player_id",
+        [leagueAId, userAId]);
+      const mine = await sql(c, "SELECT * FROM public.ff_my_latest_display_player_points($1)", [leagueAId]);
+      const expected = await sql(c, "SELECT * FROM public.ff_latest_display_player_points($1,$2)", [leagueAId, squadPlayers.map((p) => p.player_id)]);
+      expect(mine.rows).toEqual(expected.rows);
+      // Only the caller's own squad is answered.
+      const { rows: [other] } = await sql(c, "SELECT id FROM profiles WHERE id<>$1 LIMIT 1", [userAId]);
+      await setAuthUid(c, other.id);
+      const notMine = await sql(c, "SELECT * FROM public.ff_my_latest_display_player_points($1)", [leagueAId]);
+      expect(notMine.rows).toEqual([]);
+      await setAuthUid(c, randomUUID());
+      expect((await sql(c, "SELECT * FROM public.ff_my_latest_display_player_points($1)", [leagueAId])).rows).toEqual([]);
     } finally { c.release(); }
   });
 
@@ -2017,4 +2056,142 @@ it("projects event adds, edits and deletes into squad points and standings witho
     const official = Number((await sql(c, "SELECT points FROM manager_points WHERE match_id=$1 AND profile_id=$2", [match,userAId])).rows[0].points);
     expect((await table()).rows.find((p) => p.profile_id === userAId)).toMatchObject({ total_points: official.toFixed(2), matches_played: 1, provisional: false });
   } finally { c.release(); }
+});
+
+it("scopes the live manager points to the caller without changing the standings table", async () => {
+  const c = await freshClient();
+  // The full projection is revoked from `authenticated`, so compare against it
+  // in the owner role with the caller's identity set.
+  const owner = await pool.connect();
+  try {
+    const { league, match, home, away } = await recordedResultFixture(c);
+    const save = (players: string[], captain: string, vice: string) => sql(c,
+      "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)", [league.id, captain, vice, JSON.stringify(matchEntries(players))]);
+    await setAuthUid(c, userAId);
+    await save(home.slice(0, 5), home[2], home[3]);
+    await setAuthUid(c, userBId);
+    await save(away.slice(0, 5), away[1], away[2]);
+    await setAuthUid(c, userCId);
+    await reachFixtureKickoff(match);
+    await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(),
+      JSON.stringify({ teamId: league.home, playerId: home[2], otherId: home[3], eventType: "goal" })]);
+
+    // The full projection is revoked from `authenticated`, so run it in the
+    // owner role with the caller's identity set.
+    const everyone = async (uid: string) => {
+      await sql(owner, `SET auth.uid = '${uid}'`);
+      return (await sql(owner, "SELECT * FROM public.ff_live_manager_points($1)", [league.id])).rows;
+    };
+    const mine = () => sql(c, "SELECT * FROM public.ff_my_live_match_points($1)", [league.id]);
+    const table = () => sql(c, "SELECT * FROM public.ff_display_standings($1)", [league.id]);
+
+    await setAuthUid(c, userAId);
+    const allRows = await everyone(userAId);
+    const myRows = (await mine()).rows;
+    expect(myRows.length).toBeGreaterThan(0);
+    // The caller's live row is exactly the caller's row of the full projection.
+    const mineFromEveryone = allRows.filter((r: any) => r.profile_id === userAId);
+    expect(myRows.map((r: any) => r.matchId)).toEqual(mineFromEveryone.map((r: any) => r.match_id));
+    expect(myRows.map((r: any) => Number(r.points))).toEqual(mineFromEveryone.map((r: any) => Number(r.points)));
+    // Another manager sees their own live row, not the caller's.
+    await setAuthUid(c, userBId);
+    const otherRows = (await mine()).rows;
+    expect(otherRows.map((r: any) => r.matchId)).toEqual(allRows.filter((r: any) => r.profile_id === userBId).map((r: any) => r.match_id));
+    expect(otherRows.map((r: any) => Number(r.points))).not.toEqual(myRows.map((r: any) => Number(r.points)));
+    // The standings table still carries every manager's live points.
+    await setAuthUid(c, userAId);
+    const standings = (await table()).rows;
+    expect(standings.find((p: any) => p.profile_id === userAId)).toMatchObject({ provisional: true });
+    expect(Number(standings.find((p: any) => p.profile_id === userAId).live_points)).toBe(myRows.reduce((sum: number, r: any) => sum + Number(r.points), 0));
+    // The captain breakdown of the latest player points stays the caller's own.
+    const latest = await sql(c, "SELECT * FROM public.ff_latest_display_player_points($1,$2)", [league.id, home]);
+    expect(latest.rows.some((r: any) => r.captain_points !== null)).toBe(true);
+    // An unauthenticated caller sees nothing.
+    await setAuthUid(c, null);
+    expect((await mine()).rows).toEqual([]);
+    expect((await table()).rows).toEqual([]);
+  } finally { c.release(); owner.release(); }
+});
+
+it("keeps the internal live manager helpers unreachable from the API roles", async () => {
+  const c = await freshClient();
+  try {
+    // The scope helper and the all-managers projection stay inside the database.
+    await expect(sql(c, "SELECT * FROM public.ff_live_manager_points_for($1,null,$2)", [leagueAId, userAId]))
+      .rejects.toMatchObject({ code: "42501" });
+    await expect(sql(c, "SELECT * FROM public.ff_live_manager_points($1)", [leagueAId]))
+      .rejects.toMatchObject({ code: "42501" });
+    // The caller-scoped lookups stay reachable.
+    await setAuthUid(c, userAId);
+    await expect(sql(c, "SELECT * FROM public.ff_my_live_match_points($1)", [leagueAId])).resolves.toBeTruthy();
+    await expect(sql(c, "SELECT * FROM public.ff_latest_display_player_points($1,$2)", [leagueAId, []])).resolves.toBeTruthy();
+  } finally { c.release(); }
+
+  // An anonymous caller can neither call nor read the live projections.
+  const anon = await pool.connect();
+  try {
+    await sql(anon, "SET ROLE anon");
+    await expect(sql(anon, "SELECT * FROM public.ff_my_live_match_points($1)", [leagueAId]))
+      .rejects.toMatchObject({ code: "42501" });
+    await expect(sql(anon, "SELECT * FROM public.ff_latest_display_player_points($1,$2)", [leagueAId, []]))
+      .rejects.toMatchObject({ code: "42501" });
+  } finally { anon.release(); }
+});
+
+it("shares one live projection between the player rows and the manager breakdown", async () => {
+  const c = await freshClient();
+  // The internal helpers are revoked from `authenticated`, so read them in the
+  // owner role with the caller's identity set.
+  const owner = await pool.connect();
+  await sql(owner, "RESET ROLE");
+  try {
+    const { league, match, home, away } = await recordedResultFixture(c);
+    await setAuthUid(c, userAId);
+    await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+      [league.id, home[2], home[3], JSON.stringify(matchEntries(home.slice(0, 5)))]);
+    await setAuthUid(c, userBId);
+    await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+      [league.id, away[1], away[2], JSON.stringify(matchEntries(away.slice(0, 5)))]);
+    await setAuthUid(c, userCId);
+    await reachFixtureKickoff(match);
+    await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(),
+      JSON.stringify({ teamId: league.home, playerId: home[2], otherId: home[3], eventType: "goal" })]);
+
+    await setAuthUid(c, userAId);
+    // The latest player rows and the manager breakdown are derived from the
+    // same live projection, so a captain's contribution and the player's own
+    // points must agree on the same match.
+    const latest = await sql(c, "SELECT * FROM public.ff_latest_display_player_points($1,$2)", [league.id, home]);
+    const captain = latest.rows.find((r: any) => r.captain_points !== null);
+    expect(captain).toBeDefined();
+    expect(Number(captain.captain_points)).toBe(Number(captain.points) * 2);
+
+    // The shared manager projection carries the same captain and the same
+    // per-line points as the breakdown the latest lookup used.
+    await sql(owner, `SET auth.uid = '${userAId}'`);
+    const managers = await sql(owner, "SELECT * FROM public.ff_live_manager_points_for($1,null,$2)", [league.id, userAId]);
+    const line = managers.rows
+      .flatMap((m: any) => (Array.isArray(m.breakdown?.lines) ? m.breakdown.lines : []))
+      .find((l: any) => l.playerId === captain.player_id && Number(l.multiplier) === 2);
+    expect(line).toBeDefined();
+    expect(Number(line.points)).toBe(Number(captain.captain_points));
+    expect(Number(line.base) * 2).toBe(Number(captain.captain_points));
+
+    // The display rows and the latest rows agree on every player they share.
+    const display = await sql(c, "SELECT * FROM public.ff_display_player_points($1,null,$2)", [league.id, home]);
+    for (const row of latest.rows) {
+      const match_row = display.rows.find((r: any) => r.match_id === row.match_id && r.player_id === row.player_id);
+      expect(match_row, `missing display row for ${row.player_id}`).toBeDefined();
+      expect(Number(match_row.points)).toBe(Number(row.points));
+      expect(match_row.provisional).toBe(row.provisional);
+    }
+
+    // The shared pieces stay internal to the database.
+    await expect(sql(c, "SELECT * FROM public.ff_live_manager_points_from_live($1,$2,$3)", ["[]", league.id, userAId]))
+      .rejects.toMatchObject({ code: "42501" });
+    await expect(sql(c, "SELECT * FROM public.ff_live_display_player_points($1,$2)", ["[]", []]))
+      .rejects.toMatchObject({ code: "42501" });
+    await expect(sql(c, "SELECT * FROM public.ff_approved_display_player_points($1,null,$2)", [league.id, []]))
+      .rejects.toMatchObject({ code: "42501" });
+  } finally { c.release(); owner.release(); }
 });

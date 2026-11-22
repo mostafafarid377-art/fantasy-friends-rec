@@ -14,7 +14,9 @@ export const GET = handler(async (req: NextRequest, ctx: { params: Promise<{ id:
   const [points, players, rules, events] = await Promise.all([
     sb.rpc("ff_display_player_points", { p_league: id, p_match: matchId }).order("provisional", { ascending: false }).order("computed_at").order("match_id").order("player_id"),
     sb.from("players").select("id,full_name,position").eq("league_id", id),
-    sb.from("scoring_rules").select("*").eq("league_id", id),
+    // Only the approval state of the rules is shown on this screen, so the
+    // rule table is read as a status column instead of as every rule value.
+    sb.from("scoring_rules").select("status").eq("league_id", id),
     matchId ? sb.from("match_events").select("id,match_id,player_id,event_type,minute,assist_player_id").eq("league_id", id).eq("match_id", matchId)
       : sb.from("match_events").select("id,match_id,player_id,event_type,minute,assist_player_id").eq("league_id", id),
   ]);
@@ -33,5 +35,5 @@ export const GET = handler(async (req: NextRequest, ctx: { params: Promise<{ id:
     };
   });
   return Response.json({ approvedRules: Boolean(rules.data?.length && rules.data.every((r) => r.status === "approved")),
-    rules: rules.data ?? [], rows, matches: [...matches.values()] });
+    rows, matches: [...matches.values()] });
 });

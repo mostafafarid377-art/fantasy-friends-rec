@@ -47,14 +47,14 @@ describe("league squad route", () => {
 
   it("loads the official team total and the date of that exact match, preserving zero and unscored results", async () => {
     for (const [stored, points] of [["27.50", 27.5], ["0.00", 0], [null, null]]) {
-      lastGame = [{ matchId: "match-a", title: "Cup final", points: stored }];
+      lastGame = [{ matchId: "match-a", title: "Cup final", kickOff: revision, points: stored }];
       const res = await GET(request(), ctx);
       expect(res.headers.get("cache-control")).toBe("private, no-store");
       expect((await res.json()).lastMatch).toEqual({matchId:"match-a", title:"Cup final", kickOff:revision, points});
     }
     expect(db.rpc).toHaveBeenCalledWith("last_game_points", {p_league:"league-a"});
-    expect(filters).toHaveBeenCalledWith("real_matches", "league_id", "league-a");
-    expect(filters).toHaveBeenCalledWith("real_matches", "id", "match-a");
+    // The kickoff travels with the points, so the match is never looked up again.
+    expect(filters).not.toHaveBeenCalledWith("real_matches", "id", "match-a");
   });
 
   it("returns a kept draft and its full-precision revision from the same read", async () => {
