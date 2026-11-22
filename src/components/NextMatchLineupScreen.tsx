@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, CalendarDays, History, Lock, Pencil, Save, Unlock } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Lock, Pencil, Save, Unlock } from "lucide-react";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
 import { useLatestPlayerGames } from "./PlayerPerformance";
@@ -22,21 +22,15 @@ type Props = {
 };
 
 export function NextMatchLineupScreen(props: Props) {
-  const [showPreparation, setShowPreparation] = useState(false);
   const { data } = props;
-  const canSwitch = Boolean(data.match?.locked && data.canPrepare);
-  const isPreparation = canSwitch && showPreparation;
-  return <LineupEditor {...props} key={isPreparation ? "preparation" : "fixture"}
-    data={isPreparation ? { ...data, match: null, saved: data.preparation ?? null } : data}
-    modeAction={canSwitch ? {
-      label: isPreparation ? "View locked lineup" : "Prepare next lineup",
-      onClick: () => setShowPreparation(!isPreparation),
-    } : undefined} />;
+  // One lineup only: the next match's. When the current fixture has started it
+  // is already on My Team, so this screen leads with the prepared lineup.
+  const preparing = Boolean(data.match?.locked && data.canPrepare);
+  return <LineupEditor {...props} key={preparing ? "preparation" : "fixture"}
+    data={preparing ? { ...data, match: null, saved: data.preparation ?? null } : data} />;
 }
 
-function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, refresh, route, loadError, modeAction }: Props & {
-  modeAction?: { label: string; onClick: () => void };
-}) {
+function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, refresh, route, loadError }: Props) {
   const [edit, setEdit] = useState<{ lineup: MatchLineup; revision: string | null } | null>(null);
   const [confirmed, setConfirmed] = useState<SavedMatchLineup | null>(null);
   const [targetId, setTargetId] = useState<string | null>(null);
@@ -119,15 +113,6 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
       subtitle={preparing ? "Prepare your next lineup without changing your current saved squad."
         : "This lineup is separate from Edit Squad. Until you save it, the match uses your current saved squad."}
       actions={<><Button variant="outline" onClick={onBack}><Pencil aria-hidden="true" className="size-4" />Edit Squad</Button><Button disabled><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button></>} />
-    {previous && <Panel className="mb-5 p-4">
-      <details>
-        <summary className="cursor-pointer text-sm font-semibold text-chalk"><History aria-hidden="true" className="mr-1.5 inline size-4 align-text-bottom text-green" />Previous saved lineup <span className="text-xs font-normal text-sage">· Read-only</span></summary>
-        <p className="mt-2 text-xs text-sage">{previous.title} · {dateTime.format(new Date(previous.kickOff))} · {previous.lineup.formation}</p>
-        <ul aria-label="Previous saved starters" className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
-          {previous.lineup.players.filter((p) => p.slot === "starter").map((p) => <li key={p.id}><span className="num mr-2 text-sage">{p.position}</span>{p.name}{p.id === previous.lineup.captainId ? " (C)" : p.id === previous.lineup.viceId ? " (VC)" : ""}</li>)}
-        </ul>
-      </details>
-    </Panel>}
     {loadError && <div className="mb-4"><ErrorNote message={loadError} onRetry={() => void refresh()} /></div>}
     {!match && <Panel className="floodlight mb-5 p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2"><h2 className="text-xl">No next match scheduled</h2>{preparing && <Badge tone="live">Editable</Badge>}</div>
@@ -135,7 +120,6 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
         ? "Save your lineup now. It will be applied when a match with a future kickoff is created in this league. Your current squad and previous lineups won’t change."
         : "When a match is scheduled, you can prepare its lineup here."}</p>
     </Panel>}
-    {modeAction && <Button className="mb-4" variant="outline" disabled={saving} onClick={modeAction.onClick}>{modeAction.label}</Button>}
     {(match || preparing) && <>
       {match && <Panel className="floodlight mb-5 flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
         <div className="min-w-0">

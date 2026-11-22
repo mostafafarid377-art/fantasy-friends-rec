@@ -55,7 +55,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const nextLineup = useApi<NextMatchLineup>(enableNextMatch ? nextRoute : null);
   const [viewNext, setViewNext] = useState(false);
   const [hasOpenedNext, setHasOpenedNext] = useState(false);
-  const [viewDefault, setViewDefault] = useState(false);
   useEffect(() => {
     if (!enableNextMatch) return;
     const refresh = () => { if (document.visibilityState === "visible") void nextLineup.reload(); };
@@ -108,12 +107,12 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   }, [squadLocked, editsNext, editingNext]);
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
-  // My Team shows one starting lineup: the match now in play once its deadline
-  // has locked, otherwise the last verified result. The upcoming draft and the
-  // default squad are never presented as history.
+  // My Team shows exactly one starting lineup: the match now in play once its
+  // deadline has locked, otherwise the lineup of the last gameweek. There is no
+  // second squad to switch to, and the upcoming draft is never shown as history.
   const previous = nextData?.previous;
   const inPlay = nextData?.inPlay ?? null;
-  const historical = !editing && !viewDefault ? inPlay ?? previous : null;
+  const historical = !editing ? inPlay ?? previous : null;
   const showingInPlay = Boolean(historical && inPlay && historical.matchId === inPlay.matchId);
   const readOnlyLineup = !editing && Boolean(historical);
   const activePlayers = (editing ? (edit ?? nextSeed)?.players : historical?.lineup.players) ?? squad.data?.players ?? [];
@@ -130,8 +129,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const showingNext = viewNext && editsNext;
   const current = (editing ? edit ?? nextSeed : historical ? { ...historical.lineup, revision: null } : null) ?? snapshot(stored);
   const lineupTitle = showingInPlay ? "Starting lineup" : historical ? "Previous match starting lineup"
-    : editing && editingNext ? "Next match starters"
-    : !editing && enableNextMatch && (previous || stored.lastMatch) ? "Default starting lineup" : "Starting lineup";
+    : editing && editingNext ? "Next match starters" : "Starting lineup";
   const latest = lineupScores.data && historical
     ? Object.fromEntries(Object.entries(lineupScores.data).filter(([, game]) => game.matchId === historical.matchId))
     : lineupScores.data ?? undefined;
@@ -167,10 +165,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   function begin() {
     if (editingBlocked || saving) return;
     setEdit(edit ?? nextSeed ?? snapshot(stored));
-    if (previous) {
-      setViewDefault(false);
-      setPlayerId(null);
-    }
+    if (previous) setPlayerId(null);
     setMessage(null);
     setNotice(null);
   }
@@ -344,9 +339,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
           {historical && <p className="text-sm text-sage"><Link className="underline-offset-4 hover:underline" href={`/matches/${historical.matchId}`}>{historical.title}</Link> · <time dateTime={historical.kickOff}>{MATCH_DATE.format(new Date(historical.kickOff))}</time> · {showingInPlay ? "Locked · Read-only" : "Read-only"}</p>}
           {!editing && enableNextMatch && nextData && !nextLineup.error && !inPlay && stored.lastMatch && previous?.matchId !== stored.lastMatch.matchId &&
             <p className="text-sm text-sage">No verified lineup saved for {stored.lastMatch.title}.</p>}
-          {(previous || inPlay) && !editing && <Button size="sm" variant="outline" onClick={() => { setViewDefault(!viewDefault); setPlayerId(null); }}>
-            {historical ? "View default squad" : inPlay ? "View locked lineup" : "View previous lineup"}
-          </Button>}
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
             disabled={saving} latest={latest} onAdd={readOnlyLineup || editingBlocked ? undefined : addStarter} onSelect={setPlayerId} />
           {!!unplaced.length && <Panel className="p-3">
