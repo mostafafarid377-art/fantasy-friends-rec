@@ -60,8 +60,9 @@ function fixture() {
       if (options?.method !== "PUT") return Response.json(data);
       const body = JSON.parse(String(options.body));
       putNext(leagueId, body);
-      if (!data.previous) return Response.json({ error: "No previous saved lineup" }, { status: 409 });
-      const saved = { revision: "2026-11-19T08:00:01.000001+00:00", lineup: { ...data.previous.lineup, formation: body.formation, captainId: body.captainId, viceId: body.viceId,
+      // No official lineup is required: the saved squad seeds the save.
+      const seed = data.previous?.lineup ?? data.saved?.lineup ?? { players: [] };
+      const saved = { revision: "2026-11-19T08:00:01.000001+00:00", lineup: { ...seed, formation: body.formation, captainId: body.captainId, viceId: body.viceId,
         players: body.entries.map((e: { id: string; slot: string; order: number }) => ({ ...pool.find((p) => p.id === e.id), name: pool.find((p) => p.id === e.id)?.fullName, ...e })) } };
       nextLineups.set(leagueId, { ...data, ...(data.match && body.matchId === null ? { preparation: saved } : { saved }) });
       return Response.json({ matchId: body.matchId, ...saved });
@@ -412,7 +413,7 @@ it("adds a separate demo entry when enabled without showing Next Match for the l
 });
 
 
-it("gates the real Next Match view on verified history and saves a separate lineup only on explicit confirmation", async () => {
+it("opens the real Next Match view only when there is a lineup to prepare and saves a separate lineup only on explicit confirmation", async () => {
   const { fetch, saved, nextLineups, putNext, put } = fixture();
   const entries = [pool[0], pool[4], pool[5], pool[6], pool[8], pool[1]].map((p, order) => ({ ...p, name: p.fullName,
     slot: order === 5 ? "sub" as const : "starter" as const, order: order === 5 ? 0 : order }));
@@ -444,6 +445,28 @@ it("gates the real Next Match view on verified history and saves a separate line
   expect(await screen.findByText("Lineup saved for this match only.")).toBeTruthy();
   expect(putNext).toHaveBeenCalledWith(a.id, expect.objectContaining({ matchId: "target-match", captainId: entries[0].id, expectedUpdatedAt: null }));
   expect(nextLineups.get(a.id)?.previous?.lineup.captainId).toBe(entries[1].id);
+  expect(put).not.toHaveBeenCalled();
+});
+
+it("opens the next-match editor for a scheduled fixture without a previous lineup and saves from the saved squad", async () => {
+  const { saved, nextLineups, putNext, put } = fixture();
+  const entries = [pool[0], pool[4], pool[5], pool[6], pool[8], pool[1]].map((p, order) => ({ ...p, name: p.fullName,
+    slot: order === 5 ? "sub" as const : "starter" as const, order: order === 5 ? 0 : order }));
+  saved.set(a.id, { ...empty(a), players: entries, squad: { id: "default", formation: "1-2-1",
+    captainId: entries[1].id, viceCaptainId: entries[2].id, completedAt: null, updatedAt: "2026-11-18T18:00:00Z" } });
+  // A fixture is scheduled but there is no official lineup to inherit yet.
+  nextLineups.set(a.id, { serverNow: "2026-11-19T08:00:00Z", previous: null, saved: null, canPrepare: false,
+    match: { id: "first-fixture", title: "First fixture", kickOff: "2026-11-19T09:00:00Z", locked: false } });
+  renderInShell(<SquadScreen enableNextMatch />);
+  fireEvent.click(await screen.findByRole("button", { name: "Next Match" }));
+  expect(screen.getByRole("heading", { name: "Next Match Lineup" })).toBeTruthy();
+  // The editor seeds from the saved squad, not from a previous match.
+  expect(screen.getByText("Starting from your saved squad")).toBeTruthy();
+  const pitch = within(screen.getByRole("region", { name: /football pitch/ }));
+  expect(pitch.getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
+  click("Save changes");
+  expect(await screen.findByText("Lineup saved for this match only.")).toBeTruthy();
+  expect(putNext).toHaveBeenCalledWith(a.id, expect.objectContaining({ matchId: "first-fixture", captainId: entries[1].id }));
   expect(put).not.toHaveBeenCalled();
 });
 

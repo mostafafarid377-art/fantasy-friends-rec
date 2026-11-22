@@ -1793,7 +1793,9 @@ it("captures only forward fantasy lineups, scopes the draft to its manager and f
 
     await setAuthUid(c, userAId);
     const current = await saveSquad(home[1], null);
-    expect(await view()).toMatchObject({ previous: null, match: null, saved: null });
+    // The scheduled fixture is offered even without an official lineup to
+    // inherit: the saved squad is the seed.
+    expect(await view()).toMatchObject({ previous: null, match: { id: legacy, locked: false }, saved: null, canPrepare: false });
     await sql(admin, "UPDATE real_matches SET kick_off=(SELECT enabled_at-interval '1 day' FROM fantasy_lineup_rollout) WHERE id=$1", [legacy]);
     await approve(legacy);
     expect(await historical(legacy)).toBeUndefined();
@@ -1813,8 +1815,12 @@ it("captures only forward fantasy lineups, scopes the draft to its manager and f
       "SELECT ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,$5,$6) AS result",
       [league.id, id, captain, home[2], revision, JSON.stringify(entries)])).rows[0].result;
     await setAuthUid(c, userBId);
-    expect(await view()).toMatchObject({ previous: null, match: null, saved: null });
-    await expect(save()).rejects.toMatchObject({ code: "PT409" });
+    expect(await view()).toMatchObject({ previous: null, match: { id: next, locked: false }, saved: null });
+    // A manager without an official lineup saves for the fixture anyway: the
+    // picked players themselves are the seed, no history is required.
+    const firstEver = await save();
+    expect(firstEver.matchId).toBe(next);
+    expect(await view()).toMatchObject({ previous: null, saved: { revision: firstEver.revision, lineup: firstEver.lineup } });
     await expect(sql(c, "SELECT * FROM fantasy_match_lineup_history")).rejects.toMatchObject({ code: "42501" });
     await expect(sql(c, "SELECT ff_previous_fantasy_lineup($1,$2,now())", [league.id, userAId])).rejects.toMatchObject({ code: "42501" });
     await expect(sql(c, "UPDATE fantasy_match_lineup_drafts SET lineup='{}' WHERE match_id=$1", [next])).rejects.toMatchObject({ code: "42501" });
@@ -1824,7 +1830,8 @@ it("captures only forward fantasy lineups, scopes the draft to its manager and f
     await setAuthUid(c, userAId);
     await saveSquad(home[0], current.squad.updated_at);
     expect(await view()).toMatchObject({ previous: { matchId: baseline, lineup: original }, match: { id: next, locked: false }, saved: null });
-    expect((await sql(admin,"SELECT * FROM fantasy_match_lineup_drafts WHERE match_id=$1",[next])).rowCount).toBe(0);
+    // The read itself persists nothing for the manager who only looked.
+    expect((await sql(admin,"SELECT * FROM fantasy_match_lineup_drafts WHERE match_id=$1 AND profile_id=$2",[next,userAId])).rowCount).toBe(0);
     await expect(save(unrelated)).rejects.toMatchObject({ code: "42501" });
     await expect(save(next, chosen.slice(1))).rejects.toMatchObject({ code: "22023" });
     await expect(save(next, chosen, null, home[2])).rejects.toMatchObject({ code: "22023" });
@@ -1953,7 +1960,14 @@ it("prepares a private lineup without a fixture and attaches it once without upd
     expect(await view()).toMatchObject({previous:{matchId:baseline,lineup:{captainId:home[1]}},saved:null});
     await setAuthUid(c,userCId);
     expect(await view()).toMatchObject({previous:null,saved:null});
-    await expect(prepare(null)).rejects.toMatchObject({code:"PT409"});
+    // A manager without any official lineup prepares the next one from the
+    // picked players themselves: no history is required anymore.
+    const guest = await prepare(null);
+    expect(await view()).toMatchObject({previous:null,saved:{revision:guest.revision,lineup:guest.lineup},match:null});
+    // Keep the single-preparation flow below intact: only the first
+    // preparation is attached when the fixture arrives.
+    await sql(admin,"DELETE FROM fantasy_next_lineup_preparations WHERE league_id=$1 AND profile_id=$2",[league.id,userCId]);
+    expect(await view()).toMatchObject({previous:null,saved:null});
     await expect(sql(c,"SELECT * FROM fantasy_next_lineup_preparations")).rejects.toMatchObject({code:"42501"});
     const otherLeague = await releaseLeague(c,5);
     const unrelated = await otherLeague.makeMatch();
@@ -2325,13 +2339,86 @@ describe("fantasy lineup lifecycle (real PostgreSQL)", () => {
     } finally { c.release(); }
   });
 
+  it("moves the next-match target past the locked fixture at kickoff without replaying its draft", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, squad } = await lifecycleFixture(c);
+      const view = async () => (await sql(c, "SELECT ff_next_match_lineup($1) AS result", [league.id])).rows[0].result;
+      const picks = matchEntries(home.slice(0, 5), home.slice(5, 8)).map(({ player_id, ...rest }) => ({ id: player_id, ...rest }));
+      // Both managers keep a complete default squad. Neither has an official
+      // lineup yet: nothing has been approved in this league.
+      await setAuthUid(c, userAId);
+      await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+        [league.id, home[1], home[2], JSON.stringify(squad)]);
+      await setAuthUid(c, userBId);
+      await sql(c, "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+        [league.id, home[3], home[4], JSON.stringify(squad)]);
+
+      const first = await league.makeMatch();
+      const second = await league.makeMatch();
+      await sql(admin, "UPDATE real_matches SET kick_off=clock_timestamp()+interval '1 hour' WHERE id=$1", [first]);
+      await sql(admin, "UPDATE real_matches SET kick_off=clock_timestamp()+interval '2 hours' WHERE id=$1", [second]);
+
+      // The first fixture is the target even though there is nothing to
+      // inherit: the saved squad is the seed.
+      await setAuthUid(c, userAId);
+      expect(await view()).toMatchObject({ match: { id: first, locked: false }, previous: null, saved: null, canPrepare: false });
+      const saved = (await sql(c, "SELECT public.ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,null,$5) AS saved",
+        [league.id, first, home[1], home[2], JSON.stringify(picks)])).rows[0].saved;
+      expect(saved.matchId).toBe(first);
+
+      // Kickoff passes. Before the deadline runner locks anything in, the
+      // target already advances: the editor must not offer the locked
+      // fixture's draft as the next match's lineup.
+      await reachFixtureKickoff(first);
+      expect(await view()).toMatchObject({
+        match: { id: second, locked: false }, previous: null, saved: null, canPrepare: false,
+        inPlay: { matchId: first, source: "saved", lineup: saved.lineup },
+      });
+      // A manager without any official lineup sees the same advance instead
+      // of an empty response.
+      await setAuthUid(c, userBId);
+      expect(await view()).toMatchObject({
+        match: { id: second, locked: false }, previous: null, saved: null, canPrepare: false,
+        inPlay: { matchId: first, source: "default" },
+      });
+
+      // The deadline run locks the first fixture in. Now the editor seeds
+      // from the official lineup of the fixture in play.
+      await sql(admin, "SELECT public.ff_promote_due_match_lineups('test')");
+      await setAuthUid(c, userAId);
+      const advanced = await view();
+      expect(advanced).toMatchObject({
+        match: { id: second, locked: false }, saved: null, canPrepare: false,
+        previous: { matchId: first, lineup: saved.lineup },
+        inPlay: { matchId: first, source: "official" },
+      });
+      expect(advanced.previous.lineup).toEqual(saved.lineup);
+      // The locked fixture refuses the save; the new target accepts it.
+      await expect(sql(c, "SELECT public.ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,$5,$6)",
+        [league.id, first, home[1], home[2], saved.revision, JSON.stringify(picks)])).rejects.toMatchObject({ code: "PT409" });
+      const moved = (await sql(c, "SELECT public.ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,null,$5) AS saved",
+        [league.id, second, home[3], home[4], JSON.stringify(picks)])).rows[0].saved;
+      expect(moved.matchId).toBe(second);
+      // The default squad of the manager without history was locked in as
+      // the official lineup of the fixture in play.
+      await setAuthUid(c, userBId);
+      expect(await view()).toMatchObject({
+        match: { id: second, locked: false }, saved: null,
+        previous: { matchId: first, lineup: { captainId: home[3], viceId: home[4] } },
+        inPlay: { matchId: first, source: "official" },
+      });
+      expect(away.length).toBeGreaterThan(0);
+    } finally { c.release(); }
+  });
+
   it("requires a captain and a vice-captain for every lineup that is played", async () => {
     const c = await freshClient();
     try {
       const { league, home, away, squad, saveSquad, play } = await lifecycleFixture(c);
       await setAuthUid(c, userAId);
       await saveSquad(home[1], home[2]);
-      // A lineup can only be saved once there is a previous official lineup.
+      // An official lineup exists to inherit, so the next fixture is the target.
       await play(await league.makeMatch());
       const match = await league.makeMatch();
       const entries = matchEntries(home.slice(0, 5), home.slice(5, 8))

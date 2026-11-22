@@ -5,7 +5,7 @@
 # Usage: DATABASE_URL="postgres://user:pass@host:5432/dbname" ./scripts/deploy-fresh-db.sh
 #
 # This script:
-#   1. Applies migrations 0001 through 0029 in order
+#   1. Applies migrations 0001 through 0030 in order
 #   2. Verifies all tables, RLS, functions, and grants are in place
 #   3. Does NOT connect to or modify the remote Supabase project Hagz-fantasy
 #   4. Does NOT run the legacy destructive migration (0000_destructive_removal.sql)
@@ -109,6 +109,7 @@ MIGRATIONS=(
   "0027_shared_live_projection.sql"
   "0028_lineup_lifecycle.sql"
   "0029_lineup_deadline_runner.sql"
+  "0030_next_match_lineup_availability.sql"
 )
 
 for migration in "${MIGRATIONS[@]}"; do
@@ -244,7 +245,7 @@ echo "============================================================"
 echo "Fresh database deployment COMPLETE"
 echo "============================================================"
 echo ""
-echo "All migrations applied in order: 0001 through 0029"
+echo "All migrations applied in order: 0001 through 0030"
 echo "All tables created, RLS enabled, RPC grants in place."
 echo ""
 echo "Next steps:"

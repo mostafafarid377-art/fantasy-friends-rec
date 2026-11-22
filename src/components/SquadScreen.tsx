@@ -75,6 +75,11 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const nextFixture = nextData?.match;
   const nextRemaining = useKickoffClock(nextData?.serverNow, nextFixture?.kickOff);
   const editsNext = Boolean(nextData?.previous);
+  // There is something to prepare as soon as a fixture is scheduled, an
+  // official lineup can be inherited, or a preparation is waiting. The
+  // lineup of the next match must not wait for the deadline of the match in
+  // play.
+  const canPrepareNext = Boolean(nextData?.previous || nextData?.match || nextData?.preparation);
   const scheduled = nextFixture && !nextFixture.locked ? nextFixture : null;
   const checkingTarget = enableNextMatch && (!nextData || Boolean(nextLineup.error));
   const locked = editsNext ? (scheduled ? nextRemaining === 0 : !nextData?.canPrepare) : squadLocked;
@@ -122,7 +127,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   if (squad.error && !squad.data) return <div className="mx-auto max-w-5xl p-5"><ErrorNote message={squad.error} onRetry={() => void squad.reload()} /></div>;
   if (!squad.data) return <div className="mx-auto max-w-5xl space-y-4 p-5"><Skeleton className="h-24" /><Skeleton className="h-80" /></div>;
   const stored = squad.data;
-  const showingNext = viewNext && editsNext;
+  const showingNext = viewNext && canPrepareNext;
   const current = (editing ? edit ?? nextSeed : historical ? { ...historical.lineup, revision: null } : null) ?? snapshot(stored);
   const lineupTitle = showingInPlay ? "Starting lineup" : historical ? "Previous match starting lineup"
     : editing && editingNext ? "Next match starters" : "Starting lineup";
@@ -276,7 +281,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
 
   return (
     <>
-    {hasOpenedNext && nextLineup.data?.previous && <div hidden={!showingNext}><NextMatchLineupScreen key={nextLineup.data.match?.id ?? "unscheduled"}
+    {hasOpenedNext && canPrepareNext && nextLineup.data && <div hidden={!showingNext}><NextMatchLineupScreen key={nextLineup.data.match?.id ?? "unscheduled"}
       leagueId={leagueId} leagueName={leagueName} rules={stored.rules} data={nextLineup.data} fallback={snapshot(stored)}
       route={nextRoute} refresh={nextLineup.reload} loadError={nextLineup.error}
       onBack={() => { if (!editing && !editingBlocked) begin(); setViewNext(false); }} /></div>}
@@ -287,7 +292,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
           : showingInPlay ? "This is the lineup in play for the locked match. Edit Squad only changes your next lineup."
           : historical ? "View the lineup saved for your previous match. Edit Squad only changes the next match."
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
-        actions={<>{pickActions}{nextLineup.data?.previous && <Button variant="outline" onClick={() => { setHasOpenedNext(true); setViewNext(true); setPlayerId(null); setPick(null); setMoving(null); }}><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button>}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
+        actions={<>{pickActions}{canPrepareNext && <Button variant="outline" onClick={() => { setHasOpenedNext(true); setViewNext(true); setPlayerId(null); setPick(null); setMoving(null); }}><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button>}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
       {enableNextMatch && nextLineup.error && <div className="mb-4"><ErrorNote message={nextLineup.error} onRetry={() => void nextLineup.reload()} /></div>}
       {showLineupPreview && <Button className="mb-4" href="/team/next-match-preview?from=squad" variant="ghost"><FlaskConical aria-hidden="true" className="size-4" />Lineup design preview</Button>}
       {editing && (targetChanged || (editingNext && locked)) && <p role="status" className="mb-4 rounded border border-card-y/35 p-3 text-sm">The next-match target has changed or locked. Cancel and reopen Edit Squad to edit the current target.</p>}
