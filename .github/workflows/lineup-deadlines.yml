@@ -1,0 +1,64 @@
+name: lineup deadlines
+
+# The official lineup of a fixture is locked in when its deadline passes.
+#
+# This workflow is the backup runner: it calls the internal deadline route
+# every five minutes so a fixture is never left without its official lineup.
+# The database is where the deadline really runs — migration 0029 schedules
+# the same function inside PostgreSQL with pg_cron — and this workflow checks
+# that job is there.
+#
+# It is a backup, not the guarantee. GitHub runs scheduled workflows on a
+# best-effort basis: a run can be delayed under load, and GitHub disables
+# scheduled workflows in a repository that has been inactive for 60 days.
+# The in-database job is what makes the deadline timely; see
+# LINEUP_LIFECYCLE.md, section "The deadline runner".
+#
+# Set up:
+#   gh secret set LINEUP_DEADLINE_SECRET   # the same value as in the app
+#   gh secret set LINEUP_DEADLINE_URL       # the address of the route
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lineup-deadlines
+  cancel-in-progress: false
+
+jobs:
+  lock-lineups:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lock the lineups whose deadline has passed
+        env:
+          LINEUP_DEADLINE_URL: ${{ secrets.LINEUP_DEADLINE_URL }}
+          LINEUP_DEADLINE_SECRET: ${{ secrets.LINEUP_DEADLINE_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LINEUP_DEADLINE_SECRET:-}" ]; then
+            echo "LINEUP_DEADLINE_SECRET is not set: the lineup deadline is not running." >&2
+            exit 1
+          fi
+          if [ -z "${LINEUP_DEADLINE_URL:-}" ]; then
+            echo "LINEUP_DEADLINE_URL is not set: the address of the deadline route is unknown." >&2
+            exit 1
+          fi
+          response="$(curl --fail --silent --show-error --retry 3 --retry-delay 10 --max-time 60 \
+            -X POST -H "Authorization: Bearer ${LINEUP_DEADLINE_SECRET}" "${LINEUP_DEADLINE_URL}")"
+          echo "$response"
+          # The deadline has to run in the database. This workflow only says
+          # so out loud: it is the backup, and it did its job.
+          scheduled="$(printf '%s' "$response" | node -e '
+            let body = "";
+            process.stdin.on("data", (d) => (body += d)).on("end", () => {
+              try { process.stdout.write(String(JSON.parse(body)?.status?.scheduledInDatabase ?? "null")); }
+              catch { process.stdout.write("null"); }
+            });')"
+          if [ "$scheduled" != "true" ]; then
+            echo "::warning::The lineup deadline is not scheduled in the database." \
+              "Install it with 'create extension pg_cron;' and re-run migration 0029."
+          fi

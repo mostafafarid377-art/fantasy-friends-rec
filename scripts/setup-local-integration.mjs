@@ -16,6 +16,7 @@ try {
   await db.query(`
     DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     CREATE PUBLICATION supabase_realtime;
     CREATE SCHEMA auth;
     GRANT USAGE ON SCHEMA auth TO anon, authenticated;

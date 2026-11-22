@@ -5,7 +5,7 @@
 # Usage: DATABASE_URL="postgres://user:pass@host:5432/dbname" ./scripts/deploy-fresh-db.sh
 #
 # This script:
-#   1. Applies migrations 0001 through 0027 in order
+#   1. Applies migrations 0001 through 0029 in order
 #   2. Verifies all tables, RLS, functions, and grants are in place
 #   3. Does NOT connect to or modify the remote Supabase project Hagz-fantasy
 #   4. Does NOT run the legacy destructive migration (0000_destructive_removal.sql)
@@ -107,6 +107,8 @@ MIGRATIONS=(
   "0025_read_consolidation.sql"
   "0026_scoped_live_points.sql"
   "0027_shared_live_projection.sql"
+  "0028_lineup_lifecycle.sql"
+  "0029_lineup_deadline_runner.sql"
 )
 
 for migration in "${MIGRATIONS[@]}"; do
@@ -136,6 +138,7 @@ EXPECTED_TABLES=(
   "match_lineups" "match_events" "match_substitutions" "match_approvals" "match_scoring_receipts" "match_player_statistics"
   "scoring_rules" "player_match_points" "manager_points" "fantasy_points_history"
   "notifications" "audit_logs" "mutation_ops" "invitations" "fantasy_fixtures"
+  "lineup_deadline_runs" "lineup_deadline_failures"
 )
 
 ALL_TABLES_OK=true
@@ -203,18 +206,53 @@ if [ "$ALLOW_SELF" != "0" ]; then
 fi
 echo "  ✓ allow_self_approval column removed from leagues"
 
+# The deadline runner has to exist, and only the service role may run it.
+echo ""
+echo "Verifying the lineup deadline runner..."
+for fn in "ff_promote_due_match_lineups(text)" "ff_lineup_deadline_status()" "ff_last_lineup_deadline_run()"; do
+  RUNNER_EXISTS=$(PGPASSWORD="${PGPASSWORD:-}" psql "$DATABASE_URL" -t -A -c \
+    "SELECT count(*) FROM pg_proc
+     JOIN pg_namespace ON pg_proc.pronamespace = pg_namespace.oid
+     WHERE nspname='public' AND (proname || '(' || oidvectortypes(proargtypes) || ')') = '$fn';" 2>/dev/null | tr -d '[:space:]')
+  if [ "$RUNNER_EXISTS" != "1" ]; then
+    echo "  ✗ Missing deadline runner function: $fn" >&2
+    exit 1
+  fi
+  echo "  ✓ Deadline runner function exists: $fn"
+done
+
+PG_CRON_INSTALLED=$(PGPASSWORD="${PGPASSWORD:-}" psql "$DATABASE_URL" -t -A -c \
+  "SELECT count(*) FROM pg_extension WHERE extname='pg_cron';" 2>/dev/null | tr -d '[:space:]')
+if [ "$PG_CRON_INSTALLED" = "1" ]; then
+  echo "  ✓ pg_cron is installed: the deadline runs inside the database"
+  CRON_JOB=$(PGPASSWORD="${PGPASSWORD:-}" psql "$DATABASE_URL" -t -A -c \
+    "SELECT count(*) FROM cron.job WHERE jobname='ff-lineup-deadlines';" 2>/dev/null | tr -d '[:space:]')
+  if [ "$CRON_JOB" = "1" ]; then
+    echo "  ✓ The lineup deadline job is scheduled"
+  else
+    echo "  ! The lineup deadline job is not scheduled. Run:" >&2
+    echo "      select cron.schedule('ff-lineup-deadlines','* * * * *'," >&2
+    echo "        'select public.ff_promote_due_match_lineups(''pg_cron'')');" >&2
+  fi
+else
+  echo "  ! pg_cron is not installed: the deadline runs from the scheduler outside the database."
+  echo "    To make the deadline timely, run: create extension pg_cron;" >&2
+fi
+
 echo ""
 echo "============================================================"
 echo "Fresh database deployment COMPLETE"
 echo "============================================================"
 echo ""
-echo "All migrations applied in order: 0001 through 0027"
+echo "All migrations applied in order: 0001 through 0029"
 echo "All tables created, RLS enabled, RPC grants in place."
 echo ""
 echo "Next steps:"
 echo "  1. Set DATABASE_URL in your app environment (not .env.local)"
 echo "  2. Run: npm.cmd test (integration tests require DATABASE_URL)"
 echo "  3. Verify: npm.cmd run typecheck && npm.cmd run audit:sql"
+echo "  4. Make the lineup deadline automatic: create extension pg_cron;"
+echo "     then schedule 'ff-lineup-deadlines' (see LINEUP_LIFECYCLE.md)"
 echo ""
 echo "IMPORTANT: Never run supabase/legacy/0000_destructive_removal.sql"
 echo "============================================================"

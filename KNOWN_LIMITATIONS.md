@@ -74,3 +74,64 @@
 **Impact:** All 46 tests pass; the reporter error only occurs when formatting failed test output (which never happens since all tests pass).
 
 **Recommended Next Step:** Upgrade Vitest to a newer version that supports `Map.groupBy`.
+
+## 8. The Lineup Deadline Is Not Yet Automatic In Production
+
+**Limitation:** The deadline runner exists and is tested — migration
+`0029_lineup_deadline_runner.sql` adds the auditable runner, the service-role
+grant and the internal route that calls it — but **production is still on
+`0027`**, and `pg_cron` is not installed on the production project. Until the
+deployment happens, the official lineup of a fixture is written when its
+result is scored, not at its deadline.
+
+**Impact:** Between the deadline and the scoring of a fixture there is no
+official lineup row for it. Nothing is lost: the resolver falls back to the
+previous official lineup, the interface and the scoring read the same resolved
+lineup, and the official row is written at scoring time. What is missing is
+the guarantee that the official lineup exists the moment the deadline passes,
+which is what the next fixture inherits.
+
+**Recommended Next Step:** apply `0028` and `0029`, then activate the runner
+in the database — this is the part that makes the deadline timely:
+
+```sql
+create extension pg_cron;
+select cron.schedule('ff-lineup-deadlines','* * * * *',
+  'select public.ff_promote_due_match_lineups(''pg_cron'')');
+```
+
+and give the backup runner its secrets: `LINEUP_DEADLINE_SECRET` (or
+`CRON_SECRET`) and `SUPABASE_SERVICE_ROLE_KEY` in the app environment, and
+`LINEUP_DEADLINE_SECRET` and `LINEUP_DEADLINE_URL` as repository secrets.
+
+## 9. The Outside Scheduler Is A Backup, Not A Guarantee
+
+**Limitation:** `.github/workflows/lineup-deadlines.yml` calls the deadline
+route every five minutes. GitHub runs scheduled workflows on a best-effort
+basis: a run can be delayed under load, and GitHub disables scheduled
+workflows in a repository that has been inactive for 60 days.
+
+**Impact:** The workflow is a safety net, not the deadline. It is not a
+service-level guarantee of any kind, and it must never be described as one.
+The deadline is timely because `pg_cron` runs the same function inside the
+database, every minute.
+
+**Recommended Next Step:** keep the in-database job as the deadline, and use
+the workflow to say out loud when the in-database job is missing. It already
+does: every run warns when `scheduledInDatabase` is not true.
+
+## 10. A Paused Project Runs Nothing
+
+**Limitation:** A paused Supabase project does not run `pg_cron`, and does not
+answer the backup route either.
+
+**Impact:** while the project is paused, no fixture is locked in at its
+deadline. The lineups are still correct — the resolver falls back to the
+previous official lineup and the scoring reads the same resolved lineup — but
+the official lineup of a fixture appears only when its result is scored.
+
+**Recommended Next Step:** keep the project awake, or accept that the deadline
+follows the project.
+
+See `LINEUP_LIFECYCLE.md` for the full description of the lineup lifecycle and
+of the deadline runner.
