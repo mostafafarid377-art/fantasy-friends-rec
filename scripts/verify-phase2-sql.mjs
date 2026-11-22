@@ -63,8 +63,10 @@ assert.doesNotMatch(sharedLive, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+p
 const lifecycle = read('./supabase/migrations/0028_lineup_lifecycle.sql');
 assert.match(lifecycle, /create function public\.ff_effective_fantasy_lineups\(p_match text\)/i,
   'the lineup of a match must be resolved by one function');
-assert.match(lifecycle, /coalesce\(sv\.lineup,fz\.lineup,cy\.lineup,sq\.lineup\)/i,
-  'the resolver must prefer the saved draft, then the locked in lineup, then the inherited lineup, then the default squad');
+assert.match(lifecycle, /coalesce\(fz\.lineup,sv\.lineup,cy\.lineup,sq\.lineup\)/i,
+  'the resolver must prefer the lineup locked in at the deadline, then the saved draft, then the inherited lineup, then the default squad');
+assert.doesNotMatch(lifecycle, /coalesce\(sv\.lineup,fz\.lineup/i,
+  'a saved draft must never win over the lineup that was locked in at the deadline');
 assert.match(lifecycle, /create or replace function public\.ff_previous_fantasy_lineup\(p_league text,p_actor text,p_before timestamptz\)/i,
   'the previous official lineup must be redefined so a promoted lineup counts');
 const previousLineup = lifecycle.slice(
@@ -79,8 +81,6 @@ assert.match(lifecycle, /on conflict\(match_id,profile_id\) do nothing/i,
   'the promotion must never overwrite a lineup that was already locked in');
 assert.match(lifecycle, /create function public\.ff_promote_due_match_lineups\(\)/i,
   'a runner must promote every match whose deadline has passed');
-assert.match(lifecycle, /cron\.schedule\('ff-lineup-deadlines','\*\/5 \* \* \* \*','select public\.ff_promote_due_match_lineups\(\)'\)/i,
-  'the deadline promotion must run on the database, without the app being open');
 assert.match(lifecycle, /raise exception 'Choose a captain and a vice-captain for this lineup' using errcode='22023'/i,
   'a saved match lineup must name a captain and a vice-captain');
 assert.match(lifecycle, /raise exception 'A complete squad needs a captain and a vice-captain' using errcode = '22023'/i,
@@ -146,12 +146,45 @@ assert.doesNotMatch(lifecycle, /update\s+public\.fantasy_squads\s+set\s+captain_
 assert.doesNotMatch(lifecycle, /coalesce\([^)]*->>'captainId'\s*,\s*[^)]*\)/i,
   'the resolver must not fall back to another player as the captain');
 
-// The deadline runner falls back to the scoring path where pg_cron is not
-// available, and the comment must not claim the extension is installed.
+// The deadline runner: migration 0029 makes the promotion automatic, keeps
+// an auditable trail of every run, and only the service role may run it.
+const runner = read('./supabase/migrations/0029_lineup_deadline_runner.sql');
+assert.match(runner, /create table public\.lineup_deadline_runs/i,
+  'the deadline runner must record every run it makes');
+assert.match(runner, /ran_at timestamptz not null default clock_timestamp\(\)/i,
+  'the trail must say when the runner ran');
+assert.match(runner, /create table public\.lineup_deadline_failures/i,
+  'a fixture the runner could not lock in must be recorded with its error');
+assert.match(runner, /drop function public\.ff_promote_due_match_lineups\(\)/i,
+  'the runner that takes no argument must be replaced by the one that records its run');
+assert.match(runner, /create function public\.ff_promote_due_match_lineups\(p_source text default 'sweep'\)/i,
+  'the runner must say where the run came from');
+assert.match(runner, /insert into public\.lineup_deadline_runs\(source,matches_scanned,promoted,failed\)/i,
+  'every run must be written to the trail');
+assert.match(runner, /exception when others then/i,
+  'one fixture must never stop the rest of the sweep');
+assert.match(runner, /revoke all on function public\.ff_promote_due_match_lineups\(text\) from public,anon,authenticated/i,
+  'the deadline runner must stay internal to the database');
+assert.match(runner, /grant execute on function public\.ff_promote_due_match_lineups\(text\) to service_role/i,
+  'the scheduler route holds the service key and has to be able to run the deadline');
+assert.match(runner, /cron\.schedule\('ff-lineup-deadlines','\* \* \* \* \*',\s*'select public\.ff_promote_due_match_lineups\(''pg_cron''\)'\)/i,
+  'the deadline promotion must run on the database, without the app being open');
+assert.match(runner, /if not exists \(select 1 from pg_extension where extname='pg_cron'\) then/i,
+  'the runner must still apply where pg_cron is not installed');
+// The comment may name the command an operator runs; the migration may not.
+const runnerCode = runner.split('\n').filter((line) => !/^\s*--/.test(line)).join('\n');
+const lifecycleCode = lifecycle.split('\n').filter((line) => !/^\s*--/.test(line)).join('\n');
+assert.doesNotMatch(runnerCode, /create\s+extension/i,
+  'the migration must never install pg_cron by itself: installing it is an operational step');
+assert.doesNotMatch(lifecycleCode, /create\s+extension/i,
+  'the lineup lifecycle must never install pg_cron by itself');
 assert.doesNotMatch(lifecycle, /pg_cron is preloaded/i,
   'the migration must not claim that pg_cron is installed where it is not');
-assert.match(lifecycle, /if not exists \(select 1 from pg_available_extensions where name='pg_cron'\) then/i,
-  'the migration must still apply where pg_cron is not available');
+assert.doesNotMatch(runner, /\b(drop|truncate)\s+table\b/i,
+  'the deadline runner must never drop a table');
+const runnerDeletes = [...runner.matchAll(/delete\s+from\s+public\.(\w+)/gi)].map((m) => m[1]);
+assert.deepEqual([...new Set(runnerDeletes)].sort(), ['lineup_deadline_failures', 'lineup_deadline_runs'],
+  'the deadline runner may only prune its own audit tables');
 
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');

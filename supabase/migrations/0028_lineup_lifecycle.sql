@@ -10,9 +10,11 @@ begin;
 -- Three rules hold for every match from here on:
 --
 --   1. A match always has an effective lineup for every manager. It is the
---      draft they saved for that match, else the lineup that was locked in
---      when the deadline passed, else their last official lineup (inherited
---      exactly, never re-derived), else their default squad.
+--      lineup that was locked in when the deadline passed, else the draft
+--      they saved for that match, else their last official lineup (inherited
+--      exactly, never re-derived), else their default squad. A locked-in
+--      lineup only exists from the deadline onwards, and from then on it is
+--      the truth: the draft it was made of can no longer be changed.
 --   2. The deadline freezes that lineup. `ff_promote_match_lineup` writes the
 --      official lineup of a match in one transaction and is idempotent:
 --      running it again never changes a lineup that was already locked in.
@@ -47,7 +49,9 @@ language sql stable security definer set search_path=pg_catalog,public as $$
     -- The lineup the manager saved for this match.
     select d.profile_id,d.lineup from public.fantasy_match_lineup_drafts d join m on m.id=d.match_id
   ), frozen as materialized (
-    -- The lineup that was locked in when the deadline passed.
+    -- The lineup that was locked in when the deadline passed. It wins over the
+    -- draft: from the deadline on, the draft is frozen and this is the one
+    -- and only lineup the match is played with.
     select h.profile_id,h.lineup from public.fantasy_match_lineup_history h join m on m.id=h.match_id
   ), carried as materialized (
     -- The last official lineup before this match: inherited exactly.
@@ -67,7 +71,7 @@ language sql stable security definer set search_path=pg_catalog,public as $$
     join m on m.league_id=s.league_id
     group by s.id,s.profile_id
   )
-  select mb.profile_id,coalesce(sv.lineup,fz.lineup,cy.lineup,sq.lineup)
+  select mb.profile_id,coalesce(fz.lineup,sv.lineup,cy.lineup,sq.lineup)
   from members mb
   left join saved sv on sv.profile_id=mb.profile_id
   left join frozen fz on fz.profile_id=mb.profile_id
@@ -85,10 +89,10 @@ $$;
 create function public.ff_fantasy_lineup_source(p_match text,p_profile text)
 returns text language sql stable security definer set search_path=pg_catalog,public as $$
   select case
-    when exists (select 1 from public.fantasy_match_lineup_drafts d where d.match_id=p_match and d.profile_id=p_profile)
-      then 'saved'
     when exists (select 1 from public.fantasy_match_lineup_history h where h.match_id=p_match and h.profile_id=p_profile)
       then 'official'
+    when exists (select 1 from public.fantasy_match_lineup_drafts d where d.match_id=p_match and d.profile_id=p_profile)
+      then 'saved'
     when exists (
       select 1 from public.fantasy_match_lineup_history h
       join public.real_matches pm on pm.id=h.match_id
@@ -808,33 +812,10 @@ $$;
 -- The deadline runner
 -- ------------------------------------------------------------------
 
--- The promotion has to happen even when nobody opens the app, so it runs on
--- the database itself through pg_cron, every five minutes. Where the
--- extension is not available the migration still applies, and the lineup a
--- match is scored with is still the resolved one: the resolver falls back to
--- the previous official lineup, so nothing is lost, only the official row is
--- written later, when the result is scored.
-do $$
-begin
-  if not exists (select 1 from pg_available_extensions where name='pg_cron') then
-    raise notice 'pg_cron is not available: the lineup deadline promotion runs when the match is scored.';
-    return;
-  end if;
-  begin
-    create extension if not exists pg_cron;
-  exception when others then
-    raise notice 'pg_cron could not be installed: %', sqlerrm;
-    return;
-  end;
-  begin
-    perform cron.unschedule('ff-lineup-deadlines');
-  exception when others then
-    null; -- the job does not exist yet
-  end;
-  perform cron.schedule('ff-lineup-deadlines','*/5 * * * *','select public.ff_promote_due_match_lineups()');
-exception when others then
-  raise notice 'The lineup deadline promotion could not be scheduled: %', sqlerrm;
-end $$;
+-- The deadline runner is installed by migration 0029. It schedules the
+-- promotion on the database when pg_cron is available, and it does nothing
+-- at all when it is not: the promotion then runs from the scheduler outside
+-- the database, and in any case before a match is scored.
 
 -- PostgREST caches the database schema. Reload it so the new functions are
 -- visible to the API.

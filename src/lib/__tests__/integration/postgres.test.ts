@@ -2201,44 +2201,48 @@ it("shares one live projection between the player rows and the manager breakdown
   } finally { c.release(); owner.release(); }
 });
 
-describe("fantasy lineup lifecycle (real PostgreSQL)", () => {
-  /** A league with a full squad of fifteen: five starters, three substitutes and seven reserves. */
-  async function lifecycleFixture(c: PoolClient) {
-    const league = await releaseLeague(c, 5);
-    const positions = ["GK", "DEF", "MID", "MID", "FWD", "GK", "DEF", "MID",
-      "DEF", "MID", "FWD", "DEF", "MID", "FWD", "DEF"];
-    const home = await Promise.all(positions.map((pos, i) => league.makePlayer(pos, league.home, `Home ${i}`)));
-    const away = await Promise.all(["GK", "DEF", "MID", "MID", "FWD"].map((pos, i) => league.makePlayer(pos, league.away, `Away ${i}`)));
-    await sql(c, "UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1", [league.id, userAId]);
-    // The lineup rollout cutoff only covers fixtures created from now on.
-    await sql(admin, "UPDATE fantasy_lineup_rollout SET enabled_at=now()-interval '30 days'");
-    const squad = [
-      ...home.slice(0, 5).map((player_id, order) => ({ player_id, order, slot: "starter" })),
-      ...home.slice(5, 8).map((player_id, order) => ({ player_id, order, slot: "sub" })),
-      ...home.slice(8).map((player_id, order) => ({ player_id, order, slot: "reserve" })),
-    ];
-    const saveSquad = async (captain: string, vice: string) => {
-      await setAuthUid(c, userAId);
-      const revision = (await sql(admin, "SELECT updated_at::text AS updated_at FROM fantasy_squads WHERE league_id=$1 AND profile_id=$2",
-        [league.id, userAId])).rows[0]?.updated_at ?? null;
-      return (await sql(c,
-        "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS result",
-        [league.id, captain, vice, revision, JSON.stringify(squad)])).rows[0].result;
-    };
-    const play = async (id: string) => {
-      await persistLineup(c, id, league.home, matchEntries(home.slice(0, 5)));
-      await persistLineup(c, id, league.away, matchEntries(away));
-      await reachFixtureKickoff(id);
-      await submitScore(c, id, 1, 0);
-      await approveScore(c, id);
-    };
-    return { league, home, away, squad, saveSquad, play };
-  }
-  const history = async (id: string, profile = userAId) => (await sql(admin,
-    "SELECT lineup FROM fantasy_match_lineup_history WHERE match_id=$1 AND profile_id=$2", [id, profile])).rows[0]?.lineup;
-  const effective = async (id: string, profile = userAId) => (await sql(admin,
-    "SELECT lineup FROM public.ff_effective_fantasy_lineups($1) WHERE profile_id=$2", [id, profile])).rows[0]?.lineup;
+/** A league with a full squad of fifteen: five starters, three substitutes and seven reserves. */
+async function lifecycleFixture(c: PoolClient) {
+  const league = await releaseLeague(c, 5);
+  const positions = ["GK", "DEF", "MID", "MID", "FWD", "GK", "DEF", "MID",
+    "DEF", "MID", "FWD", "DEF", "MID", "FWD", "DEF"];
+  const home = await Promise.all(positions.map((pos, i) => league.makePlayer(pos, league.home, `Home ${i}`)));
+  const away = await Promise.all(["GK", "DEF", "MID", "MID", "FWD"].map((pos, i) => league.makePlayer(pos, league.away, `Away ${i}`)));
+  await sql(c, "UPDATE scoring_rules SET status='approved',approved_by=$2,approved_at=now() WHERE league_id=$1", [league.id, userAId]);
+  // The lineup rollout cutoff only covers fixtures created from now on.
+  await sql(admin, "UPDATE fantasy_lineup_rollout SET enabled_at=now()-interval '30 days'");
+  const squad = [
+    ...home.slice(0, 5).map((player_id, order) => ({ player_id, order, slot: "starter" })),
+    ...home.slice(5, 8).map((player_id, order) => ({ player_id, order, slot: "sub" })),
+    ...home.slice(8).map((player_id, order) => ({ player_id, order, slot: "reserve" })),
+  ];
+  const saveSquad = async (captain: string, vice: string) => {
+    await setAuthUid(c, userAId);
+    const revision = (await sql(admin, "SELECT updated_at::text AS updated_at FROM fantasy_squads WHERE league_id=$1 AND profile_id=$2",
+      [league.id, userAId])).rows[0]?.updated_at ?? null;
+    return (await sql(c,
+      "SELECT public.save_fantasy_squad_v2($1,'1-2-1',$2,$3,$4,$5) AS result",
+      [league.id, captain, vice, revision, JSON.stringify(squad)])).rows[0].result;
+  };
+  // A fixture that has begun but has no result yet.
+  const start = async (id: string) => {
+    await persistLineup(c, id, league.home, matchEntries(home.slice(0, 5)));
+    await persistLineup(c, id, league.away, matchEntries(away));
+    await reachFixtureKickoff(id);
+  };
+  const play = async (id: string) => {
+    await start(id);
+    await submitScore(c, id, 1, 0);
+    await approveScore(c, id);
+  };
+  return { league, home, away, squad, saveSquad, start, play };
+}
+const history = async (id: string, profile = userAId) => (await sql(admin,
+  "SELECT lineup FROM fantasy_match_lineup_history WHERE match_id=$1 AND profile_id=$2", [id, profile])).rows[0]?.lineup;
+const effective = async (id: string, profile = userAId) => (await sql(admin,
+  "SELECT lineup FROM public.ff_effective_fantasy_lineups($1) WHERE profile_id=$2", [id, profile])).rows[0]?.lineup;
 
+describe("fantasy lineup lifecycle (real PostgreSQL)", () => {
   it("inherits the last official lineup exactly instead of the default squad", async () => {
     const c = await freshClient();
     try {
@@ -2503,6 +2507,207 @@ describe("fantasy lineup lifecycle (real PostgreSQL)", () => {
       ]) {
         await expect(sql(c, call)).rejects.toMatchObject({ code: "42501" });
       }
+    } finally { c.release(); }
+  });
+});
+
+describe("the lineup deadline runner (real PostgreSQL)", () => {
+  it("creates the inherited lineup on the server for a fixture nobody opened", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, saveSquad, play } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const first = await league.makeMatch();
+      await play(first);
+      const official = await history(first);
+
+      // The default squad changes after that fixture. The next one must not
+      // fall back to it: it inherits the lineup that was locked in.
+      await saveSquad(home[3], home[4]);
+      const second = await league.makeMatch();
+
+      // Nobody opened the app for this fixture, so there is no draft at all.
+      expect((await sql(admin, "SELECT count(*)::int AS n FROM fantasy_match_lineup_drafts WHERE match_id=$1",
+        [second])).rows[0].n).toBe(0);
+
+      // The server resolves the inherited lineup and says where it came from.
+      expect(await effective(second)).toEqual(official);
+      expect((await sql(admin, "SELECT public.ff_fantasy_lineup_source($1,$2) AS source",
+        [second, userAId])).rows[0].source).toBe("inherited");
+      await setAuthUid(c, userAId);
+      const view = (await sql(c, "SELECT ff_next_match_lineup($1) AS result", [league.id])).rows[0].result;
+      expect(view.previous.lineup).toEqual(official);
+      expect(view.saved).toBeNull();
+
+      // The deadline creates it for real: the inherited lineup is locked in.
+      await reachFixtureKickoff(second);
+      await sql(admin, "SELECT public.ff_promote_due_match_lineups('test')");
+      expect(await history(second)).toEqual(official);
+    } finally { c.release(); }
+  });
+
+  it("locks the edited lineup in and not the inherited one", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, saveSquad, play } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const first = await league.makeMatch();
+      await play(first);
+      const official = await history(first);
+      const second = await league.makeMatch();
+
+      // The manager edits the lineup of the next fixture.
+      const entries = matchEntries(home.slice(0, 5), home.slice(5, 8))
+        .map(({ player_id, ...rest }) => ({ id: player_id, ...rest }));
+      await setAuthUid(c, userAId);
+      const saved = (await sql(c, "SELECT public.ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,$5,$6) AS saved",
+        [league.id, second, home[3], home[4], null, JSON.stringify(entries)])).rows[0].saved;
+      expect(saved.matchId).toBe(second);
+      expect(saved.lineup).toMatchObject({ captainId: home[3], viceId: home[4] });
+      expect((await sql(admin, "SELECT public.ff_fantasy_lineup_source($1,$2) AS source",
+        [second, userAId])).rows[0].source).toBe("saved");
+
+      // The deadline locks in the edited lineup, never the inherited one.
+      await reachFixtureKickoff(second);
+      await sql(admin, "SELECT public.ff_promote_due_match_lineups('test')");
+      const locked = await history(second);
+      expect(locked.captainId).toBe(home[3]);
+      expect(locked.viceId).toBe(home[4]);
+      expect(locked).not.toEqual(official);
+
+      // A lineup that is already locked in cannot be changed afterwards.
+      await setAuthUid(c, userAId);
+      await expect(sql(c, "SELECT public.ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,$5,$6)",
+        [league.id, second, home[1], home[2], saved.revision, JSON.stringify(entries)]))
+        .rejects.toMatchObject({ code: "PT409" });
+      expect(await history(second)).toEqual(locked);
+    } finally { c.release(); }
+  });
+
+  it("picks up a missed run and never changes a lineup that is already locked in", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, saveSquad, play } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const first = await league.makeMatch();
+      await play(first);
+      const official = await history(first);
+      const second = await league.makeMatch();
+
+      // The deadline passes while nothing runs: there is no official lineup.
+      await reachFixtureKickoff(second);
+      expect(await history(second)).toBeUndefined();
+
+      // The next run locks in everything that is overdue.
+      const run = (await sql(admin, "SELECT public.ff_promote_due_match_lineups('test') AS result")).rows[0].result;
+      expect(run.source).toBe("test");
+      expect(await history(second)).toEqual(official);
+
+      // The squad changes afterwards. The official lineup does not.
+      await sql(admin, "UPDATE fantasy_squads SET captain_id=$3,vice_captain_id=$4 WHERE league_id=$1 AND profile_id=$2",
+        [league.id, userAId, home[3], home[4]]);
+      const again = (await sql(admin, "SELECT public.ff_promote_due_match_lineups('test') AS result")).rows[0].result;
+      expect(again.promoted).toBe(0);
+      expect(await history(second)).toEqual(official);
+    } finally { c.release(); }
+  });
+
+  it("produces one official lineup when two runs happen at the same time", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, saveSquad, play } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const first = await league.makeMatch();
+      await play(first);
+      const official = await history(first);
+      const second = await league.makeMatch();
+      await reachFixtureKickoff(second);
+
+      const one = await pool.connect();
+      const two = await pool.connect();
+      try {
+        await Promise.all([
+          sql(one, "SELECT public.ff_promote_due_match_lineups('one')"),
+          sql(two, "SELECT public.ff_promote_due_match_lineups('two')"),
+        ]);
+      } finally { one.release(); two.release(); }
+
+      // Exactly one official lineup for the fixture, and it is the right one.
+      const rows = (await sql(admin, "SELECT count(*)::int AS n FROM fantasy_match_lineup_history WHERE match_id=$1",
+        [second])).rows[0].n;
+      expect(rows).toBe(1);
+      expect(await history(second)).toEqual(official);
+    } finally { c.release(); }
+  });
+
+  it("records every run and every fixture it could not lock in", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, saveSquad } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      // The captain of the squad is not one of its starters, so the lineup
+      // cannot be used as an official lineup.
+      await sql(admin, "UPDATE fantasy_squads SET captain_id=$3 WHERE league_id=$1 AND profile_id=$2",
+        [league.id, userAId, home[8]]);
+      const match = await league.makeMatch();
+      await reachFixtureKickoff(match);
+
+      const result = (await sql(admin, "SELECT public.ff_promote_due_match_lineups('test') AS result")).rows[0].result;
+      expect(result.source).toBe("test");
+      expect(result.matches).toBeGreaterThan(0);
+
+      // The fixture that could not be locked in is recorded with its reason.
+      const failure = (await sql(admin, "SELECT match_id,attempts,last_error,resolved_at FROM lineup_deadline_failures WHERE match_id=$1",
+        [match])).rows[0];
+      expect(failure.last_error).toBe("no lineup could be locked in for this fixture");
+      expect(failure.resolved_at).toBeNull();
+      expect(failure.attempts).toBeGreaterThan(0);
+
+      // Every run leaves a trail, and the trail says where the run came from.
+      const run = (await sql(admin, "SELECT source,matches_scanned,promoted,failed FROM lineup_deadline_runs ORDER BY id DESC LIMIT 1")).rows[0];
+      expect(run.source).toBe("test");
+      const last = (await sql(admin, "SELECT public.ff_last_lineup_deadline_run() AS run")).rows[0].run;
+      expect(last.source).toBe("test");
+
+      // And the deadline can say how it is doing.
+      const status = (await sql(admin, "SELECT public.ff_lineup_deadline_status() AS status")).rows[0].status;
+      expect(status.lastRun.source).toBe("test");
+      expect(Number(status.ageSeconds)).toBeGreaterThanOrEqual(0);
+      expect(Number(status.openFailures)).toBeGreaterThan(0);
+      expect([true, false, null]).toContain(status.scheduledInDatabase);
+    } finally { c.release(); }
+  });
+
+  it("lets only the service role run the deadline", async () => {
+    const c = await freshClient();
+    try {
+      await setAuthUid(c, userAId);
+      await expect(sql(c, "SELECT public.ff_promote_due_match_lineups('test')")).rejects.toMatchObject({ code: "42501" });
+      await expect(sql(c, "SELECT public.ff_lineup_deadline_status()")).rejects.toMatchObject({ code: "42501" });
+      await expect(sql(c, "SELECT public.ff_last_lineup_deadline_run()")).rejects.toMatchObject({ code: "42501" });
+      await sql(c, "RESET ROLE");
+      await sql(c, "SET ROLE service_role");
+      const ran = (await sql(c, "SELECT public.ff_promote_due_match_lineups('service') AS result")).rows[0].result;
+      expect(ran.source).toBe("service");
+    } finally { c.release(); }
+  });
+
+  it("never locks in a fixture that has not reached its deadline", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, saveSquad } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const match = await league.makeMatch();
+      await sql(admin, "SELECT public.ff_promote_due_match_lineups('test')");
+      expect(await history(match)).toBeUndefined();
+      expect((await sql(admin, "SELECT count(*)::int AS n FROM lineup_deadline_failures WHERE match_id=$1",
+        [match])).rows[0].n).toBe(0);
     } finally { c.release(); }
   });
 });
