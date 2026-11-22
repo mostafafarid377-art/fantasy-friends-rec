@@ -82,17 +82,20 @@
 grant and the internal route that calls it — but **production is still on
 `0027`**, and `pg_cron` is not installed on the production project. Until the
 deployment happens, the official lineup of a fixture is written when its
-result is scored, not at its deadline.
+result is scored, not at its deadline, and the next-match editor still waits
+for the manager's first official lineup before it opens (`0030` removes that
+wait).
 
 **Impact:** Between the deadline and the scoring of a fixture there is no
 official lineup row for it. Nothing is lost: the resolver falls back to the
 previous official lineup, the interface and the scoring read the same resolved
 lineup, and the official row is written at scoring time. What is missing is
 the guarantee that the official lineup exists the moment the deadline passes,
-which is what the next fixture inherits.
+which is what the next fixture inherits. And a manager without any official
+lineup cannot open the next-match editor at all until the deployment.
 
-**Recommended Next Step:** apply `0028` and `0029`, then activate the runner
-in the database — this is the part that makes the deadline timely:
+**Recommended Next Step:** apply `0028`, `0029` and `0030`, then activate the
+runner in the database — this is the part that makes the deadline timely:
 
 ```sql
 create extension pg_cron;

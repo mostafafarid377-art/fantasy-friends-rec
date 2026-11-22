@@ -4,9 +4,11 @@ Migration `0028_lineup_lifecycle.sql` gives every manager one effective lineup
 per fixture, and makes that lineup the one that is shown, scored and projected.
 Migration `0029_lineup_deadline_runner.sql` makes the deadline automatic: it
 runs the promotion without anybody opening the app, and it leaves a trail of
-every run.
+every run. Migration `0030_next_match_lineup_availability.sql` opens the
+next-match editor from the first scheduled fixture on: it no longer waits for
+an official lineup to exist.
 
-Neither is applied to production yet; production stays on `0027`.
+None of them is applied to production yet; production stays on `0027`.
 
 ## 1. One resolver
 
@@ -96,6 +98,33 @@ immutable official lineup the next fixture inherits in turn.
 
 Saving a lineup for the fixture replaces the inherited one: the draft then
 wins over the inheritance, and the draft is what is locked in at the deadline.
+
+## 3a. The editor is available from the first scheduled fixture on
+
+Before `0030`, `ff_next_match_lineup` answered "there is nothing to show"
+whenever the manager had no official lineup yet, and `ff_save_next_match_lineup`
+refused the save for the same reason. The whole feature was locked behind the
+deadline of the match in play: its countdown had to reach zero — and its
+lineup had to be locked in — before the lineup of the next one could be
+prepared.
+
+`0030` removes both refusals:
+
+- the read always reports the scheduled fixture. `previous` is simply null
+  when there is no official lineup to inherit, and the editor seeds from the
+  saved squad — the same source the resolver falls back to;
+- the save accepts the lineup of a manager without history, with every other
+  check unchanged (membership, target, revision, formation, captaincy).
+
+The editor and the resolver read the same four sources in the same order, so
+the seed the editor shows is the lineup the resolver would pick:
+
+- when an official lineup exists, `previous` carries it, and the resolver
+  inherits it;
+- when none exists, the resolver falls back to the default squad, which is
+  exactly the fallback the editor shows.
+
+A lineup saved for the fixture always wins over both.
 
 ## 4. Captaincy
 
@@ -271,12 +300,15 @@ the lineups already locked in, and promotes nothing.
 # The bodies of 0028 are the bodies they were built from.
 node scripts/check-0028-parity.mjs
 
+# The bodies of 0030 are the bodies of 0024 and 0028, minus the refusals.
+node scripts/check-0030-parity.mjs
+
 # The static SQL audit.
 npm run audit:sql
 
 # The database behaviour (needs a local PostgreSQL).
 DATABASE_URL="postgresql://ff_test:ff_test@127.0.0.1:54329/ff_test" \
-  node scripts/setup-local-integration.mjs 0029
+  node scripts/setup-local-integration.mjs 0030
 DATABASE_URL="postgresql://ff_test:ff_test@127.0.0.1:54329/ff_test" \
   npx vitest run src/lib/__tests__/integration/
 

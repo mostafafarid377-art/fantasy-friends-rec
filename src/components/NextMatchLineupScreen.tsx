@@ -88,7 +88,10 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
     closePicker();
   }
   async function save() {
-    if ((!match && !preparing) || !previous || locked || saving || conflict || loadError || !validation.ok || unavailable.length || starters.length !== rules.starters) return;
+    // A manager without an official lineup to inherit prepares the next
+    // fixture from their own saved squad. The editor and the resolver read
+    // the same sources in the same order.
+    if ((!match && !preparing) || locked || saving || conflict || loadError || !validation.ok || unavailable.length || starters.length !== rules.starters) return;
     setSaving(true); setMessage(null); setNotice(null);
     try {
       const normalized = normalizeBench(lineup.players);
@@ -192,7 +195,8 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
           {!locked && !validation.ok && <ul className="space-y-1 text-sm text-card-y">{validation.errors.map((error) => <li key={error}>{error}</li>)}</ul>}
           <Panel className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-sage">{locked ? "Read-only lineup" : edit ? "Unsaved changes" : saved ? (preparing ? "Prepared for the next fixture" : "Saved for this match") : "Draft copied from your previous match"}</p>
+              <p className="text-sm text-sage">{locked ? "Read-only lineup" : edit ? "Unsaved changes" : saved ? (preparing ? "Prepared for the next fixture" : "Saved for this match")
+                : previous ? "Draft copied from your previous match" : "Starting from your saved squad"}</p>
               <Button className="min-h-11" disabled={locked || conflict || Boolean(loadError) || unavailable.length > 0 || !validation.ok || starters.length !== rules.starters} loading={saving} onClick={save}><Save aria-hidden="true" className="size-4" />{preparing ? "Save next lineup" : "Save changes"}</Button>
             </div>
             {notice && <p role="status" className="mt-2 text-sm text-green-glow">{notice}</p>}
