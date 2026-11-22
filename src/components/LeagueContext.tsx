@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { recoverPendingOperations, setOperationActor, useSession, type SessionPayload, type SessionLeague, type SessionUser } from "@/lib/client/api";
+import { useAppRefresh } from "@/lib/client/refresh";
 
 type LeagueContextValue = {
   user: SessionUser | null;
@@ -62,11 +63,10 @@ export function AppProvider({ children, initialSession }: { children: ReactNode;
     return () => { cancelled = true; window.removeEventListener("online", recover); };
   }, [actor, refresh]);
 
-  useEffect(() => {
-    const onFocus = () => { void refresh().catch((error) => console.warn("[session refresh]", error)); };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [refresh]);
+  // The session refresh shares the app-wide focus/visibility coordinator, so
+  // a tab switch refreshes it once instead of once per listener.
+  useAppRefresh(() => { void refresh().catch((error) => console.warn("[session refresh]", error)); });
+
 
   const selectLeague = useCallback((id: string) => {
     setActiveId(id);

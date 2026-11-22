@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useAppRefresh } from "@/lib/client/refresh";
 
 const EVENT = "ff:league-content-changed";
 const keyFor = (leagueId: string) => `${EVENT}:${leagueId}`;
@@ -28,18 +29,8 @@ export function useLeagueContentUpdates(leagueId: string | undefined, reload: ()
 
 // Local and same-browser edits refresh immediately. Visible pages also follow
 // edits from other devices without depending on browser Supabase sessions.
+// Focus and polling are shared by the whole app through one coordinator.
 export function useLiveLeaguePoints(leagueId: string | undefined, reload: () => void, includeCurrentTab = true) {
   useLeagueContentUpdates(leagueId, reload, includeCurrentTab);
-  useEffect(() => {
-    if (!leagueId) return;
-    const refresh = () => { if (document.visibilityState === "visible") reload(); };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    const timer = window.setInterval(refresh, 10000);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-      window.clearInterval(timer);
-    };
-  }, [leagueId, reload]);
+  useAppRefresh(reload, { pollMs: 10000, enabled: Boolean(leagueId) });
 }

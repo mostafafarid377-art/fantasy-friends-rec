@@ -30,6 +30,7 @@ import {
 } from "@/components/ui";
 import { useActiveLeague } from "@/components/LeagueContext";
 import { notifyLeagueContentChanged, useLiveLeaguePoints } from "@/lib/client/league-updates";
+import { useAppRefresh } from "@/lib/client/refresh";
 import { api, assertConfirmed, useApi } from "@/lib/client/api";
 import { lineupPayload, lineupSelection, type SavedLineupEntry, type LineupSelection } from "@/lib/match-lineup";
 import { canSelectPlayer, validateLineup, EVENT_TYPES, type LeagueRules, type Position } from "@/lib/domain";
@@ -138,12 +139,8 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const timeToKickoff = useKickoffClock(data?.serverNow, data?.match.kickOff);
   const started = timeToKickoff === 0;
-  useEffect(() => {
-    if (!data?.serverNow || document.visibilityState === "hidden") return;
-    const refresh = () => { if (document.visibilityState === "visible") void reload(); };
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [Boolean(data?.serverNow), reload]);
+  // Live matches follow the app-wide focus/visibility coordinator.
+  useAppRefresh(() => { void reload(); }, { enabled: Boolean(data?.serverNow) });
   const [newKickoff, setNewKickoff] = useState("");
   const [rescheduling, setRescheduling] = useState(false);
   const [tab, setTab] = useState<"lineups" | "events" | "history">("lineups");

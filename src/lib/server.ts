@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase, SupabaseClient } from "@/db";
 import { loadMatch } from "@/lib/matches";
+import { resolveIdentity, type Identity } from "@/lib/identity";
 
 import { ApiError, checkDb } from "@/lib/db-result";
 export { ApiError, checkDb, confirmedRow } from "@/lib/db-result";
@@ -41,12 +42,19 @@ export async function withSupabase<T>(fn: (sb: SupabaseClient) => Promise<T>): P
   return fn(sb);
 }
 
-export async function requireIdentity(supabase?: SupabaseClient) {
+/**
+ * Establishes the caller from the signed access token.
+ *
+ * The token is verified locally against the project's signing key, so hot
+ * request paths do not pay for an Auth server round trip. Only the verified
+ * subject is used for access control.
+ */
+export async function requireIdentity(supabase?: SupabaseClient): Promise<Identity> {
   supabase ??= await getSupabase();
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) throw new ApiError("Not authenticated", 401);
+  const identity = await resolveIdentity(supabase);
+  if (!identity) throw new ApiError("Not authenticated", 401);
 
-  return user;
+  return identity;
 }
 
 export async function requireUser() {
@@ -58,7 +66,7 @@ export async function requireUser() {
     .eq("id", user.id)
     .maybeSingle();
 
-  const metadata = user.user_metadata ?? {};
+  const metadata = user.metadata;
   const username =
     profile?.username ??
     (typeof metadata.username === "string" ? metadata.username : user.email?.split("@")[0] ?? "manager");
@@ -73,8 +81,10 @@ export async function requireUser() {
     displayName,
     avatarUrl: profile?.avatar_url ?? null,
     bio: profile?.bio ?? null,
-    emailVerified: Boolean(user.email_confirmed_at),
-    createdAt: user.created_at,
+    // The profile column mirrors auth.users.email_confirmed_at through a
+    // database trigger, so this matches the Auth server state exactly.
+    emailVerified: Boolean(profile?.email_verified_at),
+    createdAt: profile?.created_at ?? "",
   };
 }
 
@@ -92,7 +102,7 @@ export async function requireMember(leagueId: string, supabase?: SupabaseClient)
 
   const { data: members, error } = await supabase
     .from("league_members")
-    .select("role, leagues(*)")
+    .select("role, leagues(*), profiles(email_verified_at)")
     .eq("league_id", leagueId)
     .eq("profile_id", user.id)
     .maybeSingle();
@@ -103,10 +113,20 @@ export async function requireMember(leagueId: string, supabase?: SupabaseClient)
   return {
     leagueId,
     profileId: user.id,
-    emailVerified: Boolean(user.email_confirmed_at),
+    // Read from the caller's own profile row in the same query, so verifying
+    // a membership never needs an extra Auth round trip.
+    emailVerified: Boolean(profileVerifiedAt(members.profiles)),
     role: members.role as "leader" | "manager" | "organizer",
     league: members.leagues,
   };
+}
+
+/** PostgREST returns an embedded row as an object or as an array of one. */
+function profileVerifiedAt(embedded: unknown): string | null {
+  const row = Array.isArray(embedded) ? embedded[0] : embedded;
+  if (!row || typeof row !== "object") return null;
+  const value = (row as { email_verified_at?: unknown }).email_verified_at;
+  return typeof value === "string" ? value : null;
 }
 
 export function leagueRules(league: any) {

@@ -100,7 +100,9 @@ type RequestOptions = {
 export async function api<T = unknown>(route: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   if (method === "GET" && !options.signal) {
-    // Share only in-flight reads (no TTL or persistent cache of private data).
+    // Share only in-flight reads. A finished read is never served again from
+    // a cache, so an update that arrives right after a refresh is never
+    // masked by a stale response.
     const previous = reads.get(route);
     if (previous) return previous as Promise<T>;
     const request = requestJson<T>(route, options);
