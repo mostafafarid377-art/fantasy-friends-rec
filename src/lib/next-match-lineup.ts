@@ -3,12 +3,16 @@ import type { SquadEntry } from "@/lib/squad";
 
 export type MatchLineup = { formation: string; captainId: string | null; viceId: string | null; players: SquadEntry[] };
 export type PreviousMatchLineup = { matchId: string; title: string; kickOff: string; lineup: MatchLineup };
+// The lineup that is in play once a fixture starts: the draft saved for that
+// match, or the default squad official scoring falls back to.
+export type InPlayMatchLineup = PreviousMatchLineup & { source: "saved" | "default" };
 export type SavedMatchLineup = { revision: string; lineup: MatchLineup };
 export type NextMatchLineup = {
   serverNow: string;
   canPrepare?: boolean;
   preparation?: SavedMatchLineup | null;
   previous: PreviousMatchLineup | null;
+  inPlay?: InPlayMatchLineup | null;
   match: { id: string; title: string; kickOff: string; locked: boolean } | null;
   saved: SavedMatchLineup | null;
 };

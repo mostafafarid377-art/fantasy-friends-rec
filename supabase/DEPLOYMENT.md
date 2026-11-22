@@ -28,6 +28,7 @@ missing forward migrations, in order:
 17. `0021_approval_kickoff.sql` (server-enforced approval cutoff at scheduled kickoff)
 18. `0022_prepare_next_match_lineup.sql` (prepare the next fantasy lineup before scheduling a fixture)
 19. `0023_live_event_points.sql` (provisional scoring and standings from unapproved match events)
+20. `0024_in_play_lineup.sql` (locked match lineup in My Team)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -93,7 +94,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0023_live_event_points.sql`. The
+`0001_schema.sql` to `0024_in_play_lineup.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -369,3 +370,14 @@ points use the fixture's saved lineup or the default squad and the league's
 captain/vice policy. Appearance, result and bonus points and automatic fantasy
 substitutions are finalized on approval. An approved match is excluded from
 the live projection and is shown only from the official ledger.
+
+### Locked match lineup (`0024`)
+
+Apply `0024_in_play_lineup.sql` after `0023`. It adds
+`ff_in_play_fantasy_lineup` and returns its result as `inPlay` from
+`ff_next_match_lineup`. Once a fixture starts and until it is approved, My Team
+shows that fixture's saved match lineup, or the default squad when none was
+saved. The previous verified lineup, default squad, and verified history are
+unchanged, and the function is not executable by API roles directly. My Team
+also shows the locked match under "Points", starting at zero and following the
+`0023` provisional projection until approval.

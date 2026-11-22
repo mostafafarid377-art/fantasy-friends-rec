@@ -33,7 +33,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   checkDb(error, "Could not load the next match lineup");
   if (!data?.serverNow) throw new ApiError("Could not confirm the next match lineup", 503);
   const result = data as NextMatchLineup;
-  await decorate(sb, id, [result.previous?.lineup, result.saved?.lineup, result.preparation?.lineup].filter((l): l is MatchLineup => Boolean(l)));
+  await decorate(sb, id, [result.previous?.lineup, result.inPlay?.lineup, result.saved?.lineup, result.preparation?.lineup].filter((l): l is MatchLineup => Boolean(l)));
   return Response.json(result, noStore);
 });
 
