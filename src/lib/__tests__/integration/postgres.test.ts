@@ -1791,8 +1791,11 @@ it("captures only forward fantasy lineups, scopes the draft to its manager and f
     await expect(save()).rejects.toMatchObject({ code: "PT409" });
     await kick(next);
     await expect(save(next, chosen, saved.revision)).rejects.toMatchObject({ code: "PT409" });
-    expect(await view()).toMatchObject({ match: { locked: true }, saved });
+    expect(await view()).toMatchObject({ match: { locked: true }, saved,
+      inPlay: { matchId: next, source: "saved", lineup: saved.lineup } });
     await approve(next);
+    // Approval hands the fixture to the official ledger: it is no longer in play.
+    expect(await view()).toMatchObject({ inPlay: null });
     expect(await historical(next)).toEqual(saved.lineup);
     expect(await historical(baseline)).toEqual(original);
     expect(await official(next)).toMatchObject({ captainId: away[1], lines: expect.arrayContaining([{ playerId: away[1], base: expect.any(Number), multiplier: 2, points: expect.any(Number) }]) });
@@ -1838,6 +1841,32 @@ it("blocks early result approval without writing points, then approves and recor
     await setAuthUid(c, userBId);
     expect((await sql(c,"SELECT ff_next_match_lineup($1) AS result",[league.id])).rows[0].result)
       .toMatchObject({ previous: { matchId: match, lineup: { captainId: home[0] } } });
+  } finally { c.release(); }
+});
+
+it("shows the default squad as the lineup in play for a started match without a saved lineup", async () => {
+  const c = await freshClient();
+  try {
+    const { league, match, home } = await recordedResultFixture(c);
+    await setAuthUid(c, userBId);
+    const entries = matchEntries(home.slice(0, 5), [home[6]]);
+    await sql(c, "SELECT save_fantasy_squad_v2($1,'1-2-1',$2,$3,null,$4)",
+      [league.id, home[1], home[2], JSON.stringify(entries)]);
+    await sql(admin, "UPDATE real_matches SET kick_off=clock_timestamp() WHERE id=$1", [match]);
+    const info = (await sql(c, "SELECT ff_next_match_lineup($1) AS info", [league.id])).rows[0].info;
+    expect(info.inPlay).toMatchObject({ matchId: match, source: "default",
+      lineup: { formation: "1-2-1", captainId: home[1], viceId: home[2] } });
+    expect(info.inPlay.lineup.players).toHaveLength(6);
+    expect(info.inPlay.lineup.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: home[0], slot: "starter", position: "GK" }),
+      expect.objectContaining({ id: home[6], slot: "sub", position: "GK" }),
+    ]));
+    // Another manager without any squad or match lineup has nothing to show.
+    await setAuthUid(c, userCId);
+    expect((await sql(c, "SELECT ff_next_match_lineup($1) AS info", [league.id])).rows[0].info.inPlay).toBeNull();
+    // The helper is internal to the definer functions.
+    await expect(sql(c, "SELECT public.ff_in_play_fantasy_lineup($1,$2,now())", [league.id, userBId]))
+      .rejects.toMatchObject({ code: "42501" });
   } finally { c.release(); }
 });
 

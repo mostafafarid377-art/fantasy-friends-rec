@@ -96,17 +96,26 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const editingBlocked = locked || checkingTarget || targetChanged;
   const nextKickoffReached = Boolean(scheduled && nextRemaining === 0);
   useEffect(() => { if (nextKickoffReached) void nextLineup.reload(); }, [nextKickoffReached, nextLineup.reload]);
+  // Confirm the lock (and the lineup in play) as soon as the countdown ends.
+  const deadlineReached = Boolean(deadline?.kickOff && remaining === 0 && !deadline.locked);
+  useEffect(() => {
+    if (!deadlineReached) return;
+    void squad.reload(); void nextLineup.reload();
+  }, [deadlineReached, squad.reload, nextLineup.reload]);
   useEffect(() => {
     if (!squadLocked || editsNext || editingNext) return;
     setEdit(null); setInitialMode(false); setPick(null); setMoving(null);
   }, [squadLocked, editsNext, editingNext]);
   const pool = useApi<PlayerPool>(editing ? `/api/leagues/${leagueId}/players?archived=1` : null);
 
-  // The last verified match's lineup is independent of both the default
-  // squad and the draft for the upcoming match. Never render either as history.
+  // My Team shows one starting lineup: the match now in play once its deadline
+  // has locked, otherwise the last verified result. The upcoming draft and the
+  // default squad are never presented as history.
   const previous = nextData?.previous;
-  const historical = !editing && !viewDefault ? previous : null;
-  const readOnlyLineup = !editing && Boolean(previous);
+  const inPlay = nextData?.inPlay ?? null;
+  const historical = !editing && !viewDefault ? inPlay ?? previous : null;
+  const showingInPlay = Boolean(historical && inPlay && historical.matchId === inPlay.matchId);
+  const readOnlyLineup = !editing && Boolean(historical);
   const activePlayers = (editing ? (edit ?? nextSeed)?.players : historical?.lineup.players) ?? squad.data?.players ?? [];
   const displayMatch = historical?.matchId ?? (editing && editingNext ? scheduled?.id : undefined);
   const lineupScores = useLatestPlayerGames(leagueId, activePlayers.filter((player) => player.slot !== "reserve"), displayMatch);
@@ -120,12 +129,24 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const stored = squad.data;
   const showingNext = viewNext && editsNext;
   const current = (editing ? edit ?? nextSeed : historical ? { ...historical.lineup, revision: null } : null) ?? snapshot(stored);
-  const lineupTitle = historical ? "Previous match starting lineup" : editing && editingNext ? "Next match starters"
+  const lineupTitle = showingInPlay ? "Starting lineup" : historical ? "Previous match starting lineup"
+    : editing && editingNext ? "Next match starters"
     : !editing && enableNextMatch && (previous || stored.lastMatch) ? "Default starting lineup" : "Starting lineup";
   const latest = lineupScores.data && historical
     ? Object.fromEntries(Object.entries(lineupScores.data).filter(([, game]) => game.matchId === historical.matchId))
     : lineupScores.data ?? undefined;
   const { formation, captainId, viceId } = current;
+  // The points card follows the match in play: once the deadline locks it
+  // starts at zero and counts every event through the provisional projection.
+  const pointsMatch = inPlay ? { matchId: inPlay.matchId, title: inPlay.title, kickOff: inPlay.kickOff }
+    : squadLocked && deadline?.matchId
+      ? { matchId: deadline.matchId, title: deadline.title ?? "Match in play", kickOff: deadline.kickOff }
+      : null;
+  const liveCard = pointsMatch ? stored.liveMatches?.find((m) => m.matchId === pointsMatch.matchId) : undefined;
+  const pointsCard = pointsMatch
+    ? { ...pointsMatch, points: liveCard?.points ?? 0, provisional: true }
+    : stored.lastMatch ? { ...stored.lastMatch, provisional: false } : null;
+  const otherLive = (stored.liveMatches ?? []).filter((m) => m.matchId !== pointsMatch?.matchId);
   // Refresh photo presentation without touching the unsaved slot choices or
   // the revision guarding concurrent squad edits.
   const photos = new Map([...stored.players, ...(pool.data?.players ?? [])].map((p) => [p.id, p.photoUrl]));
@@ -268,6 +289,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
       <PageHeader eyebrow={`${leagueName} · ${rules.format} fantasy`} title={editing ? (editingNext || stored.players.length ? "Edit squad" : "Pick squad") : "My squad"}
         subtitle={editing ? (editingNext ? "Changes save for the next match only. Your default squad and previous lineups won’t change."
           : "Tap a pitch slot to pick, or tap a player for their performance and squad actions. Changes only count after saving.")
+          : showingInPlay ? "This is the lineup in play for the locked match. Edit Squad only changes your next lineup."
           : historical ? "View the lineup saved for your previous match. Edit Squad only changes the next match."
           : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
         actions={<>{pickActions}{nextLineup.data?.previous && <Button variant="outline" onClick={() => { setHasOpenedNext(true); setViewNext(true); setPlayerId(null); setPick(null); setMoving(null); }}><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button>}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
@@ -283,27 +305,29 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
         {conflict && <Button variant="outline" className="mt-2" onClick={() => { cancel(); void squad.reload(); if (enableNextMatch) void nextLineup.reload(); }}>Discard changes & reload</Button>}
       </div>}
       {notice && editing && <p role="status" className="mb-4 text-sm text-card-y">{notice}</p>}
-      {!!stored.liveMatches?.length && <section aria-labelledby="live-squad-points" className="mb-5">
+      {!!otherLive.length && <section aria-labelledby="live-squad-points" className="mb-5">
         <Panel className="p-4">
           <h2 id="live-squad-points" className="text-xl text-chalk">Live match points</h2>
           <p className="mt-1 text-xs text-sage">Provisional fantasy totals until each match is approved.</p>
-          <ul className="mt-2 space-y-1" aria-live="polite">{stored.liveMatches.map((game) => <li key={game.matchId} className="flex justify-between gap-3 text-sm">
+          <ul className="mt-2 space-y-1" aria-live="polite">{otherLive.map((game) => <li key={game.matchId} className="flex justify-between gap-3 text-sm">
             <Link className="text-chalk hover:underline" href={`/matches/${game.matchId}`}>{game.title}</Link>
             <span className="num shrink-0 font-bold text-card-y">{formatPlayerPoints(game.points)}</span>
           </li>)}</ul>
         </Panel>
       </section>}
-      <section aria-labelledby="last-squad-match" className="mb-5">
+      <section aria-labelledby="squad-points" className="mb-5">
         <Panel className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 p-4">
           <div className="min-w-0 break-words">
-            <h2 id="last-squad-match" className="text-xl text-chalk">Last match points</h2>
-            <p className="mt-1 text-sm text-sage">{stored.lastMatch ? <>{stored.lastMatch.title}
-              {stored.lastMatch.kickOff && <> · <time dateTime={stored.lastMatch.kickOff}>{MATCH_DATE.format(new Date(stored.lastMatch.kickOff))}</time></>}
+            <h2 id="squad-points" className="text-xl text-chalk">Points</h2>
+            <p className="mt-1 text-sm text-sage">{pointsCard ? <>{pointsCard.title}
+              {pointsCard.kickOff && <> · <time dateTime={pointsCard.kickOff}>{MATCH_DATE.format(new Date(pointsCard.kickOff))}</time></>}
             </> : "No finalized match yet"}</p>
+            {pointsCard?.provisional && <Badge tone="live">Live</Badge>}
           </div>
           <div aria-live="polite" className="min-w-0 text-left sm:text-right">
-            <p className="num break-words text-3xl font-bold text-green">{formatPlayerPoints(stored.lastMatch?.points)}</p>
-            <p className="text-xs text-sage">{stored.lastMatch && stored.lastMatch.points == null ? "No squad score recorded" : "Fantasy squad total"}</p>
+            <p className="num break-words text-3xl font-bold text-green">{formatPlayerPoints(pointsCard?.points)}</p>
+            <p className="text-xs text-sage">{pointsCard?.provisional ? "Provisional · updates with every event"
+              : pointsCard && pointsCard.points == null ? "No squad score recorded" : "Fantasy squad total"}</p>
           </div>
         </Panel>
       </section>
@@ -317,11 +341,11 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
               {canUse.map((f) => <option key={f.label}>{f.label}</option>)}
             </select> : <Badge>{shape.label}</Badge>}
           </div>
-          {historical && <p className="text-sm text-sage"><Link className="underline-offset-4 hover:underline" href={`/matches/${historical.matchId}`}>{historical.title}</Link> · <time dateTime={historical.kickOff}>{MATCH_DATE.format(new Date(historical.kickOff))}</time> · Read-only</p>}
-          {!editing && enableNextMatch && nextData && !nextLineup.error && stored.lastMatch && previous?.matchId !== stored.lastMatch.matchId &&
+          {historical && <p className="text-sm text-sage"><Link className="underline-offset-4 hover:underline" href={`/matches/${historical.matchId}`}>{historical.title}</Link> · <time dateTime={historical.kickOff}>{MATCH_DATE.format(new Date(historical.kickOff))}</time> · {showingInPlay ? "Locked · Read-only" : "Read-only"}</p>}
+          {!editing && enableNextMatch && nextData && !nextLineup.error && !inPlay && stored.lastMatch && previous?.matchId !== stored.lastMatch.matchId &&
             <p className="text-sm text-sage">No verified lineup saved for {stored.lastMatch.title}.</p>}
-          {previous && !editing && <Button size="sm" variant="outline" onClick={() => { setViewDefault(!viewDefault); setPlayerId(null); }}>
-            {historical ? "View default squad" : "View previous lineup"}
+          {(previous || inPlay) && !editing && <Button size="sm" variant="outline" onClick={() => { setViewDefault(!viewDefault); setPlayerId(null); }}>
+            {historical ? "View default squad" : inPlay ? "View locked lineup" : "View previous lineup"}
           </Button>}
           <Pitch players={players} formation={shape} format={rules.format} captainId={captainId} viceCaptainId={viceId}
             disabled={saving} latest={latest} onAdd={readOnlyLineup || editingBlocked ? undefined : addStarter} onSelect={setPlayerId} />

@@ -303,7 +303,7 @@ it("shows individual points on the pitch and bench and keeps the separate offici
   expect(fetch.mock.calls.filter(([url]) => url.includes("/player-performance?")).map(([url]) => url.split("?")[1]))
     .toEqual(["player=def-a&player=gk-a&player=gk-b"]);
   expect(fetch.mock.calls.some(([url]) => url.endsWith("/performance"))).toBe(false);
-  const region = await screen.findByRole("region", { name: "Last match points" });
+  const region = await screen.findByRole("region", { name: "Points" });
   const summary = within(region);
   expect(region.compareDocumentPosition(screen.getByRole("region", {name:"Starting lineup"})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(summary.getByText("No finalized match yet")).toBeTruthy();
@@ -351,7 +351,7 @@ it("shows individual points on the pitch and bench and keeps the separate offici
   expect(await screen.findByText("No finalized games yet.")).toBeTruthy();
   expect(put).not.toHaveBeenCalled();
   page.unmount(); renderInShell();
-  expect(await within(await screen.findByRole("region", {name:"Last match points"})).findByText("27.5 pts")).toBeTruthy();
+  expect(await within(await screen.findByRole("region", {name:"Points"})).findByText("27.5 pts")).toBeTruthy();
   click("Ada Keeper, GK, captain");
   expect(await screen.findByText("Cup match · GW 8")).toBeTruthy();
 });
@@ -581,7 +581,7 @@ it("shows the actual previous starting lineup even when the default squad and sa
   expect(previousPitch().queryByRole("button", { name: /Bert Keeper/ })).toBeNull();
   expect(await previousPitch().findByText("7 pts")).toBeTruthy();
   expect(previousPitch().queryByText("99 pts")).toBeNull();
-  expect(within(screen.getByRole("region", { name: "Last match points" })).getByText("31 pts")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Points" })).getByText("31 pts")).toBeTruthy();
   click("View default squad");
   expect(within(screen.getByRole("region", { name: "Default starting lineup" })).getByRole("button", { name: /Bert Keeper/ })).toBeTruthy();
   click("View previous lineup");
@@ -605,6 +605,56 @@ it("shows the actual previous starting lineup even when the default squad and sa
   expect(previousPitch().getByRole("button", { name: /Ada Keeper/ })).toBeTruthy();
   click("Next Match");
   expect(within(screen.getByRole("region", { name: /football pitch/ })).getByRole("button", { name: /Zed Keeper/ })).toBeTruthy();
+});
+
+it("replaces the previous lineup with the locked match lineup and counts its points from zero", async () => {
+  const { saved, nextLineups, entries, latest } = nextMatchEditFixture("locked");
+  const previous = nextLineups.get(a.id)!.previous!;
+  saved.set(a.id, { ...saved.get(a.id)!, lastMatch: { matchId: previous.matchId, title: previous.title, kickOff: previous.kickOff, points: 31 } });
+  // The locked fixture used its own saved lineup: Bert Keeper started instead of Ada Keeper.
+  const lockedEntries = entries.map((entry) => entry.id === "gk-a"
+    ? { ...pool[2], name: pool[2].fullName, slot: "starter" as const, order: 0 } : entry);
+  nextLineups.set(a.id, { ...nextLineups.get(a.id)!, inPlay: { matchId: "played", title: "Played fixture",
+    kickOff: "2026-11-19T07:00:00Z", source: "saved",
+    lineup: { players: lockedEntries, formation: "1-2-1", captainId: entries[1].id, viceId: entries[2].id } } });
+  renderInShell(<SquadScreen enableNextMatch />);
+  const lockedPitch = within(await screen.findByRole("region", { name: "Starting lineup" }));
+  expect(screen.queryByRole("region", { name: "Previous match starting lineup" })).toBeNull();
+  expect(lockedPitch.getByRole("link", { name: "Played fixture" }).getAttribute("href")).toBe("/matches/played");
+  expect(lockedPitch.getByText(/Locked · Read-only/)).toBeTruthy();
+  expect(lockedPitch.getByRole("button", { name: /Bert Keeper/ })).toBeTruthy();
+  expect(lockedPitch.queryByRole("button", { name: /Ada Keeper/ })).toBeNull();
+  const card = within(await screen.findByRole("region", { name: "Points" }));
+  expect(card.getByText(/Played fixture/)).toBeTruthy();
+  expect(card.getByText("0 pts")).toBeTruthy();
+  expect(card.getByText(/updates with every event/)).toBeTruthy();
+  expect(card.queryByText("31 pts")).toBeNull();
+  // Every event adds to the provisional total for the match in play.
+  saved.set(a.id, { ...saved.get(a.id)!, liveMatches: [{ matchId: "played", title: "Played fixture",
+    kickOff: "2026-11-19T07:00:00Z", points: 9 }] });
+  latest["gk-a"] = { matchId: "played", title: "Played fixture", kickOff: "2026-11-19T07:00:00Z", points: 9, provisional: true };
+  fireEvent(window, new StorageEvent("storage", { key: `ff:league-content-changed:${a.id}` }));
+  expect(await card.findByText("9 pts")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Live match points" })).toBeNull();
+});
+
+it("shows the default squad in play when the locked match had no saved lineup", async () => {
+  const { saved, nextLineups, entries } = nextMatchEditFixture("locked");
+  const lockedEntries = entries.map((entry) => entry.id === "gk-a"
+    ? { ...pool[2], name: pool[2].fullName, slot: "starter" as const, order: 0 } : entry);
+  saved.set(a.id, { ...saved.get(a.id)!, players: lockedEntries });
+  nextLineups.set(a.id, { ...nextLineups.get(a.id)!, inPlay: { matchId: "played", title: "Played fixture",
+    kickOff: "2026-11-19T07:00:00Z", source: "default",
+    lineup: { players: lockedEntries, formation: "1-2-1", captainId: entries[1].id, viceId: entries[2].id } } });
+  renderInShell(<SquadScreen enableNextMatch />);
+  const lockedPitch = within(await screen.findByRole("region", { name: "Starting lineup" }));
+  expect(lockedPitch.getByRole("button", { name: /Bert Keeper/ })).toBeTruthy();
+  expect(lockedPitch.queryByRole("button", { name: /Ada Keeper/ })).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Points" })).getByText("0 pts")).toBeTruthy();
+  click("View default squad");
+  expect(within(screen.getByRole("region", { name: "Default starting lineup" })).getByRole("button", { name: /Bert Keeper/ })).toBeTruthy();
+  click("View locked lineup");
+  expect(within(screen.getByRole("region", { name: "Starting lineup" })).getByRole("button", { name: /Bert Keeper/ })).toBeTruthy();
 });
 
 it("does not present the default starters as match history when a result has no verified lineup", async () => {
