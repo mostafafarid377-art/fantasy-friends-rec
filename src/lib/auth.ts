@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { resolveIdentity } from "@/lib/identity";
 
 export type SessionUser = {
   id: string;
@@ -14,13 +15,13 @@ export type SessionUser = {
 /**
  * Native Supabase Auth session adapter.
  * Keeps the existing app's SessionUser shape while identity comes only from
- * the verified Supabase Auth user. Profile metadata is never used for access
+ * the verified Supabase Auth token. Profile metadata is never used for access
  * control; it is presentation data only.
  */
 export async function getSessionProfile(client?: Awaited<ReturnType<typeof createClient>>): Promise<SessionUser | null> {
   const supabase = client ?? await createClient();
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) return null;
+  const user = await resolveIdentity(supabase);
+  if (!user) return null;
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -28,7 +29,7 @@ export async function getSessionProfile(client?: Awaited<ReturnType<typeof creat
     .eq("id", user.id)
     .maybeSingle();
 
-  const metadata = user.user_metadata ?? {};
+  const metadata = user.metadata;
   const username =
     profile?.username ??
     (typeof metadata.username === "string" ? metadata.username : user.email?.split("@")[0] ?? "manager");
@@ -43,8 +44,9 @@ export async function getSessionProfile(client?: Awaited<ReturnType<typeof creat
     displayName,
     avatarUrl: profile?.avatar_url ?? null,
     bio: profile?.bio ?? null,
-    emailVerified: Boolean(user.email_confirmed_at),
-    createdAt: user.created_at,
+    // Mirrors auth.users.email_confirmed_at through a database trigger.
+    emailVerified: Boolean(profile?.email_verified_at),
+    createdAt: profile?.created_at ?? "",
   };
 }
 

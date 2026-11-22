@@ -14,6 +14,7 @@ import { countdown, useKickoffClock } from "@/lib/match-deadline";
 import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel, Skeleton, Toast } from "./ui";
 import { notifyLeagueContentChanged, useLeagueContentUpdates, useLiveLeaguePoints } from "@/lib/client/league-updates";
+import { useAppRefresh } from "@/lib/client/refresh";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import {
   canSelectPlayer, normalizeBench, orderedBench, compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
@@ -55,13 +56,8 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const nextLineup = useApi<NextMatchLineup>(enableNextMatch ? nextRoute : null);
   const [viewNext, setViewNext] = useState(false);
   const [hasOpenedNext, setHasOpenedNext] = useState(false);
-  useEffect(() => {
-    if (!enableNextMatch) return;
-    const refresh = () => { if (document.visibilityState === "visible") void nextLineup.reload(); };
-    const timer = window.setInterval(refresh, 15000);
-    window.addEventListener("focus", refresh);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
-  }, [enableNextMatch, nextLineup.reload]);
+  // Focus and polling are shared with the rest of the app.
+  useAppRefresh(() => { void nextLineup.reload(); }, { pollMs: 15000, enabled: enableNextMatch });
   useLeagueContentUpdates(enableNextMatch ? leagueId : undefined, nextLineup.reload);
   const [edit, setEdit] = useState<Draft | null>(null);
   const [initialMode, setInitialMode] = useState(editInitially);

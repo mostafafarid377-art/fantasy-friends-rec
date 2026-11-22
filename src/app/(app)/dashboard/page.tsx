@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import {
   ArrowDownRight,
@@ -72,11 +72,6 @@ export default function DashboardPage() {
   );
 
   useLiveLeaguePoints(league?.id, reload);
-  useEffect(() => {
-    const onFocus = () => { void reload(); };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [reload]);
 
   if (leagueLoading || (loading && !data)) {
     return (

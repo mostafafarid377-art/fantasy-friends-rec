@@ -29,26 +29,27 @@ const readSession = () => session(new NextRequest(`${app}/api/auth/session`));
 const signIn = () => login(new NextRequest(`${app}/api/auth/login`, { method: "POST", body: JSON.stringify({ email: user.email, password: "test-password" }) }));
 
 let initialExpiry: number;
+const authUpstream = async (input: RequestInfo | URL) => {
+  const url = new URL(String(input));
+  const grant = url.searchParams.get("grant_type");
+  if (url.pathname.endsWith("/token") && grant === "password") return Response.json({ access_token: token(initialExpiry), refresh_token: "first-refresh", token_type: "bearer", expires_in: 3600, expires_at: initialExpiry, user });
+  if (url.pathname.endsWith("/token") && grant === "refresh_token") {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    return Response.json({ access_token: token(exp), refresh_token: "rotated-refresh", token_type: "bearer", expires_in: 3600, expires_at: exp, user });
+  }
+  if (url.pathname.endsWith("/user")) return Response.json(user);
+  if (url.pathname.endsWith("/logout")) return new Response(null, { status: 204 });
+  if (url.pathname.endsWith("/notifications")) return new Response(null, { headers: { "content-range": "*/0" } });
+  if (url.pathname.endsWith("/league_members") || url.pathname.endsWith("/league_standings")) return Response.json([]);
+  return Response.json({ username: "person", display_name: "Person" });
+};
 beforeEach(() => {
   vi.stubEnv("NODE_ENV", "production");
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example-project.supabase.co");
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
   browser.clear();
   initialExpiry = Math.floor(Date.now() / 1000) + 3600;
-  upstream.mockReset().mockImplementation(async (input: RequestInfo | URL) => {
-    const url = new URL(String(input));
-    const grant = url.searchParams.get("grant_type");
-    if (url.pathname.endsWith("/token") && grant === "password") return Response.json({ access_token: token(initialExpiry), refresh_token: "first-refresh", token_type: "bearer", expires_in: 3600, expires_at: initialExpiry, user });
-    if (url.pathname.endsWith("/token") && grant === "refresh_token") {
-      const exp = Math.floor(Date.now() / 1000) + 3600;
-      return Response.json({ access_token: token(exp), refresh_token: "rotated-refresh", token_type: "bearer", expires_in: 3600, expires_at: exp, user });
-    }
-    if (url.pathname.endsWith("/user")) return Response.json(user);
-    if (url.pathname.endsWith("/logout")) return new Response(null, { status: 204 });
-    if (url.pathname.endsWith("/notifications")) return new Response(null, { headers: { "content-range": "*/0" } });
-    if (url.pathname.endsWith("/league_members") || url.pathname.endsWith("/league_standings")) return Response.json([]);
-    return Response.json({ username: "person", display_name: "Person" });
-  });
+  upstream.mockReset().mockImplementation(authUpstream);
   vi.stubGlobal("fetch", upstream);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
@@ -137,11 +138,13 @@ it("can sign in again directly when the browser sends an unreadable session cook
 
 it("keeps readable cookies and the homepage during a temporary Auth outage", async () => {
   expect((await signIn()).status).toBe(200);
-  upstream.mockResolvedValueOnce(Response.json({ message: "Unavailable" }, { status: 503 }));
+  // Every Auth call fails while the outage lasts, not just the first one.
+  upstream.mockImplementation(async () => Response.json({ message: "Unavailable" }, { status: 503 }));
   const response = await navigate("/");
   expect(response.status).toBe(200);
   expect(response.headers.get("location")).toBeNull();
   expect(await (await readSession()).json()).toMatchObject({ user: null });
   expect([...browser.values()].every(({ options }) => (options.maxAge ?? 0) > 0)).toBe(true);
+  upstream.mockReset().mockImplementation(authUpstream);
   expect(await (await readSession()).json()).toMatchObject({ user: { id: user.id } });
 });
