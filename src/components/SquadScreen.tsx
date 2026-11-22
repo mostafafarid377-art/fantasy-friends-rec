@@ -18,7 +18,7 @@ import { useAppRefresh } from "@/lib/client/refresh";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import {
   canSelectPlayer, normalizeBench, orderedBench, compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
-  nextSquadOrder, OUTFIELD, POSITIONS, squadCaps, validateSquad, validateSquadDraft,
+  nextSquadOrder, OUTFIELD, POSITIONS, squadCaps, validateMatchLineup, validateSquad, validateSquadDraft,
   type LeagueRules, type Position, type SquadPlayer,
 } from "@/lib/domain";
 import type { PlayerPool, PoolPlayer, SquadEntry, SquadResponse } from "@/lib/squad";
@@ -153,7 +153,11 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const unplaced = players.filter((p) => p.slot === "starter" && !placed.has(p.id));
   const selected = players.find((p) => p.id === playerId);
   const complete = players.length === rules.squadSize;
-  const validation = (complete ? validateSquad : validateSquadDraft)(rules, players, { formation: shape.label, captainId, viceId });
+  // A lineup that is played always names its captaincy; a squad that is still
+  // being picked up may not have one yet.
+  const validation = editingNext
+    ? validateMatchLineup(rules, players, { formation: shape.label, captainId, viceId })
+    : (complete ? validateSquad : validateSquadDraft)(rules, players, { formation: shape.label, captainId, viceId });
   const archived = players.filter((p) => p.status !== "active");
   const missingStarters = editingNext && players.filter((p) => p.slot === "starter").length !== rules.starters;
   const savedComplete = Boolean(stored.squad?.completedAt) && complete && validation.ok && archived.length === 0;

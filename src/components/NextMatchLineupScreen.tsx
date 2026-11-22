@@ -9,7 +9,7 @@ import { fieldClass, SquadPicker } from "./SquadPicker";
 import { Avatar, Badge, Button, ErrorNote, Modal, Panel } from "./ui";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import { useKickoffClock } from "@/lib/match-deadline";
-import { canSelectPlayer, findFormation, FORMATIONS, layoutFormation, normalizeBench, OUTFIELD, orderedBench, validateSquadDraft, type LeagueRules } from "@/lib/domain";
+import { canSelectPlayer, findFormation, FORMATIONS, layoutFormation, normalizeBench, OUTFIELD, orderedBench, validateMatchLineup, type LeagueRules } from "@/lib/domain";
 import { lineupEntries, lineupForFormation, matchLineupFormations, swapLineupPlayers, withLineupPlayers, type MatchLineup, type NextMatchLineup, type SavedMatchLineup } from "@/lib/next-match-lineup";
 import type { PlayerPool, PoolPlayer, SquadEntry } from "@/lib/squad";
 
@@ -59,7 +59,8 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
   const placed = new Set(layoutFormation(lineup.players, shape).map((p) => p.playerId));
   const unplaced = starters.filter((p) => !placed.has(p.id));
   const target = !locked && !saving ? lineup.players.find((p) => p.id === targetId) : undefined;
-  const validation = validateSquadDraft(rules, lineup.players, { formation: shape.label, captainId: lineup.captainId, viceId: lineup.viceId });
+  // A match lineup is always played, so it always names its captaincy.
+  const validation = validateMatchLineup(rules, lineup.players, { formation: shape.label, captainId: lineup.captainId, viceId: lineup.viceId });
   const unavailable = lineup.players.filter((p) => p.status !== "active");
   const adding = !locked && !saving ? benchAdd : null;
   const pool = useApi<PlayerPool>((target && poolOpen) || adding ? `/api/leagues/${leagueId}/players?archived=1` : null);

@@ -58,5 +58,100 @@ assert.match(sharedLive, /select jsonb_agg\(to_jsonb\(l\)\) as j from public\.ff
   'the latest lookup must build one live projection and share it');
 assert.doesNotMatch(sharedLive, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\./i, 'migrations must not drop/truncate/delete application data');
 
+// The lineup lifecycle: one resolver for the lineup of a match, an idempotent
+// deadline promotion, and captaincy on every lineup a manager writes.
+const lifecycle = read('./supabase/migrations/0028_lineup_lifecycle.sql');
+assert.match(lifecycle, /create function public\.ff_effective_fantasy_lineups\(p_match text\)/i,
+  'the lineup of a match must be resolved by one function');
+assert.match(lifecycle, /coalesce\(sv\.lineup,fz\.lineup,cy\.lineup,sq\.lineup\)/i,
+  'the resolver must prefer the saved draft, then the locked in lineup, then the inherited lineup, then the default squad');
+assert.match(lifecycle, /create or replace function public\.ff_previous_fantasy_lineup\(p_league text,p_actor text,p_before timestamptz\)/i,
+  'the previous official lineup must be redefined so a promoted lineup counts');
+const previousLineup = lifecycle.slice(
+  lifecycle.indexOf('create or replace function public.ff_previous_fantasy_lineup'),
+  lifecycle.indexOf('$$;', lifecycle.indexOf('create or replace function public.ff_previous_fantasy_lineup')),
+);
+assert.doesNotMatch(previousLineup, /approved/i,
+  'an official lineup exists from the deadline, not only once the result is approved');
+assert.match(lifecycle, /create function public\.ff_promote_match_lineup\(p_match text\)/i,
+  'the deadline must promote the lineup of a match');
+assert.match(lifecycle, /on conflict\(match_id,profile_id\) do nothing/i,
+  'the promotion must never overwrite a lineup that was already locked in');
+assert.match(lifecycle, /create function public\.ff_promote_due_match_lineups\(\)/i,
+  'a runner must promote every match whose deadline has passed');
+assert.match(lifecycle, /cron\.schedule\('ff-lineup-deadlines','\*\/5 \* \* \* \*','select public\.ff_promote_due_match_lineups\(\)'\)/i,
+  'the deadline promotion must run on the database, without the app being open');
+assert.match(lifecycle, /raise exception 'Choose a captain and a vice-captain for this lineup' using errcode='22023'/i,
+  'a saved match lineup must name a captain and a vice-captain');
+assert.match(lifecycle, /raise exception 'A complete squad needs a captain and a vice-captain' using errcode = '22023'/i,
+  'a complete squad must name a captain and a vice-captain');
+assert.match(lifecycle, /select r\.profile_id,r\.lineup from public\.ff_effective_fantasy_lineups\(p_match\) r/i,
+  'official scoring must read the resolved lineup of the match');
+assert.match(lifecycle, /from matches m join public\.ff_effective_fantasy_lineups\(m\.id\) r on true/i,
+  'the live projection must read the resolved lineup of the match');
+assert.match(lifecycle, /revoke all on function public\.ff_effective_fantasy_lineups\(text\),\s*public\.ff_effective_fantasy_lineup\(text,text\),public\.ff_fantasy_lineup_source\(text,text\)\s*from public,anon,authenticated/i,
+  'the resolver must stay internal to the database');
+assert.match(lifecycle, /revoke all on function public\.ff_promote_match_lineup\(text\) from public,anon,authenticated/i,
+  'the promotion must stay internal to the database');
+assert.match(lifecycle, /revoke all on function public\.ff_promote_due_match_lineups\(\) from public,anon,authenticated/i,
+  'the deadline runner must stay internal to the database');
+assert.doesNotMatch(lifecycle, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\.fantasy_match_lineup/i,
+  'the lineup lifecycle must not drop, truncate or delete the official lineups');
+assert.doesNotMatch(lifecycle, /update\s+public\.fantasy_match_lineup_history/i,
+  'the migration must not rewrite the official lineups that already exist');
+
+// The squad function is replaced by 0028, so it has to keep every rule that
+// is live today. Migration 0009 added the bench rule and migration 0014
+// renamed the function; losing the bench rule would quietly accept a bench
+// that no longer reserves its first seat for the goalkeeper.
+const bench = read('./supabase/migrations/0009_bench_lineups_scoring.sql');
+const deadlines = read('./supabase/migrations/0014_match_deadlines.sql');
+assert.match(deadlines, /alter function public\.save_fantasy_squad_v2\(text,text,text,text,timestamptz,jsonb\) rename to ff_save_validated_squad/i,
+  'migration 0014 must keep renaming the squad function to ff_save_validated_squad');
+const benchRule = /raise exception 'Bench must reserve position zero for the goalkeeper, followed by ordered outfield substitutes' using errcode='22023'/i;
+assert.match(bench, benchRule, 'migration 0009 must hold the bench rule of the live squad function');
+assert.match(lifecycle, benchRule,
+  'migration 0028 must keep the bench rule when it replaces the live squad function');
+const lifecycleSquad = lifecycle.slice(
+  lifecycle.indexOf('create or replace function public.ff_save_validated_squad'),
+  lifecycle.indexOf('$$;', lifecycle.indexOf('create or replace function public.ff_save_validated_squad')),
+);
+assert.match(lifecycleSquad, /not exists \(select 1 from jsonb_to_recordset\(p_entries\) e\(player_id text,slot text\) where e\.player_id=p_captain and e\.slot='starter'\)/i,
+  'the squad function must keep the captain and vice-captain checks of the live function');
+assert.match(lifecycleSquad, /where e\.slot='sub' and p\.position='GK'\) > 1/i,
+  'the squad function must keep the bench rule of the live function');
+
+// A lineup that is locked in, and a lineup that is captured while scoring,
+// have to carry a captaincy that can be used. A lineup without one is kept
+// exactly as it is; a lineup with a broken one is not an official lineup.
+assert.match(lifecycle, /create or replace function public\.ff_valid_fantasy_captaincy\(p_lineup jsonb\)/i,
+  'the captaincy of a lineup has to be checked in one place');
+assert.match(lifecycle, /revoke all on function public\.ff_valid_fantasy_captaincy\(jsonb\) from public,anon,authenticated/i,
+  'the captaincy check must stay internal to the database');
+const promotion = lifecycle.slice(
+  lifecycle.indexOf('create function public.ff_promote_match_lineup'),
+  lifecycle.indexOf('$$;', lifecycle.indexOf('create function public.ff_promote_match_lineup')),
+);
+assert.match(promotion, /public\.ff_valid_fantasy_captaincy\(res\.lineup\)/i,
+  'the promotion must only lock in a lineup whose captaincy can be used');
+const scoring = lifecycle.slice(
+  lifecycle.indexOf('create or replace function public.ff_score_match'),
+  lifecycle.indexOf('$$;', lifecycle.indexOf('create or replace function public.ff_score_match')),
+);
+assert.match(scoring, /public\.ff_valid_fantasy_captaincy\(i\.lineup\)/i,
+  'the captured official lineup must only carry a captaincy that can be used');
+// The captaincy that is already stored is never invented away.
+assert.doesNotMatch(lifecycle, /update\s+public\.fantasy_squads\s+set\s+captain_id/i,
+  'the migration must not write a captain onto a lineup that never had one');
+assert.doesNotMatch(lifecycle, /coalesce\([^)]*->>'captainId'\s*,\s*[^)]*\)/i,
+  'the resolver must not fall back to another player as the captain');
+
+// The deadline runner falls back to the scoring path where pg_cron is not
+// available, and the comment must not claim the extension is installed.
+assert.doesNotMatch(lifecycle, /pg_cron is preloaded/i,
+  'the migration must not claim that pg_cron is installed where it is not');
+assert.match(lifecycle, /if not exists \(select 1 from pg_available_extensions where name='pg_cron'\) then/i,
+  'the migration must still apply where pg_cron is not available');
+
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');

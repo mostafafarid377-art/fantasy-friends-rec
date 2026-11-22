@@ -177,6 +177,35 @@ export function validateSquad(rules: LeagueRules, players: SquadPlayer[], opts: 
   if (players.filter((p) => p.slot === "starter").length !== rules.starters) errors.push(`Exactly ${rules.starters} starters required.`);
   if (players.filter((p) => p.slot === "starter" && p.position === "GK").length !== 1) errors.push("A complete lineup needs exactly one goalkeeper.");
   if (players.filter((p) => p.slot === "sub").length !== rules.subsCount) errors.push(`Exactly ${rules.subsCount} substitutes required.`);
+  errors.push(...captaincyErrors(opts));
+  return errors.length ? { ok: false, errors } : pass;
+}
+
+/**
+ * A lineup that is played always names a captain and a different
+ * vice-captain. Both have to be starters, and the captain only scores double
+ * when they play, so a lineup without captaincy is not a lineup.
+ *
+ * The starter and the distinct-player rules are already checked by the draft
+ * validation, so only the missing captaincy is reported here.
+ */
+function captaincyErrors(opts: SquadOptions): string[] {
+  const errors: string[] = [];
+  if (!opts.captainId) errors.push("Choose a captain for this lineup.");
+  if (!opts.viceId) errors.push("Choose a vice-captain for this lineup.");
+  return errors;
+}
+
+/**
+ * The lineup of a single match. It is always played, so it always names its
+ * captaincy, and it never carries a full squad of reserves.
+ */
+export function validateMatchLineup(rules: LeagueRules, players: SquadPlayer[], opts: SquadOptions): ValidationResult {
+  const draft = validateSquadDraft(rules, players, opts);
+  const errors = draft.ok ? [] : draft.errors;
+  if (players.filter((p) => p.slot === "starter").length !== rules.starters) errors.push(`Exactly ${rules.starters} starters required.`);
+  if (players.filter((p) => p.slot === "starter" && p.position === "GK").length !== 1) errors.push("A complete lineup needs exactly one goalkeeper.");
+  errors.push(...captaincyErrors(opts));
   return errors.length ? { ok: false, errors } : pass;
 }
 

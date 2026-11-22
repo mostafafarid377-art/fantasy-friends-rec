@@ -4,8 +4,9 @@ import type { SquadEntry } from "@/lib/squad";
 export type MatchLineup = { formation: string; captainId: string | null; viceId: string | null; players: SquadEntry[] };
 export type PreviousMatchLineup = { matchId: string; title: string; kickOff: string; lineup: MatchLineup };
 // The lineup that is in play once a fixture starts: the draft saved for that
-// match, or the default squad official scoring falls back to.
-export type InPlayMatchLineup = PreviousMatchLineup & { source: "saved" | "default" };
+// match, the lineup locked in at the deadline, the lineup inherited from the
+// previous official lineup, or the default squad.
+export type InPlayMatchLineup = PreviousMatchLineup & { source: "saved" | "official" | "inherited" | "default" };
 export type SavedMatchLineup = { revision: string; lineup: MatchLineup };
 export type NextMatchLineup = {
   serverNow: string;

@@ -7,6 +7,7 @@ import {
   isFormationForFormat,
   layoutFormation,
   validateLineup,
+  validateMatchLineup,
   validateSquad,
   validateSquadDraft,
   type LeagueRules,
@@ -16,6 +17,9 @@ import {
 
 const rules5: LeagueRules = { format: "5v5", squadSize: 15, starters: 5, subsCount: 5 };
 const rules7: LeagueRules = { format: "7v7", squadSize: 15, starters: 7, subsCount: 5 };
+// A squad that is played always names a captain and a vice-captain.
+const captaincy5 = { captainId: "def1", viceId: "mid1" };
+const captaincy7 = { captainId: "def1", viceId: "mid1" };
 
 function player(id: string, position: Position, slot: SquadPlayer["slot"], order = 0): SquadPlayer {
   return { id, position, slot, order, name: id };
@@ -59,7 +63,7 @@ function squad7(): SquadPlayer[] {
 
 describe("league format rules", () => {
   it("requires exactly 5 starters in a 5v5 league", () => {
-    expect(validateSquad(rules5, squad5(), { formation: "2-2-0" }).ok).toBe(true);
+    expect(validateSquad(rules5, squad5(), { formation: "2-2-0", ...captaincy5 }).ok).toBe(true);
     const withExtra = squad5().map((p) =>
       p.slot === "reserve" && p.id === "res1" ? { ...p, slot: "starter" as const, order: 5 } : p,
     );
@@ -69,7 +73,7 @@ describe("league format rules", () => {
   });
 
   it("requires exactly 7 starters in a 7v7 league", () => {
-    expect(validateSquad(rules7, squad7(), { formation: "3-2-1" }).ok).toBe(true);
+    expect(validateSquad(rules7, squad7(), { formation: "3-2-1", ...captaincy7 }).ok).toBe(true);
     const missing = squad7().filter((p) => p.id !== "fwd1");
     const result = validateSquad(rules7, missing, { formation: "1-2-3" });
     expect(result.ok).toBe(false);
@@ -93,7 +97,7 @@ describe("league format rules", () => {
   it("keeps substitutes out of the starting count", () => {
     const subsOnly = squad5().filter((p) => p.slot === "starter").length;
     expect(subsOnly).toBe(rules5.starters);
-    expect(validateSquad(rules5, squad5(), { formation: "2-2-0" }).ok).toBe(true);
+    expect(validateSquad(rules5, squad5(), { formation: "2-2-0", ...captaincy5 }).ok).toBe(true);
   });
 
   it("rejects an eleven-a-side lineup in a small-sided league", () => {
@@ -141,6 +145,39 @@ describe("league format rules", () => {
 
     const overflow = [...squad5(), player("x1", "FWD", "starter", 9)];
     expect(validateSquadDraft(rules5, overflow, { formation: "2-2-0" }).ok).toBe(false);
+  });
+
+  it("requires a captain and a vice-captain for a complete squad", () => {
+    const withoutCaptain = validateSquad(rules5, squad5(), { formation: "2-2-0" });
+    expect(withoutCaptain.ok).toBe(false);
+    expect(withoutCaptain.ok === false && withoutCaptain.errors.join(" ")).toMatch(/Choose a captain/);
+
+    const withoutVice = validateSquad(rules5, squad5(), { formation: "2-2-0", captainId: "def1" });
+    expect(withoutVice.ok).toBe(false);
+    expect(withoutVice.ok === false && withoutVice.errors.join(" ")).toMatch(/Choose a vice-captain/);
+
+    // A squad that is still being picked up does not need captaincy yet.
+    expect(validateSquadDraft(rules5, squad5().slice(0, 6), { formation: "2-2-0" }).ok).toBe(true);
+  });
+});
+
+describe("match lineup validation", () => {
+  it("requires captaincy and a full starting lineup", () => {
+    const starters = squad5().filter((p) => p.slot === "starter");
+    const bench = squad5().filter((p) => p.slot === "sub");
+
+    expect(validateMatchLineup(rules5, [...starters, ...bench], { formation: "2-2-0", ...captaincy5 }).ok).toBe(true);
+
+    const withoutCaptaincy = validateMatchLineup(rules5, [...starters, ...bench], { formation: "2-2-0" });
+    expect(withoutCaptaincy.ok).toBe(false);
+    expect(withoutCaptaincy.ok === false && withoutCaptaincy.errors.join(" ")).toMatch(/Choose a captain/);
+
+    const tooFew = validateMatchLineup(rules5, [...starters.slice(0, 4), ...bench], { formation: "2-2-0", ...captaincy5 });
+    expect(tooFew.ok).toBe(false);
+    expect(tooFew.ok === false && tooFew.errors.join(" ")).toMatch(/Exactly 5 starters/);
+
+    // A match lineup never needs the reserves of a full squad.
+    expect(validateMatchLineup(rules5, starters, { formation: "2-2-0", ...captaincy5 }).ok).toBe(true);
   });
 });
 
@@ -193,7 +230,7 @@ describe("strict position layouts and editing", () => {
   it("uses the actual squad and sub limits, not the format to size the bench", () => {
     const rules = { ...rules5, squadSize: 7, subsCount: 1 };
     const players = squad5().filter((p) => p.slot === "starter" || ["sub1", "res1"].includes(p.id));
-    expect(validateSquad(rules, players, { formation: "2-2-0" }).ok).toBe(true);
+    expect(validateSquad(rules, players, { formation: "2-2-0", captainId: "def1", viceId: "mid1" }).ok).toBe(true);
     expect(validateSquadDraft(rules, [...players, player("extra", "DEF", "sub")], { formation: "2-2-0" }).ok).toBe(false);
   });
 });

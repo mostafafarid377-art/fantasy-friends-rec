@@ -74,3 +74,26 @@
 **Impact:** All 46 tests pass; the reporter error only occurs when formatting failed test output (which never happens since all tests pass).
 
 **Recommended Next Step:** Upgrade Vitest to a newer version that supports `Map.groupBy`.
+
+## 8. The Lineup Deadline Promotion Runs Only When A Match Is Scored
+
+**Limitation:** `pg_cron` is available to install on the production project but
+is not installed today. Migration `0028_lineup_lifecycle.sql` therefore does
+not schedule the five-minute deadline runner in production, and the official
+lineup of a fixture is written when its result is scored rather than at the
+deadline.
+
+**Impact:** Between the deadline and the scoring of a fixture there is no
+official lineup row for it. Nothing is lost: the resolver falls back to the
+previous official lineup, the interface and the scoring read the same resolved
+lineup, and the official row is written at scoring time. What is lost is the
+guarantee that the official lineup exists the moment the deadline passes, which
+is what the next fixture inherits.
+
+**Recommended Next Step:** Install `pg_cron` on the production project and run
+`select cron.schedule('ff-lineup-deadlines','*/5 * * * *','select
+public.ff_promote_due_match_lineups()')` as part of the deployment of
+migration `0028`. The migration does this by itself as soon as the extension
+is available.
+
+See `LINEUP_LIFECYCLE.md` for the full description of the lineup lifecycle.
