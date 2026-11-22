@@ -24,3 +24,22 @@ export type PlayerPerformance = PlayerHistory & {
 export function formatPlayerPoints(points: number | null | undefined) {
   return points == null ? "—" : `${points} pts`;
 }
+
+export type LatestPlayerPointsRow = {
+  player_id: string; match_id: string; title: string; kick_off: string;
+  points: number | string | null; captain_points: number | string | null; provisional?: boolean;
+};
+
+/**
+ * Shapes the latest-player-points rows for the client. Both the player
+ * performance route and the dashboard use this so a player looks the same
+ * whichever screen asked for its latest game.
+ */
+export function toLatestPlayerGames(rows: LatestPlayerPointsRow[]): LatestPlayerGames {
+  return Object.fromEntries(rows.map((r) => [r.player_id, {
+    matchId: r.match_id, title: r.title, kickOff: r.kick_off,
+    points: r.points == null ? null : Number(r.points),
+    ...(r.provisional ? { provisional: true } : {}),
+    ...(r.captain_points == null ? {} : { captainPoints: Number(r.captain_points) }),
+  }]));
+}

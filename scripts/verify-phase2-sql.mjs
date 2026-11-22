@@ -44,5 +44,19 @@ for (const fn of ['handle_new_auth_user', 'sync_auth_user_profile']) {
 assert.doesNotMatch(authProfiles, /set search_path = public/i, 'auth trigger functions must use a controlled search path');
 assert.doesNotMatch(`${rls}\n${functions}`, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\./i, 'migrations must not drop/truncate/delete application data');
 
+// The live projections must stay internal to the database, and the caller
+// scoped lookups must stay the only entry points the app can reach.
+const scopedLive = read('./supabase/migrations/0026_scoped_live_points.sql');
+const sharedLive = read('./supabase/migrations/0027_shared_live_projection.sql');
+assert.match(scopedLive, /revoke all on function public\.ff_live_manager_points_for\(text,text,text\),\s*public\.ff_live_manager_points\(text,text\) from public,anon,authenticated/i,
+  'the all-managers live projection must not be executable by API roles');
+assert.match(scopedLive, /grant execute on function public\.ff_my_live_match_points\(text\),\s*public\.ff_latest_display_player_points\(text,text\[\],text\) to authenticated/i,
+  'the caller scoped live lookups must stay executable by authenticated');
+assert.match(sharedLive, /revoke all on function public\.ff_approved_display_player_points\(text,text,text\[\]\),\s*public\.ff_live_display_player_points\(jsonb,text\[\]\),\s*public\.ff_live_manager_points_from_live\(jsonb,text,text\)/i,
+  'the shared live helpers must not be executable by API roles');
+assert.match(sharedLive, /select jsonb_agg\(to_jsonb\(l\)\) as j from public\.ff_live_player_points\(p_league,p_match\) l/i,
+  'the latest lookup must build one live projection and share it');
+assert.doesNotMatch(sharedLive, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\./i, 'migrations must not drop/truncate/delete application data');
+
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');

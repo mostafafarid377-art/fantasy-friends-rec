@@ -29,6 +29,9 @@ missing forward migrations, in order:
 18. `0022_prepare_next_match_lineup.sql` (prepare the next fantasy lineup before scheduling a fixture)
 19. `0023_live_event_points.sql` (provisional scoring and standings from unapproved match events)
 20. `0024_in_play_lineup.sql` (locked match lineup in My Team)
+21. `0025_read_consolidation.sql` (read consolidation, kickoff in the last-game snapshot and caller-scoped latest player points)
+22. `0026_scoped_live_points.sql` (caller-scoped live manager points and tightened live-projection grants)
+23. `0027_shared_live_projection.sql` (one live projection per request)
 
 Coordinate `0007` with the matching app rollout: the new app needs both
 `save_fantasy_squad_v2` and `last_game_points`; the older app's squad saves will
@@ -94,7 +97,7 @@ With an authorized leader who can edit the test players, use **iOS Safari** and
 ## Empty local database setup
 
 For a fresh Supabase-compatible instance only, migrations run in order from
-`0001_schema.sql` to `0024_in_play_lineup.sql`. The
+`0001_schema.sql` to `0027_shared_live_projection.sql`. The
 `scripts/deploy-fresh-db.sh` helper deliberately refuses remote Supabase hosts,
 including Hagz-fantasy.
 
@@ -381,3 +384,78 @@ saved. The previous verified lineup, default squad, and verified history are
 unchanged, and the function is not executable by API roles directly. My Team
 also shows the locked match under "Points", starting at zero and following the
 `0023` provisional projection until approval.
+
+### Read consolidation and caller-scoped latest player points (`0025`)
+
+Apply `0025_read_consolidation.sql` after `0024` and **before** releasing the
+matching app. It is a read-only change: it adds no rows, rewrites no points,
+and does not touch approval, saved lineups, or RLS policies.
+
+- `last_game_points` now returns the latest approved match's `kickOff`
+  alongside its title and points. The My Team screen reads that snapshot
+  instead of issuing a second exact-match lookup for the same fixture.
+- `ff_my_latest_display_player_points` answers the latest-points question for
+  the caller's own saved squad, deriving the squad inside the function. The
+  dashboard shows the latest points of the manager's players from the same
+  response as the rest of the page, with no follow-up player-performance
+  request. The caller-scoped result is identical to
+  `ff_latest_display_player_points` for the caller's squad and excludes other
+  members and nonmembers.
+
+### Scoped live points (`0026`)
+
+Apply `0026_scoped_live_points.sql` after `0025` and **before** releasing the
+matching app. It only changes how the live projection is computed and who may
+call it. It writes no rows, does not change official points, approval, saved
+lineups, or the live projection's results.
+
+- The live manager projection now has one implementation,
+  `ff_live_manager_points_for`, with an optional manager scope.
+  `ff_live_manager_points` (every manager, used by the standings table) and
+  `ff_my_live_match_points` (the caller's own live rows) are thin wrappers
+  over it. The dashboard, My Team and the player-performance screen only ever
+  read the caller's own live row, so they no longer compute and discard every
+  other manager's live points.
+- `ff_live_manager_points_for` and `ff_live_manager_points` are revoked from
+  `public`, `anon` and `authenticated`; they are internal to the database.
+  `ff_my_live_match_points` and `ff_latest_display_player_points` remain
+  executable by `authenticated` and are not executable by `anon`. An
+  unauthenticated or anonymous caller receives no live rows and no latest
+  player rows.
+- The live projection itself is unchanged: the same matches, the same
+  participants, the same scoring rules, and the same captain/vice policy. A
+  manager's own live row, the standings' live points, and the captain
+  breakdown shown next to a player's latest points all stay the same values.
+
+Apply `0025` and `0026` in the same maintenance window as the app release
+that depends on them. Verify after applying: a member sees their own live
+match points and their own captain breakdown; a second member sees only their
+own; an anonymous caller sees none; the standings still show every manager's
+live points; and the all-managers RPC is still unreachable from API roles.
+
+### One live projection per request (`0027`)
+
+Apply `0027_shared_live_projection.sql` after `0026`. It is a read-only
+change: it writes no rows and does not change official points, approval,
+saved lineups, or the values the live projection produces.
+
+- The latest player points and the captain contribution next to them used to
+  build the live projection twice per request. The projection is now built
+  once and shared, which makes the latest-player lookup about a quarter
+  faster and the dashboard's live reads about 15% faster.
+- The captain and vice-captain rules still live in one place. The manager
+  fan-out is a single implementation that both the caller-scoped lookup and
+  the standings table use.
+- The shared helpers are revoked from `public`, `anon` and `authenticated`;
+  they are internal to the database. `ff_my_live_match_points`,
+  `ff_latest_display_player_points` and `ff_display_player_points` keep the
+  same signatures, the same rows in the same order, and the same access rules.
+- A player's latest points and the captain's contribution for that player
+  still describe the same match, and the display rows and the latest rows
+  still agree on every player they share.
+
+Verify after applying: a member's pitch shows the same latest points and the
+same captain total as before; the points screen is unchanged; the standings
+still show every manager's live points; and the shared helpers are still
+unreachable from API roles.
+

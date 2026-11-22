@@ -37,7 +37,6 @@ type Data = {
   provisional?: boolean;
   standings: StandingRow[];
   history: HistoryRow[];
-  ledger: { profileId: string; matchId: string; points: string; computedAt: string }[];
   you: string;
 };
 

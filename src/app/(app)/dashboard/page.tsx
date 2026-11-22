@@ -23,9 +23,10 @@ import {
   Slate,
 } from "@/components/ui";
 import { Pitch } from "@/components/Pitch";
-import { PlayerPerformanceDialog, PlayerPointsLabel, useLatestPlayerGames } from "@/components/PlayerPerformance";
+import { PlayerPerformanceDialog, PlayerPointsLabel } from "@/components/PlayerPerformance";
 import { deriveFormation, FORMATIONS, orderedBench, type LeagueFormat } from "@/lib/domain";
 import type { LiveMatchPoints } from "@/lib/live-points";
+import type { LatestPlayerGames } from "@/lib/player-performance";
 import type { SquadEntry } from "@/lib/squad";
 import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
@@ -52,6 +53,7 @@ type DashboardData = {
     teamName: string | null;
   }[];
   liveMatches?: LiveMatchPoints[];
+  latestPlayerGames?: LatestPlayerGames;
   provisional?: boolean;
   myRank: number | null;
   lastGame: { matchId: string; title: string; points: number | null } | null;
@@ -226,7 +228,7 @@ export default function DashboardPage() {
 
         {/* ---- right rail ---- */}
         <div className="min-w-0 space-y-5">
-          <SquadPreview key={data.league.id} league={data.league} squad={data.squad} />
+          <SquadPreview key={data.league.id} league={data.league} squad={data.squad} latestPlayerGames={data.latestPlayerGames} />
 
           {/* fixtures */}
           <Panel className="p-4">
@@ -314,12 +316,13 @@ export default function DashboardPage() {
   );
 }
 
-function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">) {
+function SquadPreview({ league, squad, latestPlayerGames }: Pick<DashboardData, "league" | "squad" | "latestPlayerGames">) {
   const players = squad?.players ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = players.find((p) => p.id === selectedId);
-  const scores = useLatestPlayerGames(league.id, players);
-  const latest = scores.data ?? {};
+  // The latest points of the squad players arrive with the dashboard itself,
+  // so the pitch never waits for a second request.
+  const latest = latestPlayerGames ?? {};
   const formation = deriveFormation(league, players, squad?.formation);
   const bench = orderedBench(players);
   const hasBenchKeeper = bench.some((p) => p.position === "GK");
@@ -331,7 +334,6 @@ function SquadPreview({ league, squad }: Pick<DashboardData, "league" | "squad">
       </div>
       <Pitch compact players={players} formation={formation ?? FORMATIONS[league.format][0]} format={league.format}
         captainId={squad?.captainId ?? null} viceCaptainId={squad?.viceCaptainId ?? null} latest={latest} onSelect={setSelectedId} />
-      {scores.error ? <ErrorNote message={scores.error} onRetry={() => void scores.reload()} /> : scores.loading && <p role="status" className="mt-1 text-xs text-sage">Loading latest player points…</p>}
       {!squad ? <div className="mt-3 text-center">
         <p className="text-sm text-sage">You haven’t picked a squad in this league.</p>
         <Button href="/team/pick" size="sm" className="mt-2">Pick Your Squad <ChevronRight className="h-4 w-4" /></Button>
