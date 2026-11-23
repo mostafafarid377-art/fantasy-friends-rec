@@ -16,12 +16,11 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   // round trip in front of every standings page load.
   const [standingsResp, historyResp, membersResp] = await Promise.all([
     supabase.rpc("ff_display_standings", { p_league: id }).order("rank"),
-    supabase
-      .from("fantasy_points_history")
-      .select("*, real_matches(title, kick_off), profiles(username, display_name)")
-      .eq("league_id", id)
-      .order("created_at", { ascending: true })
-      .limit(200),
+    // The scoped RPC returns the same history rows (with the match title,
+    // kickoff and profile names already joined) that the direct table read
+    // returned, but checks the caller's membership once per request instead
+    // of once per scanned row.
+    supabase.rpc("ff_league_points_history", { p_league: id, p_limit: 200 }),
     // The standings row already carries the display name, username and
     // avatar, so only the team name and the role are still missing.
     supabase.from("league_members").select("profile_id,role,team_name").eq("league_id", id),
@@ -51,11 +50,11 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
       matchId: h.match_id,
       gameweek: h.gameweek,
       points: h.points,
-      matchTitle: h.real_matches?.title,
-      kickOff: h.real_matches?.kick_off,
+      matchTitle: h.match_title,
+      kickOff: h.kick_off,
       profileId: h.profile_id,
-      displayName: h.profiles?.display_name,
-      username: h.profiles?.username,
+      displayName: h.display_name,
+      username: h.username,
     })),
     you: membership.profileId,
   });

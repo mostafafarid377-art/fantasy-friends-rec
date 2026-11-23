@@ -2990,3 +2990,85 @@ describe("a saved preparation becomes the created fixture's lineup (real Postgre
     } finally { creator.release(); c.release(); }
   });
 });
+
+describe("scoped league reads for the points and standings screens (real PostgreSQL)", () => {
+  it("returns the same rows as the direct reads for members, and nothing for non-members", async () => {
+    const c = await freshClient();
+    let leagueId: string | undefined;
+    try {
+      const { league, match, home } = await recordedResultFixture(c);
+      leagueId = league.id;
+      await setAuthUid(c, userCId);
+      await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(),
+        JSON.stringify({ teamId: league.home, playerId: home[1], eventType: "goal", minute: 12 })]);
+      await sql(c, "SELECT public.write_match_event($1,$2,'event',$3)", [match, randomUUID(),
+        JSON.stringify({ teamId: league.home, playerId: home[2], eventType: "yellow_card", minute: 40 })]);
+      await submitScore(c, match, 2, 1);
+      await reachFixtureKickoff(match);
+      await approveScore(c, match);
+      // Two history rows that an approval batch would write with one timestamp.
+      await sql(admin, "INSERT INTO fantasy_points_history(id,league_id,profile_id,match_id,gameweek,points) VALUES ($1,$2,$3,$4,1,7),($5,$2,$6,$4,1,3)",
+        [randomUUID(), league.id, userAId, match, randomUUID(), userBId]);
+
+      await setAuthUid(c, userBId);
+      // League-wide events: exactly the rows and columns the direct read returned.
+      const all = await sql(c, "SELECT * FROM public.ff_league_match_events($1,null)", [league.id]);
+      const direct = await sql(c, "SELECT id,match_id,player_id,event_type,minute,assist_player_id FROM match_events WHERE league_id=$1", [league.id]);
+      expect(all.rows.map((r) => r.id).sort()).toEqual(direct.rows.map((r) => r.id).sort());
+      expect(all.rows).toHaveLength(2);
+      // Match-scoped events.
+      const one = await sql(c, "SELECT * FROM public.ff_league_match_events($1,$2)", [league.id, match]);
+      expect(one.rows.map((r) => r.id).sort()).toEqual(direct.rows.map((r) => r.id).sort());
+      // A match from another scope is empty, not an error.
+      expect((await sql(c, "SELECT * FROM public.ff_league_match_events($1,$2)", [league.id, randomUUID()])).rowCount).toBe(0);
+
+      // History: the same rows with the match and profile fields joined in.
+      const hist = await sql(c, "SELECT * FROM public.ff_league_points_history($1,200)", [league.id]);
+      expect(hist.rows).toHaveLength(2);
+      const byProfile = new Map(hist.rows.map((r) => [r.profile_id, r]));
+      expect(byProfile.get(userAId)).toMatchObject({ match_id: match, gameweek: 1, match_title: "Release match", username: "usera", display_name: "User A" });
+      expect(byProfile.get(userBId)).toMatchObject({ match_id: match, username: "userb" });
+      // The limit is clamped, not trusted.
+      expect((await sql(c, "SELECT * FROM public.ff_league_points_history($1,1)", [league.id])).rowCount).toBe(1);
+
+      // A signed-in non-member sees exactly what the row-level policies showed: nothing.
+      await setAuthUid(c, "99999999-9999-9999-9999-999999999999");
+      expect((await sql(c, "SELECT * FROM public.ff_league_match_events($1,null)", [league.id])).rowCount).toBe(0);
+      expect((await sql(c, "SELECT * FROM public.ff_league_points_history($1,200)", [league.id])).rowCount).toBe(0);
+    } finally { c.release(true); }
+
+    // Anonymous callers cannot execute the functions at all.
+    const anon = await pool.connect();
+    try {
+      await sql(anon, "SET ROLE anon");
+      await expect(sql(anon, "SELECT * FROM public.ff_league_match_events($1,null)", [leagueId])).rejects.toMatchObject({ code: "42501" });
+      await expect(sql(anon, "SELECT * FROM public.ff_league_points_history($1,200)", [leagueId])).rejects.toMatchObject({ code: "42501" });
+    } finally { anon.release(true); }
+  });
+
+  it("keeps the rewritten player history identical across finalized and open lineups", async () => {
+    const c = await freshClient();
+    try {
+      const { league, match, home } = await recordedResultFixture(c);
+      await submitScore(c, match, 1, 0);
+      await reachFixtureKickoff(match);
+      await approveScore(c, match);
+      // A second, still open match with a lineup row for the same player.
+      const open = await league.makeMatch();
+      await persistLineup(c, open, league.home, matchEntries(home.slice(0, 5), home.slice(5)));
+      await persistLineup(c, open, league.away, matchEntries(
+        await Promise.all(["GK", "DEF", "MID", "MID", "FWD"].map((pos, i) => league.makePlayer(pos, league.away, `Open away ${i}`)))));
+
+      await setAuthUid(c, userBId);
+      const rows = (await sql(c, "SELECT match_id,participation FROM public.player_finalized_games_with_logos($1,$2,20)", [league.id, home[1]])).rows;
+      // Only the approved match is listed; the open match is not finalized history.
+      expect(rows).toEqual([{ match_id: match, participation: "played" }]);
+      // The player on the open lineup still resolves through the direct base-table path.
+      const sub = (await sql(c, "SELECT match_id,participation FROM public.player_finalized_games_with_logos($1,$2,20)", [league.id, home[5]])).rows;
+      expect(sub).toEqual([{ match_id: match, participation: "did_not_play" }]);
+      // A non-member gets no history.
+      await setAuthUid(c, "99999999-9999-9999-9999-999999999999");
+      expect((await sql(c, "SELECT * FROM public.player_finalized_games_with_logos($1,$2,20)", [league.id, home[1]])).rowCount).toBe(0);
+    } finally { c.release(true); }
+  });
+});

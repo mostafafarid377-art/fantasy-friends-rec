@@ -53,6 +53,8 @@ function fixture() {
       last_game_points: [lastGame],
       ff_squad_deadline: { locked: false, kickOff: null, matchId: null, title: null, serverNow: "2026-02-01T17:00:00Z" },
       recent_fantasy_substitutions: [],
+      ff_league_points_history: [],
+      ff_league_match_events: [],
     },
     counts: { league_members: 1 },
   };
@@ -72,11 +74,11 @@ describe("read consolidation", () => {
     const res = await standingsGET(new NextRequest("http://local.test/api/leagues/league-a/standings"), standingsCtx);
     expect(res.status).toBe(200);
     expect(readNames(instrumented.reads)).toEqual([
-      "table:league_members", "rpc:ff_display_standings", "table:fantasy_points_history", "table:league_members",
+      "table:league_members", "rpc:ff_display_standings", "rpc:ff_league_points_history", "table:league_members",
     ]);
     // The member read must not wait for the standings and history to answer.
     expect(dispatchedTogether(instrumented.reads, [
-      "rpc:ff_display_standings", "table:fantasy_points_history", "table:league_members",
+      "rpc:ff_display_standings", "rpc:ff_league_points_history", "table:league_members",
     ])).toBe(true);
   });
 
@@ -101,6 +103,49 @@ describe("read consolidation", () => {
     expect(body.approvedRules).toBe(true);
     // The rule values themselves are not used by the screen.
     expect(body).not.toHaveProperty("rules");
+  });
+
+  it("attributes each event to its scorer and its assist player on the points screen", async () => {
+    instrumented = createInstrumentedClient({
+      ...fixture(),
+      tables: {
+        ...fixture().tables,
+        players: [
+          { id: "p-1", full_name: "Scorer", position: "FWD" },
+          { id: "p-2", full_name: "Creator", position: "MID" },
+          { id: "p-3", full_name: "Bystander", position: "DEF" },
+        ],
+      },
+      rpcs: {
+        ...fixture().rpcs,
+        ff_display_player_points: [
+          { match_id: "match-a", player_id: "p-1", title: "Match A", kick_off: "2026-02-01T18:00:00Z", status: "approved",
+            points: 4, breakdown: [], started: true, computed_at: "2026-02-01T20:00:00Z", provisional: false },
+          { match_id: "match-a", player_id: "p-2", title: "Match A", kick_off: "2026-02-01T18:00:00Z", status: "approved",
+            points: 3, breakdown: [], started: true, computed_at: "2026-02-01T20:00:00Z", provisional: false },
+          { match_id: "match-a", player_id: "p-3", title: "Match A", kick_off: "2026-02-01T18:00:00Z", status: "approved",
+            points: 1, breakdown: [], started: true, computed_at: "2026-02-01T20:00:00Z", provisional: false },
+        ],
+        ff_league_match_events: [
+          { id: "e-1", match_id: "match-a", player_id: "p-1", event_type: "goal", minute: 12, assist_player_id: "p-2" },
+          { id: "e-2", match_id: "match-a", player_id: "p-3", event_type: "yellow_card", minute: 55, assist_player_id: null },
+        ],
+      },
+    });
+    state.client = instrumented.client;
+    const res = await pointsGET(new NextRequest("http://local.test/api/leagues/league-a/points"), standingsCtx);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const rowsByPlayer = new Map<string, any>(body.rows.map((r: any) => [r.playerId, r]));
+    // The scorer sees the event as its own type...
+    expect(rowsByPlayer.get("p-1").events).toEqual([{ id: "e-1", type: "goal", minute: 12, assistPlayerId: "p-2" }]);
+    // ...the assist player sees the same event as an assist...
+    expect(rowsByPlayer.get("p-2").events).toEqual([{ id: "e-1", type: "assist", minute: 12, assistPlayerId: "p-2" }]);
+    // ...and a player with an unrelated event keeps only that one.
+    expect(rowsByPlayer.get("p-3").events).toEqual([{ id: "e-2", type: "yellow_card", minute: 55, assistPlayerId: null }]);
+    // Events come from the scoped league read, not a raw table scan.
+    expect(readNames(instrumented.reads)).toContain("rpc:ff_league_match_events");
+    expect(readNames(instrumented.reads)).not.toContain("table:match_events");
   });
 
   it("reads the kickoff of the last match from the same snapshot as its points", async () => {

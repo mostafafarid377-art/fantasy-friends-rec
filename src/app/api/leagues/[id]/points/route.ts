@@ -17,11 +17,27 @@ export const GET = handler(async (req: NextRequest, ctx: { params: Promise<{ id:
     // Only the approval state of the rules is shown on this screen, so the
     // rule table is read as a status column instead of as every rule value.
     sb.from("scoring_rules").select("status").eq("league_id", id),
-    matchId ? sb.from("match_events").select("id,match_id,player_id,event_type,minute,assist_player_id").eq("league_id", id).eq("match_id", matchId)
-      : sb.from("match_events").select("id,match_id,player_id,event_type,minute,assist_player_id").eq("league_id", id),
+    // The scoped RPC returns the same rows and columns the direct table read
+    // returned, but checks the caller's membership once per request instead of
+    // once per scanned row (row-level security stays as-is for direct reads).
+    matchId ? sb.rpc("ff_league_match_events", { p_league: id, p_match: matchId })
+      : sb.rpc("ff_league_match_events", { p_league: id }),
   ]);
   for (const result of [points, players, rules, events]) checkDb(result.error, "Could not load player points");
   const byPlayer = new Map((players.data ?? []).map((p) => [p.id, p]));
+  // Group the events once by (match, involved player); matching them per
+  // points row with a filter over the whole league history was quadratic.
+  type LeagueEvent = { id: string; match_id: string; player_id: string; event_type: string; minute: number | null; assist_player_id: string | null };
+  const eventsByPlayer = new Map<string, LeagueEvent[]>();
+  for (const e of (events.data ?? []) as LeagueEvent[]) {
+    const keys = [`${e.match_id}|${e.player_id}`];
+    if (e.assist_player_id && e.assist_player_id !== e.player_id) keys.push(`${e.match_id}|${e.assist_player_id}`);
+    for (const key of keys) {
+      const bucket = eventsByPlayer.get(key);
+      if (bucket) bucket.push(e);
+      else eventsByPlayer.set(key, [e]);
+    }
+  }
   const matches = new Map<string, { id: string; title: string; kickOff: string; status: string }>();
   const rows = ((points.data ?? []) as DisplayPlayerPoints[]).map((p) => {
     matches.set(p.match_id, { id: p.match_id, title: p.title, kickOff: p.kick_off, status: p.status });
@@ -30,7 +46,7 @@ export const GET = handler(async (req: NextRequest, ctx: { params: Promise<{ id:
       playerName: player?.full_name ?? "Unknown", position: player?.position ?? null, points: Number(p.points),
       started: p.started, computedAt: p.computed_at, provisional: p.provisional,
       breakdown: (Array.isArray(p.breakdown) ? p.breakdown : []).map((b) => ({ ...b, label: b.label ?? categoryLabel(b.category) })),
-      events: (events.data ?? []).filter((e) => e.match_id === p.match_id && (e.player_id === p.player_id || e.assist_player_id === p.player_id))
+      events: (eventsByPlayer.get(`${p.match_id}|${p.player_id}`) ?? [])
         .map((e) => ({ id: e.id, type: e.player_id === p.player_id ? e.event_type : "assist", minute: e.minute, assistPlayerId: e.assist_player_id })),
     };
   });
