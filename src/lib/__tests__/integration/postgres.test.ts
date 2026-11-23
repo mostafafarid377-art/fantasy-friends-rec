@@ -1972,13 +1972,20 @@ it("prepares a private lineup without a fixture and attaches it once without upd
     const otherLeague = await releaseLeague(c,5);
     const unrelated = await otherLeague.makeMatch();
     expect((await sql(admin,"SELECT 1 FROM fantasy_match_lineup_drafts WHERE match_id=$1",[unrelated])).rowCount).toBe(0);
-    // An already-started fixture logged later is not a future scheduled match.
+    // An already-started fixture logged later is the fixture the preparation
+    // was waiting for: it attaches at creation as that fixture's own draft
+    // and is the lineup in play from then on.
     const past = randomUUID();
     await sql(c, "SELECT create_real_match($1,$2,$3,$4,'Past fixture',clock_timestamp(),null)",
       [past,league.id,league.home,league.away]);
     await setAuthUid(c,userAId);
-    expect(await view()).toMatchObject({match:{id:past,locked:true},saved:null,preparation:{revision:prepared.revision,lineup:prepared.lineup},canPrepare:true});
-    const revised = await prepare(prepared.revision);
+    expect(await view()).toMatchObject({match:{id:past,locked:true},
+      saved:{revision:prepared.revision,lineup:prepared.lineup},preparation:null,canPrepare:true,
+      inPlay:{matchId:past,source:"saved",lineup:prepared.lineup}});
+    expect((await sql(admin,"SELECT lineup,updated_at AS revision FROM fantasy_match_lineup_drafts WHERE match_id=$1 AND profile_id=$2",[past,userAId])).rows)
+      .toEqual([{lineup:prepared.lineup,revision:new Date(prepared.revision)}]);
+    expect((await sql(admin,"SELECT 1 FROM fantasy_next_lineup_preparations WHERE league_id=$1",[league.id])).rowCount).toBe(0);
+    const revised = await prepare(null);
     await setAuthUid(c,userCId);
     const next = await league.makeMatch();
     const following = await league.makeMatch();
@@ -2836,5 +2843,150 @@ describe("the lineup deadline runner (real PostgreSQL)", () => {
       expect((await sql(admin, "SELECT count(*)::int AS n FROM lineup_deadline_failures WHERE match_id=$1",
         [match])).rows[0].n).toBe(0);
     } finally { c.release(); }
+  });
+});
+
+describe("a saved preparation becomes the created fixture's lineup (real PostgreSQL)", () => {
+  const picksOf = (home: string[]) => matchEntries(home.slice(0, 5), home.slice(5, 8))
+    .map(({ player_id, ...rest }) => ({ id: player_id, ...rest }));
+  const prepare = (c: PoolClient, league: string, captain: string, vice: string, picks: ReturnType<typeof picksOf>) =>
+    sql(c, "SELECT public.ff_save_next_match_lineup($1,null,'1-2-1',$2,$3,null,$4) AS saved",
+      [league, captain, vice, JSON.stringify(picks)]);
+  const preparations = (league: string) => sql(admin,
+    "SELECT count(*)::int AS n FROM fantasy_next_lineup_preparations WHERE league_id=$1", [league]);
+  const drafts = async (match: string) => (await sql(admin,
+    "SELECT profile_id,lineup,updated_at AS revision FROM fantasy_match_lineup_drafts WHERE match_id=$1", [match])).rows;
+
+  it("locks in the saved preparation for a fixture that is created when it starts, never the inherited lineup", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, away, saveSquad, play } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const first = await league.makeMatch();
+      await play(first);
+      const inherited = await history(first);
+      expect(inherited).toMatchObject({ captainId: home[1], viceId: home[2] });
+
+      // No fixture is scheduled, so the manager's changed lineup for the next
+      // match is a preparation (the production scenario).
+      const picks = picksOf(home);
+      await setAuthUid(c, userAId);
+      const prepared = (await prepare(c, league.id, home[3], home[4], picks)).rows[0].saved;
+      expect(prepared.lineup).toMatchObject({ captainId: home[3], viceId: home[4] });
+      expect((await preparations(league.id)).rows[0].n).toBe(1);
+
+      // The fixture appears when it starts: created with its kickoff already
+      // reached. The preparation becomes the fixture's own draft in the same
+      // transaction, before any promotion can run, and is consumed.
+      const started = randomUUID();
+      await setAuthUid(c, userCId);
+      await sql(c, "SELECT public.create_real_match($1,$2,$3,$4,'Started on creation',clock_timestamp(),null)",
+        [started, league.id, league.home, league.away]);
+      expect(await drafts(started)).toEqual([{ profile_id: userAId, lineup: prepared.lineup, revision: new Date(prepared.revision) }]);
+      expect((await preparations(league.id)).rows[0].n).toBe(0);
+
+      // The deadline locks in the preparation, not the inherited previous lineup.
+      const run = (await sql(admin, "SELECT public.ff_promote_due_match_lineups('test') AS result")).rows[0].result;
+      expect(run.promoted).toBeGreaterThan(0);
+      const locked = await history(started);
+      expect(locked).toEqual(prepared.lineup);
+      expect(locked).not.toEqual(inherited);
+
+      // Repeated deadline runs never duplicate or change the locked lineup.
+      await sql(admin, "SELECT public.ff_promote_due_match_lineups('test')");
+      expect(await history(started)).toEqual(locked);
+      expect((await sql(admin, "SELECT count(*)::int AS n FROM fantasy_match_lineup_history WHERE match_id=$1", [started])).rows[0].n).toBe(1);
+
+      // The interface shows the locked preparation as the lineup in play.
+      await setAuthUid(c, userAId);
+      const view = (await sql(c, "SELECT ff_next_match_lineup($1) AS result", [league.id])).rows[0].result;
+      expect(view.inPlay).toMatchObject({ matchId: started, source: "official", lineup: locked });
+
+      // The next fixture does not reuse the preparation: with nothing saved
+      // for it, it inherits the exact previous official lineup as usual.
+      const second = await league.makeMatch();
+      expect(await drafts(second)).toEqual([]);
+      await reachFixtureKickoff(second);
+      await sql(admin, "SELECT public.ff_promote_due_match_lineups('test')");
+      expect(await history(second)).toEqual(locked);
+      expect(away.length).toBeGreaterThan(0);
+    } finally { c.release(); }
+  });
+
+  it("never consumes a preparation for a backfilled fixture", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, saveSquad, play } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const first = await league.makeMatch();
+      await play(first);
+
+      const picks = picksOf(home);
+      await setAuthUid(c, userAId);
+      const prepared = (await prepare(c, league.id, home[3], home[4], picks)).rows[0].saved;
+
+      // A fixture backfilled for the record is older than the played one: it
+      // is a record being entered, not the next match.
+      const backfill = randomUUID();
+      await setAuthUid(c, userCId);
+      await sql(c, "SELECT public.create_real_match($1,$2,$3,$4,'Backfilled result',clock_timestamp()-interval '2 days',null)",
+        [backfill, league.id, league.home, league.away]);
+      expect(await drafts(backfill)).toEqual([]);
+      expect((await preparations(league.id)).rows[0].n).toBe(1);
+
+      // The backfilled fixture is promoted from the squad; the preparation is untouched.
+      await sql(admin, "SELECT public.ff_promote_due_match_lineups('test')");
+      expect((await history(backfill)).captainId).toBe(home[1]);
+      expect((await preparations(league.id)).rows[0].n).toBe(1);
+
+      // The real next fixture still receives the preparation, exactly once.
+      const upcoming = await league.makeMatch();
+      expect(await drafts(upcoming)).toEqual([{ profile_id: userAId, lineup: prepared.lineup, revision: new Date(prepared.revision) }]);
+      expect((await preparations(league.id)).rows[0].n).toBe(0);
+    } finally { c.release(); }
+  });
+
+  it("serializes a fixture creation against a preparation save for the same league", async () => {
+    const c = await freshClient();
+    const creator = await pool.connect();
+    await sql(creator, "RESET ROLE");
+    try {
+      const { league, home, saveSquad, play } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const first = await league.makeMatch();
+      await play(first);
+      const picks = picksOf(home);
+
+      // The creation holds the league's deadline lock from its first trigger.
+      await setAuthUid(creator, userCId);
+      await sql(creator, "begin");
+      const created = randomUUID();
+      await sql(creator, "SELECT public.create_real_match($1,$2,$3,$4,'Created during a save',clock_timestamp()+interval '1 hour',null)",
+        [created, league.id, league.home, league.away]);
+
+      // The save blocks on the same lock until the creation commits...
+      await setAuthUid(c, userAId);
+      const saving = prepare(c, league.id, home[3], home[4], picks);
+      const until = Date.now() + 8000;
+      while (Date.now() < until) {
+        const { rows } = await sql(admin, "SELECT count(*)::int AS n FROM pg_locks WHERE locktype='advisory' AND NOT granted");
+        if (rows[0].n > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (Date.now() >= until) throw new Error("The preparation save never waited for the creation");
+      }
+      await sql(creator, "commit");
+
+      // ...and is then refused, because the next match now exists: the manager
+      // reloads onto a proper match-specific draft instead of a preparation.
+      await expect(saving).rejects.toMatchObject({ code: "PT409" });
+      expect((await preparations(league.id)).rows[0].n).toBe(0);
+      const saved = (await sql(c, "SELECT public.ff_save_next_match_lineup($1,$2,'1-2-1',$3,$4,null,$5) AS saved",
+        [league.id, created, home[3], home[4], JSON.stringify(picks)])).rows[0].saved;
+      expect(saved.matchId).toBe(created);
+      expect(await drafts(created)).toEqual([{ profile_id: userAId, lineup: saved.lineup, revision: new Date(saved.revision) }]);
+    } finally { creator.release(); c.release(); }
   });
 });

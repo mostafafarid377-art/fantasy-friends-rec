@@ -208,5 +208,27 @@ assert.deepEqual([...new Set(sweepWrites)].sort(), ['lineup_deadline_failures', 
 assert.match(sweep, /revoke all on function public\.ff_promote_due_match_lineups\(text\) from public,anon,authenticated/i,
   'the sweep must stay internal to the database');
 
+// Migration 0032: a preparation is consumed by the fixture that is created
+// next, even when that fixture is created when it starts — and never by a
+// backfilled one. The resolver must not learn to read preparations: the
+// association into a match-specific draft at creation is the fix.
+const attach = read('./supabase/migrations/0032_preparation_attach_on_creation.sql');
+assert.doesNotMatch(attach, /ff_effective_fantasy_lineups/i,
+  'the resolver must stay untouched: a league-level preparation names no fixture');
+assert.match(attach, /create or replace function public\.ff_attach_prepared_fantasy_lineups\(\) returns trigger/i,
+  'the fix is the attach trigger of migration 0022, replaced');
+assert.doesNotMatch(attach, /new\.kick_off\s*>\s*clock_timestamp\(\)/i,
+  'a fixture created when it starts must still consume the league’s preparations');
+assert.match(attach, /not exists \(select 1 from public\.real_matches/i,
+  'a backdated fixture must never consume a preparation');
+const attachWrites = [...attach.matchAll(/(?:insert\s+into|update|delete\s+from)\s+public\.(\w+)/gi)].map((m) => m[1]);
+assert.deepEqual([...new Set(attachWrites)].sort(), ['fantasy_match_lineup_drafts', 'fantasy_next_lineup_preparations'],
+  'the attach may only move a preparation into the new fixture’s drafts');
+assert.doesNotMatch(attach, /\b(drop|truncate)\s+table\b/i, 'the attach migration must never drop a table');
+assert.doesNotMatch(attach, /fantasy_match_lineup_history/i,
+  'the attach migration must never touch a lineup that is already locked in');
+assert.doesNotMatch(attach, /create\s+trigger/i,
+  'the trigger already exists from 0022: replacing the function body is the whole change');
+
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');
