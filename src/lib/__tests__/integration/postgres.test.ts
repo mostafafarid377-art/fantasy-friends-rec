@@ -2755,18 +2755,58 @@ describe("the lineup deadline runner (real PostgreSQL)", () => {
       expect(failure.resolved_at).toBeNull();
       expect(failure.attempts).toBeGreaterThan(0);
 
-      // Every run leaves a trail, and the trail says where the run came from.
-      const run = (await sql(admin, "SELECT source,matches_scanned,promoted,failed FROM lineup_deadline_runs ORDER BY id DESC LIMIT 1")).rows[0];
+      // Every run leaves a trail, and the trail says where the run came from
+      // and which fixtures it scanned.
+      const run = (await sql(admin, "SELECT source,matches_scanned,promoted,failed,match_ids FROM lineup_deadline_runs ORDER BY id DESC LIMIT 1")).rows[0];
       expect(run.source).toBe("test");
+      expect(run.match_ids).toContain(match);
       const last = (await sql(admin, "SELECT public.ff_last_lineup_deadline_run() AS run")).rows[0].run;
       expect(last.source).toBe("test");
+      expect(last.matchIds).toContain(match);
 
-      // And the deadline can say how it is doing.
+      // And the deadline can say how it is doing, and name the fixtures it is
+      // working on. This one is still waiting for a lineup that can be used.
       const status = (await sql(admin, "SELECT public.ff_lineup_deadline_status() AS status")).rows[0].status;
       expect(status.lastRun.source).toBe("test");
       expect(Number(status.ageSeconds)).toBeGreaterThanOrEqual(0);
       expect(Number(status.openFailures)).toBeGreaterThan(0);
       expect([true, false, null]).toContain(status.scheduledInDatabase);
+      const due = status.dueMatches.find((m: { id: string }) => m.id === match);
+      expect(due).toMatchObject({ id: match, leagueId: league.id, promoted: false });
+    } finally { c.release(); }
+  });
+
+  it("locks in a fixture that has waited longer than a fortnight and names it in the trail", async () => {
+    const c = await freshClient();
+    try {
+      const { league, home, saveSquad } = await lifecycleFixture(c);
+      await setAuthUid(c, userAId);
+      await saveSquad(home[1], home[2]);
+      const match = await league.makeMatch();
+      // The result was still not approved twenty days after kickoff. The old
+      // fourteen-day window passed such a fixture by in silence: never
+      // scanned, never locked in, never recorded as a failure.
+      await sql(admin, "UPDATE real_matches SET kick_off=clock_timestamp()-interval '20 days' WHERE id=$1", [match]);
+      const expected = await effective(match);
+      expect(expected).toMatchObject({ captainId: home[1], viceId: home[2] });
+
+      const run = (await sql(admin, "SELECT public.ff_promote_due_match_lineups('test') AS result")).rows[0].result;
+      expect(run.matchIds).toContain(match);
+      expect(await history(match)).toEqual(expected);
+
+      // The trail names the fixture it scanned.
+      const row = (await sql(admin, "SELECT match_ids FROM lineup_deadline_runs ORDER BY id DESC LIMIT 1")).rows[0];
+      expect(row.match_ids).toContain(match);
+
+      // The status names it too, and says it is locked in now.
+      const status = (await sql(admin, "SELECT public.ff_lineup_deadline_status() AS status")).rows[0].status;
+      expect(status.dueMatches.find((m: { id: string }) => m.id === match))
+        .toMatchObject({ id: match, leagueId: league.id, promoted: true });
+
+      // A rerun changes nothing and still names the fixture.
+      const again = (await sql(admin, "SELECT public.ff_promote_due_match_lineups('test') AS result")).rows[0].result;
+      expect(again.matchIds).toContain(match);
+      expect(await history(match)).toEqual(expected);
     } finally { c.release(); }
   });
 
