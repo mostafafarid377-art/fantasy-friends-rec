@@ -58,6 +58,26 @@ assert.match(sharedLive, /select jsonb_agg\(to_jsonb\(l\)\) as j from public\.ff
   'the latest lookup must build one live projection and share it');
 assert.doesNotMatch(sharedLive, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\./i, 'migrations must not drop/truncate/delete application data');
 
+// The hot-read consolidation: the scoped league reads are security definer
+// entry points that verify membership inside, stay callable by signed-in
+// members, and stay out of reach of anonymous clients.
+const hotReads = read('./supabase/migrations/0033_perf_hot_reads.sql');
+assert.match(hotReads, /create function public\.ff_league_match_events\(p_league text, p_match text default null\)[\s\S]*?security definer/i,
+  'the league events read must be a scoped security definer function');
+assert.match(hotReads, /create function public\.ff_league_points_history\(p_league text, p_limit int default 200\)[\s\S]*?security definer/i,
+  'the league history read must be a scoped security definer function');
+assert.match(hotReads, /where e\.league_id=p_league and \(p_match is null or e\.match_id=p_match\) and public\.is_member\(p_league\)/i,
+  'the league events read must verify membership and stay match-scoped when asked');
+assert.match(hotReads, /where h\.league_id=p_league and public\.is_member\(p_league\)/i,
+  'the league history read must verify membership');
+assert.match(hotReads, /revoke all on function public\.ff_league_match_events\(text,text\),\s*public\.ff_league_points_history\(text,int\) from public,anon/i,
+  'the scoped league reads must not be executable by anonymous clients');
+assert.match(hotReads, /grant execute on function public\.ff_league_match_events\(text,text\),\s*public\.ff_league_points_history\(text,int\) to authenticated/i,
+  'the scoped league reads must stay executable by authenticated members');
+assert.match(hotReads, /not exists \(select 1 from public\.finalized_match_lineups f\s+where f\.match_id = l\.match_id and f\.league_id = l\.league_id\)/i,
+  'player history must keep excluding finalized matches from the open lineup branch');
+assert.doesNotMatch(hotReads, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\./i, 'migrations must not drop/truncate/delete application data');
+
 // The lineup lifecycle: one resolver for the lineup of a match, an idempotent
 // deadline promotion, and captaincy on every lineup a manager writes.
 const lifecycle = read('./supabase/migrations/0028_lineup_lifecycle.sql');

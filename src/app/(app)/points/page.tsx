@@ -63,8 +63,16 @@ function PointsInner() {
     );
   if (!data) return null;
 
+  // Group the rows once; matching them per match with a filter over the whole
+  // history was quadratic on leagues with a long history.
+  const rowsByMatch = new Map<string, Row[]>();
+  for (const row of data.rows) {
+    const bucket = rowsByMatch.get(row.matchId);
+    if (bucket) bucket.push(row);
+    else rowsByMatch.set(row.matchId, [row]);
+  }
   const grouped = data.matches
-    .map((m) => ({ match: m, rows: data.rows.filter((r) => r.matchId === m.id) }))
+    .map((m) => ({ match: m, rows: rowsByMatch.get(m.id) ?? [] }))
     .filter((g) => g.rows.length);
 
   return (
