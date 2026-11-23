@@ -186,5 +186,27 @@ const runnerDeletes = [...runner.matchAll(/delete\s+from\s+public\.(\w+)/gi)].ma
 assert.deepEqual([...new Set(runnerDeletes)].sort(), ['lineup_deadline_failures', 'lineup_deadline_runs'],
   'the deadline runner may only prune its own audit tables');
 
+// Migration 0031: a fixture that is still waiting for its result must never
+// fall out of the sweep in silence, and the trail must name the fixtures it
+// works on.
+const sweep = read('./supabase/migrations/0031_deadline_sweep_no_window.sql');
+assert.doesNotMatch(sweep, /interval '14 days'/i,
+  'the sweep must not abandon a fixture that has waited longer than a fortnight');
+assert.match(sweep, /alter table public\.lineup_deadline_runs add column match_ids text\[\]/i,
+  'the run row must name the fixtures it scanned');
+assert.match(sweep, /matchIds/i,
+  'the run result and the status must name the fixtures they scanned');
+assert.match(sweep, /dueMatches/i,
+  'the deadline status must name the fixtures the next sweep will scan');
+assert.doesNotMatch(sweep, /\b(drop|truncate)\s+table\b/i,
+  'the sweep migration must never drop a table');
+assert.doesNotMatch(sweep, /delete\s+from\s+public\.fantasy_match_lineup_history/i,
+  'the sweep migration must never rewrite a lineup that is already locked in');
+const sweepWrites = [...sweep.matchAll(/(?:insert\s+into|update|delete\s+from)\s+public\.(\w+)/gi)].map((m) => m[1]);
+assert.deepEqual([...new Set(sweepWrites)].sort(), ['lineup_deadline_failures', 'lineup_deadline_runs'],
+  'the sweep migration may only write the runner’s own audit tables');
+assert.match(sweep, /revoke all on function public\.ff_promote_due_match_lineups\(text\) from public,anon,authenticated/i,
+  'the sweep must stay internal to the database');
+
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');
