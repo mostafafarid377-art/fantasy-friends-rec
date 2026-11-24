@@ -9,3 +9,8 @@ node_modules/
 supabase/.temp/
 *.tsbuildinfo
 perf-results/
+
+# Playwright E2E artifacts + session material (never commit)
+test-results/
+playwright-report/
+e2e/.auth/
