@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
+import { stopAppRefreshes } from "@/lib/client/refresh";
 
 export type SessionUser = {
   id: string;
@@ -205,6 +206,10 @@ export function useSession(initial: SessionPayload) {
   }, []);
   const logout = useCallback(async () => {
     await api("/api/auth/logout", { method: "POST" });
+    // Stop the refresh coordinator before clearing state: a poll tick or
+    // focus event landing after the cookies are gone would fire authenticated
+    // reads (e.g. /api/me) that can only fail with a 401.
+    stopAppRefreshes();
     generation.current++;
     setOperationActor(null);
     setData({ user: null, leagues: [], unread: 0 });
