@@ -27,22 +27,34 @@ const previewEnabled = process.env.NODE_ENV === "development" && process.env.LIN
  * - script-src and frame-src additionally allow challenges.cloudflare.com,
  *   the only host Cloudflare Turnstile loads its script and challenge iframe
  *   from (see src/components/TurnstileChallenge.tsx). Nothing else changes.
+ * - script-src adds 'unsafe-eval' in DEVELOPMENT only: the dev bundler
+ *   (Turbopack, and webpack before it) executes module chunks through eval(),
+ *   and React's development build probes eval() availability. Without it the
+ *   browser blocks every client chunk, hydration never runs, and forms fall
+ *   back to native GET submission — which leaks credentials into the URL.
+ *   Production bundles contain no eval(), so the production policy stays
+ *   unchanged. This is the split the Next.js CSP documentation prescribes.
  */
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
-  "frame-src https://challenges.cloudflare.com",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self' https://*.supabase.co https://accounts.google.com",
-  "frame-ancestors 'self'",
-  "manifest-src 'self'",
-  "worker-src 'self'",
-].join("; ");
+export function buildContentSecurityPolicy(isDev: boolean): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""} https://challenges.cloudflare.com`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+    "frame-src https://challenges.cloudflare.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self' https://*.supabase.co https://accounts.google.com",
+    "frame-ancestors 'self'",
+    "manifest-src 'self'",
+    "worker-src 'self'",
+  ].join("; ");
+}
+
+const isDev = process.env.NODE_ENV === "development";
+const contentSecurityPolicy = buildContentSecurityPolicy(isDev);
 
 const securityHeaders = [
   { key: "Content-Security-Policy", value: contentSecurityPolicy },

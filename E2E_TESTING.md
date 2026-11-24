@@ -106,6 +106,13 @@ so files are independent and reruns never collide.
   the disposable project, or `E2E_BASE_URL` points elsewhere.
 - **Setup: "login failed"** — the app is not pointed at the disposable
   Supabase project (the seeded users don't exist there). Check `.env.local`.
+- **Forms submit natively (credentials visible in the page URL, e.g.
+  `/login?email=…&password=…`), buttons do nothing, pages render but never
+  hydrate** — client JavaScript is not executing at all. The development CSP
+  in `next.config.ts` includes `'unsafe-eval'` precisely because the dev
+  bundler and React's development build require it; if you overrode the CSP
+  locally or run behind a stripping proxy, restore it. Check the browser
+  console for `Content-Security-Policy` eval errors.
 - **J02-style flakes on slow machines** — the "no request" probe uses a
   1.5s window; increase the timeout in `auth.spec.ts` if needed.
 - **429 responses** — you reran the suite many times within an hour; the

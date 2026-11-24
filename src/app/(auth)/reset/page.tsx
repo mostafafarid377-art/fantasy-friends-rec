@@ -56,7 +56,10 @@ function ResetForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-5" noValidate>
+    // method="post" matters only if client JS never runs: the native fallback
+    // must never be a GET, which would serialize the new password into the
+    // URL, browser history and referer headers.
+    <form method="post" onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-5" noValidate>
       {error && (
         <div className="rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3 text-sm text-chalk">{error}</div>
       )}

@@ -69,7 +69,10 @@ export default function ForgotPasswordPage() {
           </div>
         </div>
       ) : (
-        <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-5" noValidate>
+        /* method="post" matters only if client JS never runs: the native
+           fallback must never be a GET, which would serialize the email into
+           the URL, browser history and referer headers. */
+        <form method="post" onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-5" noValidate>
           <p className="text-[14.5px] leading-relaxed text-sage">
             Enter the address you registered with and we will send a link to set a new password.
           </p>

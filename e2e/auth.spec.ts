@@ -44,6 +44,9 @@ test.describe("journeys J01–J08, J19 — auth", () => {
   test("J04 sign in with valid credentials lands on the dashboard", async ({ page }) => {
     await uiSignIn(page, E2E_USERS.leader);
     await expect(page.getByRole("heading", { name: /Matchday HQ/i })).toBeVisible();
+    // Regression lock: credentials must never be serialized into the URL.
+    expect(page.url()).not.toContain("password");
+    expect(page.url()).not.toContain(encodeURIComponent(E2E_USERS.leader.email));
   });
 
   test("J05 wrong password shows one non-enumerating error and stays on /login", async ({ page }) => {
@@ -53,6 +56,10 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByRole("alert")).toContainText("Incorrect email or password");
     await expect(page).toHaveURL(/\/login/);
+    // Regression lock: a failed attempt must not leak the submitted
+    // credentials into the URL (native GET fallback would put them there).
+    expect(page.url()).not.toContain("password");
+    expect(page.url()).not.toContain(encodeURIComponent(E2E_USERS.manager.email));
   });
 
   test("J06 forgot password answers unknown emails identically (no enumeration)", async ({ page }) => {

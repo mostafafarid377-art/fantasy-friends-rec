@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import nextConfig from "@/../next.config";
+import nextConfig, { buildContentSecurityPolicy } from "@/../next.config";
 
 // The production security headers come from next.config.ts. This guards the
 // baseline so a future config change cannot silently drop a header that
@@ -84,5 +84,51 @@ describe("security headers (production config)", () => {
     }
     expect(script).toContain("'self'");
     expect(script).not.toMatch(/script-src\s+\*/);
+  });
+});
+
+describe("content-security-policy development split (buildContentSecurityPolicy)", () => {
+  // Regression coverage for the E2E dev-server failure: the dev bundler
+  // (Turbopack/webpack) executes module chunks via eval() and React's
+  // development build probes eval() at startup. A dev CSP without
+  // 'unsafe-eval' therefore kills every client chunk, hydration never
+  // happens, and forms fall back to native GET submission — which serialized
+  // credentials into the URL (observed as /login?email=…&password=…).
+  // Production bundles contain no eval(), so production stays strict.
+
+  it("development policy allows eval (dev bundler + React dev require it)", () => {
+    const csp = buildContentSecurityPolicy(true);
+    const script = csp.split("; ").find((d) => d.startsWith("script-src"))!;
+    expect(script).toContain("'unsafe-eval'");
+  });
+
+  it("production policy stays free of eval", () => {
+    const csp = buildContentSecurityPolicy(false);
+    const script = csp.split("; ").find((d) => d.startsWith("script-src"))!;
+    expect(script).not.toContain("unsafe-eval");
+    expect(csp).not.toContain("unsafe-eval");
+  });
+
+  it("dev and production policies differ ONLY in script-src 'unsafe-eval'", () => {
+    const dev = buildContentSecurityPolicy(true).split("; ");
+    const prod = buildContentSecurityPolicy(false).split("; ");
+    expect(dev.length).toBe(prod.length);
+    for (let i = 0; i < prod.length; i++) {
+      if (prod[i].startsWith("script-src")) {
+        expect(dev[i].replace(" 'unsafe-eval'", "")).toBe(prod[i]);
+      } else {
+        expect(dev[i]).toBe(prod[i]);
+      }
+    }
+  });
+
+  it("the exported (non-test) config ships the production policy", async () => {
+    // vitest runs with NODE_ENV=test, so the exported config takes the
+    // production branch — this pins the production policy byte-for-byte
+    // against the builder so the two can never drift apart.
+    const blocks = await (nextConfig as any).headers();
+    const all = blocks.find((b: any) => b.source === "/:path*");
+    const csp = String(all.headers.find((h: any) => h.key === "Content-Security-Policy").value);
+    expect(csp).toBe(buildContentSecurityPolicy(false));
   });
 });

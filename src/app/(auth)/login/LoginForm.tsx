@@ -71,7 +71,10 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
         </div>
       )}
       {googleStartToken && <GoogleSignIn next={next} startToken={googleStartToken} />}
-      <form onSubmit={handleSubmit(onSubmit)} className={`${googleStartToken ? "mt-5" : "mt-8"} space-y-5`} noValidate>
+      {/* method="post" matters only if client JS never runs: the native
+          fallback must never be a GET, which would serialize the credentials
+          into the URL, browser history and referer headers. */}
+      <form method="post" onSubmit={handleSubmit(onSubmit)} className={`${googleStartToken ? "mt-5" : "mt-8"} space-y-5`} noValidate>
         <Field label="Email" error={errors.email?.message}>
           <TextInput type="email" autoComplete="email" placeholder="you@example.com" {...register("email")} />
         </Field>

@@ -112,7 +112,10 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
           <Link href={next === "/dashboard" ? "/login" : `/login?${new URLSearchParams({ next })}`} className="mt-4 inline-flex text-green underline underline-offset-4">Return to sign in</Link>
         </div>
       ) : (
-        <form onSubmit={handleSubmit(onSubmit)} className={`${googleStartToken ? "mt-5" : "mt-8"} space-y-5`} noValidate>
+        /* method="post" matters only if client JS never runs: the native
+           fallback must never be a GET, which would serialize the credentials
+           into the URL, browser history and referer headers. */
+        <form method="post" onSubmit={handleSubmit(onSubmit)} className={`${googleStartToken ? "mt-5" : "mt-8"} space-y-5`} noValidate>
           {serverError && (
             <div className="rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3 text-sm text-chalk">
               {serverError}
