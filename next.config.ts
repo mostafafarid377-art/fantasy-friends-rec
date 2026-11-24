@@ -13,9 +13,17 @@ const previewEnabled = process.env.NODE_ENV === "development" && process.env.LIN
  *   by a server redirect, so it needs no CSP allowance.
  * - img-src allows https avatars/crests (Google profile pictures) and data/blob
  *   URLs used by local previews before upload.
- * - frame-ancestors 'self' stops the app from being framed cross-origin
- *   (clickjacking). X-Frame-Options SAMEORIGIN says the same thing to browsers
- *   without CSP support.
+ * - form-action allows the app's own forms plus the two hosts in the Google
+ *   sign-in redirect chain. The Google button is a real same-origin form POST
+ *   to /api/auth/google, which answers 303 to the Supabase authorize endpoint
+ *   (https://*.supabase.co, the app's own auth backend — same scoping as
+ *   connect-src), which in turn redirects to https://accounts.google.com.
+ *   Chromium enforces form-action against every hop of that redirect chain
+ *   (Firefox does not), so 'self' alone blocked Google sign-in in Chromium
+ *   with "Sending form data to '<app origin>/api/auth/google' violates …
+ *   form-action 'self'" — the message names the form action, not the blocked
+ *   redirect target. No other form in the app posts cross-origin, so no other
+ *   destination is allowed.
  */
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -26,7 +34,7 @@ const contentSecurityPolicy = [
   "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
   "object-src 'none'",
   "base-uri 'self'",
-  "form-action 'self'",
+  "form-action 'self' https://*.supabase.co https://accounts.google.com",
   "frame-ancestors 'self'",
   "manifest-src 'self'",
   "worker-src 'self'",
