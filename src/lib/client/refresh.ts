@@ -72,8 +72,7 @@ function schedule() {
   if (timer) {
     clearTimeout(timer);
     timer = null;
-  }
-  if (typeof window === "undefined") return;
+  }  if (typeof window === "undefined") return;
   const now = Date.now();
   let next = Infinity;
   for (const subscriber of subscribers.values()) {
@@ -101,6 +100,22 @@ function release() {
   listening = false;
   window.removeEventListener("focus", wake);
   document.removeEventListener("visibilitychange", wake);
+}
+
+/**
+ * Disarms the shared timer and drops every subscriber. Called on sign-out so
+ * no authenticated read (poll tick or focus refresh) can fire in the window
+ * between the session cookies being cleared and the signed-in tree
+ * unmounting — such a request would correctly fail with a 401, and a client
+ * that knows it signed out should not issue it at all.
+ */
+export function stopAppRefreshes() {
+  subscribers.clear();
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  release();
 }
 
 /**

@@ -62,6 +62,14 @@ it("rejects a request without a session", async () => {
   db.getUser.mockResolvedValue({ data: null, error: { message: "no session" } });
   expect((await notificationsRequest()).status).toBe(401);
   expect((await standingsRequest()).status).toBe(401);
+  // /api/me after sign-out: 401 is the correct, intentional answer — and the
+  // body must carry only a generic error string, never profile data.
+  const meResponse = await meRequest();
+  expect(meResponse.status).toBe(401);
+  const body = await meResponse.json();
+  expect(typeof body.error).toBe("string");
+  expect(body).not.toHaveProperty("profile");
+  expect(body).not.toHaveProperty("email");
 });
 
 it("rejects an expired token even when the profile claims look valid", async () => {
