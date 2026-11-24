@@ -23,6 +23,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({
 
 const app = "https://fantasy.example.test";
 const production = "https://fantasy-friends-rec.vercel.app";
+const canonical = "https://fantasyfriends.vercel.app";
 const navigation = { "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
 const project = "https://example-project.supabase.co";
 const returnTo = "/matches/example?panel=events#score";
@@ -184,6 +185,28 @@ describe("Google OAuth", () => {
     expect((await finish("code=valid-code", "a".repeat(32) + ":/dashboard", production)).headers.get("location")).toBe("/login?auth_error=google_unavailable");
     expect(writes).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it.each([canonical, production])("enables Google sign-in end-to-end on production host %s", async (host) => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    // Regression guard for the domain migration: a visitor on either known
+    // production host must receive the start token, start PKCE against the
+    // matching callback, and land back on that same host. Before the fix the
+    // hardcoded single stable origin did not include the canonical host, so
+    // the proxy minted no token and the Google button never rendered there.
+    const name = googleStartCookieName(true);
+    const page = await proxy(new NextRequest(`${host}/login`));
+    const issued = page.cookies.get(name)!;
+    expect(issued?.value).toMatch(/^[a-f0-9]{64}$/);
+    expect(issued).toMatchObject({ secure: true, httpOnly: true, sameSite: "lax", path: "/" });
+
+    const res = await start({ target: host, origin: host, token: issued.value, cookie: issued.value, headers: navigation });
+    expect(res.status).toBe(303);
+    const authorize = new URL(res.headers.get("location")!);
+    expect(authorize.origin + authorize.pathname).toBe(`${project}/auth/v1/authorize`);
+    expect(authorize.searchParams.get("redirect_to")).toBe(`${host}${callbackPath}`);
+    // The return flow redirects within the same host the visitor signed in on.
+    expect((await finish("code=valid-code", pendingCookie, host)).headers.get("location")).toBe(returnTo);
   });
 
   it("exchanges the code using the same PKCE verifier and writes the existing app session", async () => {

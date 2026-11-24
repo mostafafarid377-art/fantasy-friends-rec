@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 const schema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  captchaToken: z.string().min(1).max(2048).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -15,9 +16,11 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = await createClient();
+  const { captchaToken } = parsed.data;
   const { data, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email.trim().toLowerCase(),
     password: parsed.data.password,
+    options: captchaToken ? { captchaToken } : undefined,
   });
 
   if (error || !data.user) {

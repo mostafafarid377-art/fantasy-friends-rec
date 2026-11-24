@@ -9,6 +9,8 @@ import { z } from "zod";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { api, ApiRequestError } from "@/lib/client/api";
 import { GoogleSignIn } from "@/components/GoogleSignIn";
+import { TurnstileChallenge } from "@/components/TurnstileChallenge";
+import { turnstileSiteKey } from "@/lib/turnstile";
 import { Button, Field, TextInput } from "@/components/ui";
 
 const schema = z
@@ -32,6 +34,9 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
   const [serverError, setServerError] = useState<string | null>(null);
   const [devLink, setDevLink] = useState<string | null>(null);
   const [verificationSent, setVerificationSent] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
+  const captchaRequired = Boolean(turnstileSiteKey());
 
   const {
     register,
@@ -44,6 +49,7 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
     setServerError(null);
     setDevLink(null);
     setVerificationSent(false);
+    if (captchaRequired && !captchaToken) return; // button is disabled until verified
     try {
       const res = await api<{ devLink?: string | null; requiresEmailVerification?: boolean; user?: { id: string } }>(
         "/api/auth/signup",
@@ -52,6 +58,7 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
           body: {
             displayName: values.displayName,
             username: values.username,
+            ...(captchaToken ? { captchaToken } : {}),
             email: values.email,
             password: values.password,
           },
@@ -69,6 +76,9 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
       router.push("/dashboard");
       router.refresh();
     } catch (err) {
+      // The token was consumed by the attempt — a fresh challenge is required.
+      setCaptchaToken(null);
+      setCaptchaReset((n) => n + 1);
       if (err instanceof ApiRequestError && err.details && typeof err.details === "object") {
         const fields = err.details as Record<string, string[]>;
         Object.entries(fields).forEach(([key, messages]) =>
@@ -157,7 +167,9 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
             </Field>
           </div>
 
-          <Button type="submit" size="lg" loading={isSubmitting} className="w-full">
+          <TurnstileChallenge onToken={setCaptchaToken} resetKey={captchaReset} />
+
+          <Button type="submit" size="lg" loading={isSubmitting} disabled={isSubmitting || (captchaRequired && !captchaToken)} className="w-full">
             Create account <ArrowRight className="h-4 w-4" />
           </Button>
         </form>

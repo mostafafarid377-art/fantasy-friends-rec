@@ -19,12 +19,18 @@ export function googleAppOrigin(): string | null {
   }
 }
 
-const stableProductionOrigin = "https://fantasy-friends-rec.vercel.app";
+// Known browser-facing production origins. The first is the canonical domain;
+// the legacy domain is kept so redirects and rollback keep working. Neither is
+// derived from proxy headers — only an exact host match below selects one.
+const stableProductionOrigins = [
+  "https://fantasyfriends.vercel.app",
+  "https://fantasy-friends-rec.vercel.app",
+];
 
 /** Select only a known browser-facing host. Host identifies the request target,
  * not its initiator. Neither Origin nor X-Forwarded-* can nominate a callback. */
 export function googleRequestOrigin(request: NextRequest, configured: string): string | null {
-  const allowed = process.env.VERCEL_ENV === "production" ? [configured, stableProductionOrigin] : [configured];
+  const allowed = process.env.VERCEL_ENV === "production" ? [configured, ...stableProductionOrigins] : [configured];
   const host = (request.headers.get("host") ?? request.nextUrl.host).toLowerCase();
   return allowed.find((origin) => new URL(origin).host === host) ?? null;
 }

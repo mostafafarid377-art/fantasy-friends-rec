@@ -24,14 +24,18 @@ const previewEnabled = process.env.NODE_ENV === "development" && process.env.LIN
  *   form-action 'self'" — the message names the form action, not the blocked
  *   redirect target. No other form in the app posts cross-origin, so no other
  *   destination is allowed.
+ * - script-src and frame-src additionally allow challenges.cloudflare.com,
+ *   the only host Cloudflare Turnstile loads its script and challenge iframe
+ *   from (see src/components/TurnstileChallenge.tsx). Nothing else changes.
  */
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+  "frame-src https://challenges.cloudflare.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self' https://*.supabase.co https://accounts.google.com",
