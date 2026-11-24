@@ -7,6 +7,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowRight, Inbox } from "lucide-react";
 import { api, ApiRequestError } from "@/lib/client/api";
+import { TurnstileChallenge } from "@/components/TurnstileChallenge";
+import { turnstileSiteKey } from "@/lib/turnstile";
 import { Button, Field, TextInput } from "@/components/ui";
 
 const schema = z.object({ email: z.string().email("Enter a valid email address") });
@@ -16,6 +18,9 @@ export default function ForgotPasswordPage() {
   const [sent, setSent] = useState(false);
   const [devLink, setDevLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
+  const captchaRequired = Boolean(turnstileSiteKey());
 
   const {
     register,
@@ -25,14 +30,18 @@ export default function ForgotPasswordPage() {
 
   const onSubmit = async (values: Values) => {
     setError(null);
+    if (captchaRequired && !captchaToken) return; // button is disabled until verified
     try {
       const res = await api<{ devLink?: string | null }>("/api/auth/forgot", {
         method: "POST",
-        body: values,
+        body: { ...values, ...(captchaToken ? { captchaToken } : {}) },
       });
       setSent(true);
       setDevLink(res?.devLink ?? null);
     } catch (err) {
+      // The token was consumed by the attempt — a fresh challenge is required.
+      setCaptchaToken(null);
+      setCaptchaReset((n) => n + 1);
       setError(err instanceof ApiRequestError ? err.message : "Could not send the request");
     }
   };
@@ -64,7 +73,7 @@ export default function ForgotPasswordPage() {
             <Button href="/login" variant="outline">
               Back to sign in
             </Button>
-            <Button variant="ghost" onClick={() => setSent(false)}>
+            <Button variant="ghost" onClick={() => { setSent(false); setCaptchaToken(null); setCaptchaReset((n) => n + 1); }}>
               Send again
             </Button>
           </div>
@@ -82,7 +91,8 @@ export default function ForgotPasswordPage() {
           <Field label="Email" error={errors.email?.message}>
             <TextInput type="email" autoComplete="email" placeholder="you@example.com" {...register("email")} />
           </Field>
-          <Button type="submit" size="lg" loading={isSubmitting} className="w-full">
+          <TurnstileChallenge onToken={setCaptchaToken} resetKey={captchaReset} />
+          <Button type="submit" size="lg" loading={isSubmitting} disabled={isSubmitting || (captchaRequired && !captchaToken)} className="w-full">
             Send reset link <ArrowRight className="h-4 w-4" />
           </Button>
           <p className="text-center text-[13.5px] text-sage">

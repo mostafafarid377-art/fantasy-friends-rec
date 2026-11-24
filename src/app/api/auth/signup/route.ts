@@ -7,6 +7,7 @@ const schema = z.object({
   username: z.string().min(3).max(24).regex(/^[a-z0-9_]+$/i),
   displayName: z.string().min(2).max(60),
   password: z.string().min(8).max(128),
+  captchaToken: z.string().min(1).max(2048).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { email, username, displayName, password } = parsed.data;
+  const { email, username, displayName, password, captchaToken } = parsed.data;
   const supabase = await createClient();
   const origin = req.headers.get("origin") ?? new URL(req.url).origin;
 
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
     options: {
       data: { username, display_name: displayName },
       emailRedirectTo: `${origin}/auth/callback?next=/dashboard`,
+      ...(captchaToken ? { captchaToken } : {}),
     },
   });
 

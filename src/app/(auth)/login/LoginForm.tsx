@@ -9,6 +9,8 @@ import { z } from "zod";
 import { ArrowRight, MailWarning } from "lucide-react";
 import { api, ApiRequestError } from "@/lib/client/api";
 import { GoogleSignIn } from "@/components/GoogleSignIn";
+import { TurnstileChallenge } from "@/components/TurnstileChallenge";
+import { turnstileSiteKey } from "@/lib/turnstile";
 import { Button, Field, TextInput } from "@/components/ui";
 
 const schema = z.object({
@@ -22,6 +24,9 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const [showAuthError, setShowAuthError] = useState(true);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
+  const captchaRequired = Boolean(turnstileSiteKey());
   const message = serverError ?? (showAuthError ? authError : null);
 
   const {
@@ -33,11 +38,15 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
   const onSubmit = async (values: Values) => {
     setServerError(null);
     setShowAuthError(false);
+    if (captchaRequired && !captchaToken) return; // button is disabled until verified
     try {
-      await api("/api/auth/login", { method: "POST", body: values });
+      await api("/api/auth/login", { method: "POST", body: { ...values, ...(captchaToken ? { captchaToken } : {}) } });
       router.push(next);
       router.refresh();
     } catch (err) {
+      // The token was consumed by the attempt — a fresh challenge is required.
+      setCaptchaToken(null);
+      setCaptchaReset((n) => n + 1);
       if (err instanceof ApiRequestError) setServerError(err.message);
       else setServerError("Could not sign you in");
     }
@@ -77,7 +86,9 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
           </Link>
         </div>
 
-        <Button type="submit" size="lg" loading={isSubmitting} className="w-full">
+        <TurnstileChallenge onToken={setCaptchaToken} resetKey={captchaReset} />
+
+        <Button type="submit" size="lg" loading={isSubmitting} disabled={isSubmitting || (captchaRequired && !captchaToken)} className="w-full">
           Sign in <ArrowRight className="h-4 w-4" />
         </Button>
 

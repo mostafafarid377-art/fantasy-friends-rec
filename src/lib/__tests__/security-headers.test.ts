@@ -62,4 +62,27 @@ describe("security headers (production config)", () => {
     expect(sources.sort()).toEqual(["'self'", "https://*.supabase.co", "https://accounts.google.com"].sort());
     expect(formAction).not.toContain("http://");
   });
+
+  it("allows Cloudflare Turnstile only in script-src and frame-src, nowhere else", async () => {
+    const blocks = await config.headers();
+    const all = blocks.find((b: any) => b.source === "/:path*");
+    const csp = String(new Map(all.headers.map((h: any) => [h.key.toLowerCase(), h.value as string])).get("content-security-policy"));
+    const directives = csp.split("; ");
+    const script = directives.find((d: string) => d.startsWith("script-src"))!;
+    const frame = directives.find((d: string) => d.startsWith("frame-src"))!;
+
+    // Turnstile loads its script and renders its challenge iframe from one
+    // host; both are required for the widget to work at all.
+    expect(script).toContain("https://challenges.cloudflare.com");
+    expect(frame).toBe("frame-src https://challenges.cloudflare.com");
+
+    // The host must not leak into other directives (scope stays minimal) and
+    // the rest of the policy must not gain new hosts.
+    for (const d of directives) {
+      if (d === script || d === frame) continue;
+      expect(d).not.toContain("cloudflare");
+    }
+    expect(script).toContain("'self'");
+    expect(script).not.toMatch(/script-src\s+\*/);
+  });
 });
