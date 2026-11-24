@@ -39,8 +39,10 @@ service-role key, Google client-side library, or Google refresh-token setup.
    except for local development. Leave the existing
    `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in place.
    On a Vercel production deployment (`VERCEL_ENV=production`), the app also
-   recognizes the pinned `fantasy-friends-rec.vercel.app` host once Google is
-   opted in. Preview and local deployments accept only the configured origin.
+   recognizes the pinned production hosts `fantasyfriends.vercel.app` (canonical)
+   and `fantasy-friends-rec.vercel.app` (legacy, kept for redirects/rollback)
+   once Google is opted in. Preview and local deployments accept only the
+   configured origin.
    Redirect other aliases to the canonical hostname. Forwarded host headers
    cannot add a callback URL.
 3. Deploy/restart the app. If `GOOGLE_OAUTH_APP_ORIGIN` is unset, the Google
