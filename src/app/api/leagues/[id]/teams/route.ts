@@ -25,7 +25,9 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
 const schema = z.object({
   name: z.string().trim().min(2).max(50),
   shortName: z.string().trim().max(12).optional(),
-  crestUrl: z.string().url().nullable().optional().or(z.literal("").transform(() => null)),
+  // Only web URLs: an img src with a javascript:, data: or vbscript: scheme
+  // must never be stored (the component also blocks them as defence in depth).
+  crestUrl: z.url({ protocol: /^https?$/ }).nullable().optional().or(z.literal("").transform(() => null)),
 });
 
 export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
