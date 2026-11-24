@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
-import { stopAppRefreshes } from "@/lib/client/refresh";
+import { stopAppRefreshes, pauseAppRefreshes, resumeAppRefreshes } from "@/lib/client/refresh";
 
 export type SessionUser = {
   id: string;
@@ -62,6 +62,17 @@ type QueueItem = {
 
 const LEGACY_QUEUE = "ff.pending.ops";
 let actorId: string | null = null;
+/**
+ * Set once the client has explicitly signed out. A signed-out client must not
+ * issue authenticated reads at all: they can only fail with a 401, and the
+ * browser would log that correct response as a console error. The server-side
+ * 401 behavior is unchanged — this only stops the client from making requests
+ * it already knows cannot succeed. Cleared by any fresh sign-in.
+ */
+let sessionEnded = false;
+
+/** Reads that must stay reachable while signed out (session discovery, health). */
+const ANONYMOUS_GETS = new Set(["/api/auth/session", "/api/health", "/api/supabase/health"]);
 const reads = new Map<string, Promise<unknown>>();
 const recovery = new Map<string, Promise<number>>();
 export const RECOVERED_EVENT = "ff:operations-recovered";
@@ -69,6 +80,7 @@ export const RECOVERED_EVENT = "ff:operations-recovered";
 export function setOperationActor(id: string | null) {
   if (actorId !== id) reads.clear();
   actorId = id;
+  if (id) sessionEnded = false; // a known actor means a live session again
   try { window.localStorage.removeItem(LEGACY_QUEUE); } catch { /* storage disabled */ }
 }
 
@@ -100,6 +112,9 @@ type RequestOptions = {
 
 export async function api<T = unknown>(route: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
+  if (sessionEnded && method === "GET" && !ANONYMOUS_GETS.has(route)) {
+    throw new ApiRequestError("You are signed out", 401);
+  }
   if (method === "GET" && !options.signal) {
     // Share only in-flight reads. A finished read is never served again from
     // a cache, so an update that arrives right after a refresh is never
@@ -159,6 +174,8 @@ async function requestJson<T>(route: string, options: RequestOptions): Promise<T
 
   if (queued) writeQueue(actor, readQueue(actor).filter((q) => q.operationId !== operationId));
   if (method !== "GET") reads.clear();
+  // A successful credential sign-in establishes a session again.
+  if (method === "POST" && (route === "/api/auth/login" || route === "/api/auth/signup")) sessionEnded = false;
   return data as T;
 }
 
@@ -205,11 +222,18 @@ export function useSession(initial: SessionPayload) {
     return result;
   }, []);
   const logout = useCallback(async () => {
-    await api("/api/auth/logout", { method: "POST" });
-    // Stop the refresh coordinator before clearing state: a poll tick or
-    // focus event landing after the cookies are gone would fire authenticated
-    // reads (e.g. /api/me) that can only fail with a 401.
+    // Pause the refresh coordinator up front: a poll tick or focus event
+    // landing while the sign-out request is in flight would fire an
+    // authenticated read that can only 401 once the session is cleared.
+    pauseAppRefreshes();
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } catch (err) {
+      resumeAppRefreshes(); // still signed in — live updates must keep working
+      throw err;
+    }
     stopAppRefreshes();
+    sessionEnded = true;
     generation.current++;
     setOperationActor(null);
     setData({ user: null, leagues: [], unread: 0 });
