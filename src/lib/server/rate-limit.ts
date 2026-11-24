@@ -24,16 +24,41 @@ import { getServiceSupabase } from "@/db/service";
  *
  * Serverless safety: budgets live in PostgreSQL, shared by every instance.
  *
- * FAILURE POLICY (fail open, per category)
- * ----------------------------------------
+ * FAILURE POLICY (fail open, deliberately, for every category)
+ * ------------------------------------------------------------
  * If the limiter itself fails (migration not yet applied, transient DB
  * error), the request is ALLOWED and the failure is logged as
- * `[rate-limit] <scope> <message>` — no identity material is logged. This is
- * deliberate for every category, because each has an independent backstop:
- *   - login/signup/forgot/reset/resend — Supabase Auth enforces its own
- *     server-side limits; a limiter outage must never lock out all sign-ins.
- *   - league/match/profile/notification writes — RLS authorization, role
- *     checks and the idempotency ledger still constrain every mutation.
+ * `[rate-limit] <scope> <message>` — no identity material is logged.
+ *
+ * This is an explicit availability-over-throttling tradeoff, not a claim
+ * that other layers replace rate limiting. They do not:
+ *   - RLS and role checks decide WHETHER a caller may perform an action at
+ *     all; they do not throttle an authorized caller's volume.
+ *   - The idempotency ledger prevents the SAME retried write from being
+ *     applied twice; it does not slow down a stream of distinct writes.
+ * So during a limiter outage the following abuse protections are
+ * unavailable until the limiter recovers:
+ *   - auth.login / auth.signup / auth.forgot / auth.reset / auth.resend
+ *     (+ the wider `.ip` budgets): no app-layer throttling of credential
+ *     stuffing, password spraying, account-enumeration probes, or
+ *     verification/recovery email floods. Residual protection: Supabase
+ *     Auth's own server-side rate limits (coarse, dashboard-configured)
+ *     and Turnstile on the flows where it is enabled.
+ *   - league.create / league.join / match.create / match.manage /
+ *     profile.update / notifications.write: no app-layer throttling of
+ *     write floods (e.g. mass league creation, notification spam to league
+ *     members). Residual protection: RLS still blocks UNAUTHORIZED writes
+ *     and the idempotency ledger still deduplicates retries, but an
+ *     authenticated client can issue unlimited DISTINCT authorized writes.
+ * Why fail open rather than closed: the limiter is a shared dependency of
+ * every sensitive route; failing closed would turn any transient database
+ * or function fault into a site-wide sign-in and write outage — a worse
+ * posture than a temporary throttling gap. The tradeoff is compensated by:
+ *   - platform-edge throttling (Vercel WAF/rate limits) as the outer layer,
+ *   - monitoring and alerting on sustained `[rate-limit]` log lines
+ *     (see OBSERVABILITY.md — "sustained lines = migration/RPC problem"),
+ *   - operator playbook: during an active attack coinciding with a limiter
+ *     outage, tighten limits temporarily at the platform layer.
  * The limiter denies only on a definitive "allowed = false" answer.
  *
  * Usage in a route — works with or without the `handler` wrapper:

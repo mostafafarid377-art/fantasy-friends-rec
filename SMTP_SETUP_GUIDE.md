@@ -62,6 +62,7 @@ not as a steady state.
   links are already correct (`/auth/callback` handles confirmation and
   recovery); do not change `{{ .ConfirmationURL }}` or the `next` parameter.
 - The **resend verification** endpoint is rate-limited (5/hour per account)
-  by the app itself since migration 0034 — SMTP volume from abuse stays low.
+  by the app itself since migrations 0034+0035 — SMTP volume from abuse stays
+  low.
 - Keep the SMTP password out of the repo and out of Vercel env vars; it
   belongs only in the Supabase dashboard.

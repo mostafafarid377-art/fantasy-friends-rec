@@ -13,6 +13,21 @@ Migrations must be applied in the following order:
 | 3 | `supabase/migrations/0003_functions.sql` | SECURITY DEFINER RPC functions and integrity triggers |
 | 4 | `supabase/migrations/0004_native_auth_profiles.sql` | Native Auth profile triggers |
 
+The sequence continues through `0035_rate_limiter_trust_boundary.sql`. One
+ordering constraint is load-bearing and must not be violated:
+
+- **Rate limiter: `0034_rate_limiting.sql` → `0035_rate_limiter_trust_boundary.sql`
+  → application deployment, in that order.** 0034 creates the shared limiter
+  (`ff_rate_limit_hit`) and originally granted EXECUTE to client roles; 0035
+  is the forward-only corrective migration that revokes `PUBLIC`, `anon` and
+  `authenticated` and leaves execution to `service_role` only. The
+  application release that calls the limiter through the service-role client
+  must go out after 0035, never before it — deploying the app while 0034's
+  grants stand unrevoked leaves the cross-user budget-exhaustion window
+  open, and deploying it before 0034 exists would fail-open (the limiter
+  logs and allows). 0035 is a deliberate no-op on databases where 0034 was
+  never applied, so fresh installs converge to the same end state.
+
 ## Applying Migrations
 
 ### Option A: Supabase CLI (Recommended)

@@ -27,7 +27,10 @@ profile — with **test accounts only**, against a **disposable environment**.
    tier; name it e.g. `fantasy-friends-e2e`). Never reuse the production
    project.
 2. **Apply the migrations** to it (`supabase link` + `supabase db push`, or
-   paste `supabase/migrations/0001…0034` in order in the SQL editor).
+   paste `supabase/migrations/0001…0035` in order in the SQL editor). Both
+   rate-limiter migrations are required: `0034_rate_limiting.sql` creates the
+   limiter and `0035_rate_limiter_trust_boundary.sql` restricts it to the
+   service role; the app deploys only after both are applied.
 3. **Leave email confirmations ON** (default: Authentication → Sign In /
    Providers → Confirm email). Journey J03 asserts the "Check your email"
    step.
@@ -65,7 +68,7 @@ npm run test:e2e                  # starts `npm run dev` automatically when E2E_
 Global setup provisions three users (`e2e-leader@`, `e2e-manager@`,
 `e2e-outsider@fantasyfriends.test`), signs the first two in once, and stores
 their sessions in `e2e/.auth/`. Journeys reuse those sessions, which keeps
-the run well inside the auth rate limits (migration 0034): a full run makes
+the run well inside the auth rate limits (migrations 0034+0035): a full run makes
 ~4 login requests total instead of ~15.
 
 ## The 19 journeys

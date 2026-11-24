@@ -34,6 +34,10 @@ health response leaks detail).
 - `[health:supabase]` — the database probe failed; the detail is here.
 - `[rate-limit]` — the limiter itself failed open (request was allowed).
   Occasional lines = transient; sustained lines = migration/RPC problem.
+  While the limiter is down, throttling protections are unavailable (the
+  per-category exposure list and residual protections are documented in
+  `src/lib/server/rate-limit.ts`); if an attack coincides with a limiter
+  outage, tighten limits temporarily at the platform (Vercel WAF) layer.
 - `[recovery]` — a client-side pending-operation recovery hiccup.
 
 ## 2. Alerts to enable (exact steps)
