@@ -108,11 +108,17 @@ so files are independent and reruns never collide.
   Supabase project (the seeded users don't exist there). Check `.env.local`.
 - **Forms submit natively (credentials visible in the page URL, e.g.
   `/login?email=…&password=…`), buttons do nothing, pages render but never
-  hydrate** — client JavaScript is not executing at all. The development CSP
-  in `next.config.ts` includes `'unsafe-eval'` precisely because the dev
-  bundler and React's development build require it; if you overrode the CSP
-  locally or run behind a stripping proxy, restore it. Check the browser
-  console for `Content-Security-Policy` eval errors.
+  hydrate** — client JavaScript is not executing at all. Run
+  `node e2e/diagnose-hydration.mjs` against a freshly started dev server:
+  it reports console errors, page errors, failed chunk requests, the served
+  CSP header and a hydration probe (redacted — no secrets). Known causes:
+  a stale dev server reused via `reuseExistingServer` (stop whatever is on
+  the port first), or a local CSP override blocking the dev runtime — the
+  dev policy includes `'unsafe-eval'` because the dev bundler's HMR updates
+  and React's development build require it. A `Blocked cross-origin request
+  … /_next/hmr from "127.0.0.1"` warning is expected when the suite drives
+  the server via `127.0.0.1`: HMR (unused by the suite) is the only resource
+  blocked, because chunk requests are same-origin and carry no Origin header.
 - **J02-style flakes on slow machines** — the "no request" probe uses a
   1.5s window; increase the timeout in `auth.spec.ts` if needed.
 - **429 responses** — you reran the suite many times within an hour; the
