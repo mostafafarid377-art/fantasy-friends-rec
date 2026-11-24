@@ -111,6 +111,81 @@ so files are independent and reruns never collide.
 - **429 responses** — you reran the suite many times within an hour; the
   per-identity budgets reset on fixed windows (5–60 min depending on scope).
 
+## Operator checklist (reproducible run, start to finish)
+
+Use this when executing the suite outside the build sandbox. Nothing here
+touches production credentials or data.
+
+1. **Prerequisites**: Node 20+ machine with normal internet access (the
+   Playwright CDN must be reachable — it is blocked inside the build
+   sandbox, which is why the suite is NOT VERIFIED there).
+2. **Disposable project**: create a new free-tier Supabase project (e.g.
+   `fantasy-friends-e2e`). Never reuse production.
+3. **Migrations**: apply `supabase/migrations/0001_…0035_*.sql` in filename
+   order (`supabase link` + `supabase db push`, or paste each file into the
+   SQL editor). `0034` must come before `0035` — see
+   `DATABASE_MIGRATION_GUIDE.md`.
+4. **Auth settings**: leave email confirmations ON (default). Do not
+   configure Turnstile for this environment.
+5. **App environment** (`.env.local`, disposable project values only):
+   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+   `SUPABASE_SERVICE_ROLE_KEY` (server-side routes only).
+6. **E2E environment** (shell exports, disposable project values only):
+   - `E2E_SUPABASE_URL` — required.
+   - `E2E_SUPABASE_SERVICE_ROLE_KEY` — required; read only by Playwright's
+     Node process (`e2e/global-setup.ts`), never shipped to the browser.
+   - `E2E_BASE_URL` — optional; defaults to `http://127.0.0.1:3000` and the
+     dev server is started automatically when unset.
+   - `E2E_USER_PASSWORD` — optional; defaults to `E2E-Test-Passw0rd!`.
+7. **Test accounts**: created automatically by global setup via the Admin
+   API with `email_confirm: true` (the state a real user reaches after
+   clicking the confirmation link) — no manual provisioning needed:
+   `e2e-leader@fantasyfriends.test`, `e2e-manager@fantasyfriends.test`,
+   `e2e-outsider@fantasyfriends.test`. The `.test` domain cannot collide
+   with real users.
+8. **Run**:
+   ```bash
+   npx playwright install chromium   # once
+   npm run test:e2e                  # 19 journeys, one worker, ~4 logins total
+   ```
+9. **Expected results** (pass criteria per journey):
+
+   | # | Passes when… |
+   |---|---------|
+   | J01 | home renders and links reach `/signup` and `/login` |
+   | J02 | short password is rejected client-side; zero network requests fired |
+   | J03 | valid signup shows the "Check your email" step (no auto sign-in) |
+   | J04 | valid credentials land on `/dashboard` with session cookies |
+   | J05 | wrong password shows one generic non-enumerating error; stays on `/login` |
+   | J06 | unknown email gets the identical forgot-password response as a known one |
+   | J07 | Google button initiates OAuth when configured; journey skips cleanly otherwise |
+   | J08 | `/reset` without a recovery session reports the link invalid |
+   | J09 | dashboard renders league/squad/standings chrome for a signed-in user |
+   | J10 | league creation succeeds; league lists with an invitation code |
+   | J11 | second account joins via code; both members see a 2-member list |
+   | J12 | team + six players registered and listed in the pool |
+   | J13 | complete squad (starters, bench GK, captain, vice-captain) saves |
+   | J14 | match creation succeeds; fixture lists and opens |
+   | J15 | organizer records a goal event on the fixture |
+   | J16 | submit → leader approve → league table reflects the team |
+   | J17 | the other member gets a match notification; mark-all-read clears it |
+   | J18 | profile name edit survives a reload (and is restored afterwards) |
+   | J19 | sign-out ends the session; `/dashboard` redirects to `/login` |
+
+   Overall pass = `19 passed` with zero `429` responses (rerun after the
+   fixed windows reset if you hit a budget — see "Interpreting failures").
+10. **Cleanup** (disposable environment only):
+    - Delete the throwaway Supabase project (dashboard → Project Settings →
+      General → Delete project), or keep it and truncate test rows; never
+      point the suite at production.
+    - Remove local session states: `rm -rf e2e/.auth/` (gitignored).
+    - Unset the shell exports: `unset E2E_SUPABASE_URL
+      E2E_SUPABASE_SERVICE_ROLE_KEY E2E_BASE_URL E2E_USER_PASSWORD`.
+    - Remove `.env.local` if it was created solely for the run.
+11. **Record evidence**: attach the Playwright HTML report
+    (`npx playwright show-report`) or the console summary to the PR before
+    merge.
+
 ## Known scope limit
 
 Browser binaries are not vendored into this repo; `npx playwright install`
