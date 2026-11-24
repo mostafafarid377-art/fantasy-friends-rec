@@ -103,6 +103,30 @@ function release() {
 }
 
 /**
+ * Temporarily disarms the timer and the focus/visibility listeners while
+ * keeping the subscribers registered. Used at the start of sign-out so no
+ * authenticated read can fire while the logout request is still in flight.
+ */
+export function pauseAppRefreshes() {
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  if (listening) {
+    listening = false;
+    window.removeEventListener("focus", wake);
+    document.removeEventListener("visibilitychange", wake);
+  }
+}
+
+/** Re-arms listeners and the timer after pauseAppRefreshes (sign-out failed). */
+export function resumeAppRefreshes() {
+  if (subscribers.size === 0) return;
+  ensureListening();
+  schedule();
+}
+
+/**
  * Disarms the shared timer and drops every subscriber. Called on sign-out so
  * no authenticated read (poll tick or focus refresh) can fire in the window
  * between the session cookies being cleared and the signed-in tree
