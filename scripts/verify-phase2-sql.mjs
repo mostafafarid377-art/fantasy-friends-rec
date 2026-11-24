@@ -250,5 +250,39 @@ assert.doesNotMatch(attach, /fantasy_match_lineup_history/i,
 assert.doesNotMatch(attach, /create\s+trigger/i,
   'the trigger already exists from 0022: replacing the function body is the whole change');
 
+// Migration 0034: the shared rate limiter. Budgets live in the database so
+// every serverless instance shares them; the function is atomic and
+// SECURITY DEFINER, and the table never gets client-facing privileges.
+const limiter = read('./supabase/migrations/0034_rate_limiting.sql');
+assert.match(limiter, /create table if not exists public\.ff_rate_limit_windows/i,
+  'the limiter needs its shared buckets table');
+assert.match(limiter, /enable row level security/i,
+  'the limiter table must enable RLS like every application table');
+assert.match(limiter, /security definer/i,
+  'the limiter function must own its table via SECURITY DEFINER');
+assert.match(limiter, /insert into public\.ff_rate_limit_windows[\s\S]*on conflict/i,
+  'hits must be counted atomically (single upsert, no read-modify-write)');
+assert.doesNotMatch(limiter, /grant\s+(all|select|insert|update|delete)[^.]*on\s+(table\s+)?public\.ff_rate_limit_windows/i,
+  'the limiter table must never be granted to client roles');
+assert.doesNotMatch(limiter, /\b(drop|truncate)\s+table\b/i,
+  'the limiter migration must never drop a table');
+
+// Migration 0035: the limiter trust boundary. Granting the function to
+// anon/authenticated would let any client burn another user's budget, so the
+// corrective migration revokes every untrusted role and leaves execution to
+// the service role only. It must be a no-op on databases where 0034 was
+// never applied, so fresh installs stay safe either way.
+const boundary = read('./supabase/migrations/0035_rate_limiter_trust_boundary.sql');
+assert.match(boundary, /revoke execute on function public\.ff_rate_limit_hit\(text,\s*text\) from\s+public\s*,\s*anon\s*,\s*authenticated/i,
+  'the limiter must be revoked from PUBLIC, anon and authenticated');
+assert.match(boundary, /grant execute on function public\.ff_rate_limit_hit\(text,\s*text\) to service_role/i,
+  'only the trusted server path (service role) may execute the limiter');
+assert.match(boundary, /to_regprocedure\('public\.ff_rate_limit_hit\(text,\s*text\)'\)/i,
+  'the corrective migration must no-op where 0034 was never applied');
+assert.doesNotMatch(boundary, /\b(drop|truncate)\s+table\b/i,
+  'the corrective migration must never drop a table');
+assert.doesNotMatch(boundary, /alter\s+(table|function)\s+public\.ff_rate_limit_hit/i,
+  'the corrective migration must not weaken the limiter itself');
+
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');

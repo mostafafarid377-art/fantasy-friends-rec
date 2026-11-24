@@ -41,11 +41,13 @@ with checks(severity, check_name, ok, detail) as (
          not has_table_privilege('authenticated','public.ff_rate_limit_windows','SELECT')
          and not has_table_privilege('authenticated','public.ff_rate_limit_windows','INSERT')
          and not has_table_privilege('anon','public.ff_rate_limit_windows','SELECT'),
-         'client roles must reach it only via ff_rate_limit_hit'
+         'client roles must reach it only via the trusted server path'
   union all
-  select 'FAIL','ff_rate_limit_hit executable by client roles',
-         has_function_privilege('authenticated','public.ff_rate_limit_hit(text,text)','EXECUTE')
-         and has_function_privilege('anon','public.ff_rate_limit_hit(text,text)','EXECUTE'), ''
+  select 'FAIL','ff_rate_limit_hit: executable ONLY by service_role (0035 trust boundary)',
+         has_function_privilege('service_role','public.ff_rate_limit_hit(text,text)','EXECUTE')
+         and not has_function_privilege('anon','public.ff_rate_limit_hit(text,text)','EXECUTE')
+         and not has_function_privilege('authenticated','public.ff_rate_limit_hit(text,text)','EXECUTE'),
+         'client roles must never call the limiter directly — the app server uses the service role'
 
   union all
 

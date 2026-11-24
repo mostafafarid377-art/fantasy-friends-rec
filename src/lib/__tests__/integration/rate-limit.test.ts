@@ -3,13 +3,18 @@ import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
- * PostgreSQL integration tests for the shared rate limiter (migration 0034).
+ * PostgreSQL integration tests for the shared rate limiter
+ * (migrations 0034 + 0035).
  *
  * Runs against a REAL local PostgreSQL database — requires DATABASE_URL
  * pointing at a disposable ff_test* database (same guard as postgres.test.ts).
- * The function is exercised through the `authenticated` and `anon` roles so
- * the grants, the SECURITY DEFINER table access and the RLS denial on the
- * internal table are all verified as deployed, not as mocked.
+ *
+ * Trust boundary (0035): the limiter function is executable ONLY by the
+ * service_role — the trusted server-side path the app uses via
+ * src/db/service.ts. Client roles (anon, authenticated) must be denied,
+ * because the identity argument is caller-controlled and a direct client
+ * call could burn a victim's budget. The behavior tests therefore run as
+ * service_role, and the denial tests prove the boundary.
  */
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -32,10 +37,15 @@ const hit = async (client: PoolClient, scope: string, identity: string) =>
     retryAfterSeconds: number;
   };
 
-async function asRole(role: "authenticated" | "anon"): Promise<PoolClient> {
+async function asRole(role: "authenticated" | "anon" | "service_role"): Promise<PoolClient> {
   const client = await pool.connect();
   await client.query(`SET ROLE ${role}`);
   return client;
+}
+
+/** The trusted server path: the app calls the limiter as service_role. */
+async function asService(): Promise<PoolClient> {
+  return asRole("service_role");
 }
 
 beforeAll(async () => {
@@ -48,9 +58,68 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe("ff_rate_limit_hit (migration 0034)", () => {
-  it("allows hits within the budget and counts the remaining allowance", async () => {
+describe("ff_rate_limit_hit — trust boundary (0035)", () => {
+  it("denies direct execution to anon clients", async () => {
+    const client = await asRole("anon");
+    try {
+      await expect(hit(client, "auth.login", `test:${randomUUID()}`)).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      client.release();
+    }
+  });
+
+  it("denies direct execution to authenticated clients", async () => {
     const client = await asRole("authenticated");
+    try {
+      await expect(hit(client, "auth.login", `test:${randomUUID()}`)).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      client.release();
+    }
+  });
+
+  it("an authenticated client cannot burn another identity's budget", async () => {
+    const client = await asRole("authenticated");
+    try {
+      // Even aiming at a victim's identity, the call is refused before any
+      // bucket is touched: 42501 on the function, no row written.
+      const victim = `test:${randomUUID()}`;
+      await expect(hit(client, "auth.login", victim)).rejects.toMatchObject({ code: "42501" });
+      const { rows } = await admin.query(
+        "SELECT count(*)::int AS n FROM public.ff_rate_limit_windows WHERE bucket LIKE $1",
+        [`auth.login:${victim}%`],
+      );
+      expect(rows[0].n).toBe(0);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("allows the trusted service_role path", async () => {
+    const client = await asService();
+    try {
+      const r = await hit(client, "auth.login", `test:${randomUUID()}`);
+      expect(r.allowed).toBe(true);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("keeps the internal table unreachable from client roles (RLS + no grants)", async () => {
+    const client = await asRole("authenticated");
+    try {
+      await expect(client.query("SELECT * FROM public.ff_rate_limit_windows")).rejects.toMatchObject({ code: "42501" });
+      await expect(
+        client.query("INSERT INTO public.ff_rate_limit_windows (bucket, hits, window_start) VALUES ('x:y:0', 1, now())"),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      client.release();
+    }
+  });
+});
+
+describe("ff_rate_limit_hit — limiter behavior via the trusted path", () => {
+  it("allows hits within the budget and counts the remaining allowance", async () => {
+    const client = await asService();
     try {
       const identity = `test:${randomUUID()}`;
       const first = await hit(client, "auth.login", identity);
@@ -66,7 +135,7 @@ describe("ff_rate_limit_hit (migration 0034)", () => {
   });
 
   it("denies once the fixed-window budget is spent, with a Retry-After bound to the window", async () => {
-    const client = await asRole("authenticated");
+    const client = await asService();
     try {
       const identity = `test:${randomUUID()}`;
       for (let i = 0; i < 10; i++) {
@@ -84,7 +153,7 @@ describe("ff_rate_limit_hit (migration 0034)", () => {
   });
 
   it("keeps budgets independent per identity", async () => {
-    const client = await asRole("authenticated");
+    const client = await asService();
     try {
       const a = `test:${randomUUID()}`;
       const b = `test:${randomUUID()}`;
@@ -98,7 +167,7 @@ describe("ff_rate_limit_hit (migration 0034)", () => {
   });
 
   it("keeps budgets independent per scope for the same identity", async () => {
-    const client = await asRole("authenticated");
+    const client = await asService();
     try {
       const identity = `test:${randomUUID()}`;
       await hit(client, "auth.signup", identity); // limit 5
@@ -117,7 +186,7 @@ describe("ff_rate_limit_hit (migration 0034)", () => {
       "INSERT INTO public.ff_rate_limit_windows (bucket, hits, window_start) VALUES ($1, 9999, now() - interval '10 minutes')",
       [`auth.login:${identity}:${currentWindow - 1}`],
     );
-    const client = await asRole("authenticated");
+    const client = await asService();
     try {
       const r = await hit(client, "auth.login", identity);
       expect(r.allowed).toBe(true);
@@ -129,7 +198,7 @@ describe("ff_rate_limit_hit (migration 0034)", () => {
 
   it("counts concurrent hits exactly once each (no lost updates)", async () => {
     const identity = `test:${randomUUID()}`;
-    const clients = await Promise.all([asRole("authenticated"), asRole("authenticated")]);
+    const clients = await Promise.all([asService(), asService()]);
     try {
       // match.manage allows 120, so 6 parallel hits all succeed — the point is
       // the stored count, not the verdicts.
@@ -151,32 +220,10 @@ describe("ff_rate_limit_hit (migration 0034)", () => {
   });
 
   it("rejects unknown scopes and malformed identities", async () => {
-    const client = await asRole("authenticated");
+    const client = await asService();
     try {
       await expect(hit(client, "admin.unlimited", `test:${randomUUID()}`)).rejects.toMatchObject({ code: "22023" });
       await expect(hit(client, "auth.login", "short")).rejects.toMatchObject({ code: "22023" });
-    } finally {
-      client.release();
-    }
-  });
-
-  it("grants execution to both anon and authenticated", async () => {
-    const anon = await asRole("anon");
-    try {
-      const r = await hit(anon, "auth.login", `test:${randomUUID()}`);
-      expect(r.allowed).toBe(true);
-    } finally {
-      anon.release();
-    }
-  });
-
-  it("keeps the internal table unreachable from client roles (RLS + no grants)", async () => {
-    const client = await asRole("authenticated");
-    try {
-      await expect(client.query("SELECT * FROM public.ff_rate_limit_windows")).rejects.toMatchObject({ code: "42501" });
-      await expect(
-        client.query("INSERT INTO public.ff_rate_limit_windows (bucket, hits, window_start) VALUES ('x:y:0', 1, now())"),
-      ).rejects.toMatchObject({ code: "42501" });
     } finally {
       client.release();
     }
