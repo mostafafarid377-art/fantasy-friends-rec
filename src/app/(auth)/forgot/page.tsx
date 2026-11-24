@@ -16,7 +16,6 @@ type Values = z.infer<typeof schema>;
 
 export default function ForgotPasswordPage() {
   const [sent, setSent] = useState(false);
-  const [devLink, setDevLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaReset, setCaptchaReset] = useState(0);
@@ -32,12 +31,11 @@ export default function ForgotPasswordPage() {
     setError(null);
     if (captchaRequired && !captchaToken) return; // button is disabled until verified
     try {
-      const res = await api<{ devLink?: string | null }>("/api/auth/forgot", {
+      await api("/api/auth/forgot", {
         method: "POST",
         body: { ...values, ...(captchaToken ? { captchaToken } : {}) },
       });
       setSent(true);
-      setDevLink(res?.devLink ?? null);
     } catch (err) {
       // The token was consumed by the attempt — a fresh challenge is required.
       setCaptchaToken(null);
@@ -61,14 +59,6 @@ export default function ForgotPasswordPage() {
             If an account exists for that address, a one-hour reset link is on its way. The
             link opens this app and signs you out of every device once used.
           </p>
-          {devLink && (
-            <div className="mt-4 rounded-lg border border-green/40 bg-green/8 p-4">
-              <div className="slate mb-2 text-green-dim">Outbox mode · no SMTP configured</div>
-              <a href={devLink} className="break-all text-[14px] text-green underline underline-offset-4">
-                {devLink}
-              </a>
-            </div>
-          )}
           <div className="mt-5 flex gap-3">
             <Button href="/login" variant="outline">
               Back to sign in

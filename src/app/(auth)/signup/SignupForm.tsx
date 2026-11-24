@@ -32,7 +32,6 @@ type Values = z.infer<typeof schema>;
 export default function SignupForm({ next, googleStartToken }: { next: string; googleStartToken: string | null }) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
-  const [devLink, setDevLink] = useState<string | null>(null);
   const [verificationSent, setVerificationSent] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaReset, setCaptchaReset] = useState(0);
@@ -47,11 +46,10 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
 
   const onSubmit = async (values: Values) => {
     setServerError(null);
-    setDevLink(null);
     setVerificationSent(false);
     if (captchaRequired && !captchaToken) return; // button is disabled until verified
     try {
-      const res = await api<{ devLink?: string | null; requiresEmailVerification?: boolean; user?: { id: string } }>(
+      const res = await api<{ requiresEmailVerification?: boolean; user?: { id: string } }>(
         "/api/auth/signup",
         {
           method: "POST",
@@ -64,10 +62,6 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
           },
         },
       );
-      if (res?.devLink) {
-        setDevLink(res.devLink);
-        return;
-      }
       if (res?.requiresEmailVerification) {
         setVerificationSent(true);
         return;
@@ -105,7 +99,7 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
         .
       </p>
 
-      {googleStartToken && !verificationSent && !devLink && <GoogleSignIn next={next} startToken={googleStartToken} />}
+      {googleStartToken && !verificationSent && <GoogleSignIn next={next} startToken={googleStartToken} />}
       {verificationSent ? (
         <div className="mt-8 rounded-xl border border-green/40 bg-green/8 p-5">
           <div className="flex items-center gap-2.5">
@@ -116,23 +110,6 @@ export default function SignupForm({ next, googleStartToken }: { next: string; g
             Your account was created. Open the confirmation link sent by Supabase to verify your email and finish signing in.
           </p>
           <Link href={next === "/dashboard" ? "/login" : `/login?${new URLSearchParams({ next })}`} className="mt-4 inline-flex text-green underline underline-offset-4">Return to sign in</Link>
-        </div>
-      ) : devLink ? (
-        <div className="mt-8 rounded-xl border border-green/40 bg-green/8 p-5">
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="h-5 w-5 text-green" />
-            <h2 className="text-xl text-chalk">Confirm your email</h2>
-          </div>
-          <p className="mt-3 text-[14.5px] leading-relaxed text-sage">
-            No SMTP provider is configured in this environment, so the verification message was
-            written to the local outbox. Open the link below to verify your email address.
-          </p>
-          <a
-            href={devLink}
-            className="mt-4 inline-flex h-10 items-center rounded-md bg-green px-4 font-display text-[14px] font-bold uppercase tracking-[0.06em] text-[#04120a]"
-          >
-            Verify email <ArrowRight className="h-4 w-4" />
-          </a>
         </div>
       ) : (
         <form onSubmit={handleSubmit(onSubmit)} className={`${googleStartToken ? "mt-5" : "mt-8"} space-y-5`} noValidate>

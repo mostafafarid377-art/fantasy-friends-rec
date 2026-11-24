@@ -46,7 +46,6 @@ export default function ProfilePage() {
   const { data, loading, error, reload, setData } = useApi<Data>("/api/me");
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [verifyLink, setVerifyLink] = useState<string | null>(null);
 
   const {
     register,
@@ -89,12 +88,11 @@ export default function ProfilePage() {
   const resend = async () => {
     setBusy(true);
     try {
-      const res = await api<{ devLink: string | null }>("/api/auth/resend", {
+      await api("/api/auth/resend", {
         method: "POST",
         body: { kind: "verify_email" },
       });
-      setVerifyLink(res.devLink);
-      setToast({ message: res.devLink ? "Verification link ready" : "Verification email sent", tone: "ok" });
+      setToast({ message: "Verification email sent", tone: "ok" });
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Could not send", tone: "error" });
     } finally {
@@ -146,11 +144,6 @@ export default function ProfilePage() {
               Send verification link
             </Button>
           </div>
-          {verifyLink && (
-            <a href={verifyLink} className="mt-2 block break-all text-[13px] text-green underline">
-              {verifyLink}
-            </a>
-          )}
         </div>
       )}
 

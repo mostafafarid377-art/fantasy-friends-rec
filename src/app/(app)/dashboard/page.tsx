@@ -400,13 +400,12 @@ function VerifyButton() {
       onClick={async () => {
         setState("working");
         try {
-          const res = await fetch("/api/auth/resend", {
+          await fetch("/api/auth/resend", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ kind: "verify_email" }),
-          }).then((r) => r.json());
+          });
           setState("done");
-          if (res?.devLink) window.open(res.devLink, "_self");
           void refresh().catch((error) => console.warn("[session refresh]", error));
         } catch {
           setState("idle");
