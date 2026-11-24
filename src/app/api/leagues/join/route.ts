@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, handler, requireUser } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 import { confirmLeagueMembership } from "@/lib/league-membership";
 
 const schema = z.object({
@@ -13,6 +14,8 @@ export const POST = handler(async (req: NextRequest) => {
   const user = await requireUser();
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) throw new ApiError("Enter a valid invitation code", 422);
+  const limited = await rateLimitUser("league.join", user.id);
+  if (limited) return limited;
   const supabase = await getSupabase();
   // Non-members cannot look up private leagues or create standings directly.
   const { data: leagueId, error } = await supabase.rpc("join_league", {

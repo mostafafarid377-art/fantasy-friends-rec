@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, confirmedRow, handler, requireIdentity, requireUser } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 
 import type { MyDisplayStanding } from "@/lib/live-points";
 
@@ -71,6 +72,9 @@ export const PATCH = handler(async (req: NextRequest) => {
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) throw new ApiError("Check your profile details", 422, parsed.error.flatten().fieldErrors);
   const input = parsed.data;
+
+  const limited = await rateLimitUser("profile.update", user.id);
+  if (limited) return limited;
 
   if (input.username && input.username !== user.username) {
     const supabase = await getSupabase();

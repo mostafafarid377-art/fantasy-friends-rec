@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, creationId, handler, requireUser } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 import { confirmLeagueMembership } from "@/lib/league-membership";
 import { FORMATS, STARTERS_BY_FORMAT } from "@/lib/domain";
 
@@ -53,6 +54,9 @@ export const POST = handler(async (req: NextRequest) => {
     throw new ApiError("Check the league details", 422, parsed.error.flatten().fieldErrors);
   }
   const input = parsed.data;
+
+  const limited = await rateLimitUser("league.create", user.id);
+  if (limited) return limited;
 
   const supabase = await getSupabase();
   const { data: leagueId, error } = await supabase.rpc("create_league_confirmed", {

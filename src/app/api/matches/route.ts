@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, confirmedRow, creationId, handler, requireMember } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 30;
@@ -58,6 +59,8 @@ export const POST = handler(async (req: NextRequest) => {
   if (membership.role !== "leader" && membership.role !== "organizer") {
     throw new ApiError("Only a Match Organizer or League Leader can create matches", 403);
   }
+  const limited = await rateLimitUser("match.create", membership.profileId);
+  if (limited) return limited;
   const id = creationId(req, membership.profileId, "create-match", input);
   const { data, error } = await supabase.rpc("create_real_match", {
     p_id: id, p_league: input.leagueId, p_team_a: input.teamAId, p_team_b: input.teamBId,

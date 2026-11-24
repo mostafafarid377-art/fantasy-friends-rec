@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, confirmedRow, creationId, handler, requireMember, requireIdentity, canManageMatch } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 import { EVENT_TYPES } from "@/lib/domain";
 import { loadMatch } from "@/lib/matches";
 
@@ -68,6 +69,8 @@ export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
   const sb = await getSupabase();
   const actor = await requireIdentity(sb);
   const { match } = await canManageMatch(id, actor.id);
+  const limited = await rateLimitUser("match.manage", actor.id);
+  if (limited) return limited;
   const kind = sub.success ? "substitution" : "event";
   const input = sub.success ? sub.data : event.data!;
   const operationId = creationId(req, actor.id, `${kind}/${id}`, input);
@@ -89,6 +92,8 @@ async function editMatchEvent(id: string, eventId: string, action: "update" | "d
   const sb = await getSupabase();
   const user = await requireIdentity(sb);
   const { match } = await canManageMatch(id, user.id);
+  const limited = await rateLimitUser("match.manage", user.id);
+  if (limited) return limited;
   const { data, error } = await sb.rpc("write_match_event", {
     p_match: id, p_id: eventId, p_action: action,
     p_data: { ...input, ...(input?.assistPlayerId !== undefined ? { otherId: input.assistPlayerId } : {}) },

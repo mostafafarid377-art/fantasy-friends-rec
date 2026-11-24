@@ -5,6 +5,9 @@ import { lineupPayload, lineupSelection } from "@/lib/match-lineup";
 
 const db = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), user: vi.fn() }));
 vi.mock("@/db", () => ({ getSupabase: async () => ({ ...db, auth: { getUser: db.user } }) }));
+// The shared limiter has its own unit + PostgreSQL integration coverage; here
+// it would consume the queued rpc responses this suite sets up per scenario.
+vi.mock("@/lib/server/rate-limit", () => ({ rateLimitUser: vi.fn(async () => null) }));
 const ctx = { params: Promise.resolve({ id: "match-a" }) };
 const selection = { starters: ["gk","d","m1","m2","f"], subs: ["sub"] };
 const payload = lineupPayload("home", selection);

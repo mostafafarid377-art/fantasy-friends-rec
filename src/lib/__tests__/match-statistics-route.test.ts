@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 import { PUT } from "@/app/api/matches/[id]/statistics/route";
 const db = vi.hoisted(() => ({from:vi.fn(),getUser:vi.fn(),rpc:vi.fn()}));
 vi.mock("@/db", () => ({getSupabase:async () => ({...db,auth:{getUser:db.getUser}})}));
+// The shared limiter has its own unit + PostgreSQL integration coverage; here
+// it would consume the queued rpc responses this suite sets up per scenario.
+vi.mock("@/lib/server/rate-limit", () => ({ rateLimitUser: vi.fn(async () => null) }));
 let role: string;
 beforeEach(() => {
   vi.resetAllMocks(); role="organizer";

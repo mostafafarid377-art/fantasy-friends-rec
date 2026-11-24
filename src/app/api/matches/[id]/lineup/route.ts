@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, handler, leagueRules, requireIdentity, canManageMatch } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 import { canSelectPlayer, validateLineup, type Position } from "@/lib/domain";
 import type { SavedLineupEntry } from "@/lib/match-lineup";
 
@@ -64,6 +65,8 @@ export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {
 
   const user = await requireIdentity();
   const { match, membership } = await canTouch(id, user.id);
+  const limited = await rateLimitUser("match.manage", user.id);
+  if (limited) return limited;
   const rules = leagueRules(membership.league);
   if (![match.team_a_id, match.team_b_id].includes(input.teamId)) throw new ApiError("Team is not part of this match", 422);
   if ([input.starters, input.subs].some((group) => group.some((entry, i) => entry.order !== i))) {
@@ -116,6 +119,8 @@ export const DELETE = handler(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
   const user = await requireIdentity();
   await canTouch(id, user.id);
+  const limited = await rateLimitUser("match.manage", user.id);
+  if (limited) return limited;
   const supabase = await getSupabase();
   const { data, error } = await supabase.rpc("clear_match_lineups", { p_match: id });
   checkDb(error, "Could not clear lineup");

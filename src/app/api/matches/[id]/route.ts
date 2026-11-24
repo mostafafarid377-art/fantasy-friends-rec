@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, confirmedRow, handler, leagueRules, requireMember, canManageMatch } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 import { loadMatch } from "@/lib/matches";
 
 import { PLAYER_FIELDS, playerDto } from "@/lib/roster";
@@ -133,6 +134,9 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
     throw new ApiError("An approved or pending match cannot be edited", 409);
   }
 
+  const limited = await rateLimitUser("match.manage", membership.profileId);
+  if (limited) return limited;
+
   const body = await req.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) throw new ApiError("Invalid match update", 422);
@@ -151,6 +155,8 @@ export const DELETE = handler(async (_req: NextRequest, ctx: Ctx) => {
   const auth = await canManageMatch(id, membership.profileId);
   if (!auth.authorized) throw new ApiError("You cannot delete this match", 403);
   if (match.status === "approved") throw new ApiError("Approved matches are permanent", 409);
+  const limited = await rateLimitUser("match.manage", membership.profileId);
+  if (limited) return limited;
   const result = await supabase.from("real_matches").delete().eq("id", id).eq("league_id", match.league_id).select("id").maybeSingle();
   confirmedRow(result.data, result.error, "Could not delete match");
   return Response.json({ ok: true });

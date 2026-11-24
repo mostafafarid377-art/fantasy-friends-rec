@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 
 const schema = z.object({ password: z.string().min(8).max(128) });
 
@@ -16,6 +17,9 @@ export async function POST(req: NextRequest) {
   if (userError || !user) {
     return NextResponse.json({ error: "This reset link is invalid or has expired" }, { status: 401 });
   }
+
+  const limited = await rateLimitUser("auth.reset", user.id);
+  if (limited) return limited;
 
   const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });

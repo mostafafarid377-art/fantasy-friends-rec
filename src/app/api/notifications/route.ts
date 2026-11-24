@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, handler, requireIdentity } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,8 @@ export const PATCH = handler(async (req: NextRequest) => {
   if (!parsed.success) throw new ApiError("Invalid notification update", 422);
   const { ids, all } = parsed.data;
   if (!all && !ids?.length) throw new ApiError("Choose notifications to update", 422);
+  const limited = await rateLimitUser("notifications.write", user.id);
+  if (limited) return limited;
   const readAt = new Date().toISOString();
   let query = supabase.from("notifications").update({ read_at: readAt }).eq("profile_id", user.id).is("read_at", null);
   if (!all && ids) query = query.in("id", ids);
@@ -54,6 +57,8 @@ export const PATCH = handler(async (req: NextRequest) => {
 export const DELETE = handler(async (req: NextRequest) => {
   const supabase = await getSupabase();
   const user = await requireIdentity(supabase);
+  const limited = await rateLimitUser("notifications.write", user.id);
+  if (limited) return limited;
   const id = new URL(req.url).searchParams.get("id");
 
   let query = supabase.from("notifications").delete().eq("profile_id", user.id);

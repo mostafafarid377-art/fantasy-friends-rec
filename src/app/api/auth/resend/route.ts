@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 
 const schema = z.object({ captchaToken: z.string().min(1).max(2048).optional() });
 
@@ -19,6 +20,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Check the highlighted fields" }, { status: 422 });
   }
   const { captchaToken } = parsed.data;
+
+  const limited = await rateLimitUser("auth.resend", user.id);
+  if (limited) return limited;
 
   const origin = req.headers.get("origin") ?? new URL(req.url).origin;
   const { error } = await supabase.auth.resend({

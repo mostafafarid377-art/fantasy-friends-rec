@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, canManageMatch, checkDb, handler, requireIdentity } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 
 const count = z.number().int().min(0).max(999);
 const schema = z.strictObject({ version: z.number().int().min(1).max(2147483646),
@@ -14,6 +15,8 @@ export const PUT = handler(async (req: NextRequest, ctx: { params: Promise<{ id:
   const sb = await getSupabase();
   const user = await requireIdentity(sb);
   await canManageMatch(id, user.id);
+  const limited = await rateLimitUser("match.manage", user.id);
+  if (limited) return limited;
   const input = schema.safeParse(await req.json().catch(() => null));
   if (!input.success) throw new ApiError("Send only match statistics as whole-number totals and a correction reason when required", 422);
   const { version, stats, reason } = input.data;

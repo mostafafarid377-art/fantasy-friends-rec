@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, checkDb, confirmedRow, handler, requireIdentity, canManageMatch } from "@/lib/server";
+import { rateLimitUser } from "@/lib/server/rate-limit";
 import { loadMatch } from "@/lib/matches";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -25,6 +26,8 @@ export const POST = handler(async (req: NextRequest, ctx: Ctx) => {
   const supabase = await getSupabase();
   const user = await requireIdentity(supabase);
   const { match } = await canManageMatch(id, user.id);
+  const limited = await rateLimitUser("match.manage", user.id);
+  if (limited) return limited;
   const result = action === "submit" ? await supabase.rpc("submit_match", {
     p_match: id, p_version: input.version, p_home_score: input.homeScore, p_away_score: input.awayScore,
   }) : action === "correct" ? await supabase.rpc("correct_match_result", {

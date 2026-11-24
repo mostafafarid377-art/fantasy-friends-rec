@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { rateLimitAuth } from "@/lib/server/rate-limit";
 
 const schema = z.object({
   email: z.string().email(),
@@ -21,6 +22,9 @@ export async function POST(req: NextRequest) {
   }
 
   const { email, username, displayName, password, captchaToken } = parsed.data;
+  const limited = await rateLimitAuth(req, "auth.signup", email);
+  if (limited) return limited;
+
   const supabase = await createClient();
   const origin = req.headers.get("origin") ?? new URL(req.url).origin;
 

@@ -4,6 +4,9 @@ import { POST } from "@/app/api/matches/[id]/flow/route";
 
 const db = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), user: vi.fn() }));
 vi.mock("@/db", () => ({ getSupabase: async () => ({ ...db, auth: { getUser: db.user } }) }));
+// The shared limiter has its own unit + PostgreSQL integration coverage; here
+// it would consume the queued rpc responses this suite sets up per scenario.
+vi.mock("@/lib/server/rate-limit", () => ({ rateLimitUser: vi.fn(async () => null) }));
 const ctx = { params: Promise.resolve({ id: "match-a" }) };
 const match = { id: "match-a", league_id: "league-a", organizer_id: "me", version: 1, status: "draft", home_score: null, away_score: null };
 const submission = { action: "submit", version: 1, homeScore: 2, awayScore: 0 };
