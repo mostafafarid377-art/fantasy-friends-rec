@@ -434,6 +434,10 @@ export function Avatar({
     .map((p) => p[0])
     .join("")
     .toUpperCase();
+  // Block script-capable schemes (javascript:, data:, vbscript:) — a stored
+  // XSS vector — while still allowing real images: https/http, same-origin
+  // relative paths, and blob: URLs used for local photo previews.
+  const safeUrl = url && !/^\s*(javascript|data|vbscript)\s*:/i.test(url) ? url : null;
   return (
     <span aria-hidden={decorative || undefined}
       className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border ${
@@ -441,9 +445,9 @@ export function Avatar({
       } bg-pitch-800 font-display font-bold text-green`}
       style={{ width: size, height: size, fontSize: Math.max(10, size * 0.36) }}
     >
-      {url && failed !== url ? (
+      {safeUrl && failed !== safeUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img loading="lazy" decoding="async" src={url} alt={decorative ? "" : name} onError={() => setFailed(url)} className="h-full w-full object-cover" />
+        <img loading="lazy" decoding="async" src={safeUrl} alt={decorative ? "" : name} onError={() => setFailed(safeUrl)} className="h-full w-full object-cover" />
       ) : (
         initials
       )}

@@ -29,9 +29,11 @@ export function handler<F extends (req: NextRequest, ctx: any) => Promise<Respon
       return await fn(req, ctx as Parameters<F>[1]);
     } catch (err) {
       if (err instanceof ApiError) return fail(err.message, err.status, err.details);
-      const message = err instanceof Error ? err.message : "Unexpected error";
-      console.error("[api]", message);
-      return fail(message, 500);
+      // Unexpected failures are logged in full on the server, but the client
+      // only learns that the request failed: an internal error message can
+      // carry SQL fragments, file paths or library internals.
+      console.error("[api]", err instanceof Error ? err.message : "Unexpected error");
+      return fail("Unexpected error", 500);
     }
   };
 }

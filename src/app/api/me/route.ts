@@ -59,7 +59,9 @@ const patchSchema = z.object({
     .max(24)
     .regex(/^[a-z0-9_]+$/i)
     .optional(),
-  avatarUrl: z.string().url().nullable().optional().or(z.literal("").transform(() => null)),
+  // Only web URLs: an img src with a javascript:, data: or vbscript: scheme
+  // must never be stored (the component also blocks them as defence in depth).
+  avatarUrl: z.url({ protocol: /^https?$/ }).nullable().optional().or(z.literal("").transform(() => null)),
   bio: z.string().max(280).nullable().optional(),
 });
 
