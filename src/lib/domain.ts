@@ -73,8 +73,9 @@ function shapes(starters: number): Formation[] {
       result.push({ label: lines.join("-"), lines });
     }
   }
-  // Default to balanced templates. Zero counts are legal: league rules
-  // require one GK but don't impose a minimum for other positions.
+  // Default to balanced templates. Zero-count lines stay selectable while a
+  // squad is drafted, but squadCompositionErrors blocks saving a complete
+  // squad whose starting lineup lacks a Forward, Midfielder or Defender.
   const balance = ({ lines: [d, m, f] }: Formation) => (d-f)**2 + (d-m)**2 + (m-f)**2;
   return result.sort((a,b) => balance(a)-balance(b) || b.lines[1]-a.lines[1] || b.lines[0]-a.lines[0]);
 }
@@ -115,6 +116,30 @@ export type ValidationResult = { ok: true } | { ok: false; errors: string[] };
 const pass = { ok: true } as const;
 const fail = (errors: string[]): ValidationResult => ({ ok: false, errors });
 type SquadOptions = { formation: string; captainId?: string | null; viceId?: string | null };
+
+export const POSITION_NAME: Record<Position, string> = {
+  GK: "Goalkeeper", DEF: "Defender", MID: "Midfielder", FWD: "Forward",
+};
+
+/**
+ * Outfield positions the starting lineup still lacks. Only starters count:
+ * a Forward who sits on the bench or in the reserves does not satisfy the
+ * rule. Enforced on complete squad saves (client, API and database); partial
+ * drafts may legitimately be missing a line while they are built.
+ */
+export function missingSquadPositions(players: Pick<SquadPlayer, "position" | "slot">[]): Position[] {
+  const covered = new Set<Position>();
+  for (const p of players) if (p.slot === "starter") covered.add(p.position);
+  return OUTFIELD.filter((position) => !covered.has(position));
+}
+
+/** The missing-position message, or [] when the starting XI covers every line. */
+export function squadCompositionErrors(players: Pick<SquadPlayer, "position" | "slot">[]): string[] {
+  const missing = missingSquadPositions(players);
+  if (!missing.length) return [];
+  return ["Your starting lineup must contain at least 1 Forward, 1 Midfielder, and 1 Defender."
+    + ` Missing: ${missing.map((position) => POSITION_NAME[position]).join(", ")}.`];
+}
 
 export function compatibleFormations(rules: LeagueRules, players: Pick<SquadPlayer, "slot" | "position">[]) {
   const starters = players.filter((p) => p.slot === "starter");

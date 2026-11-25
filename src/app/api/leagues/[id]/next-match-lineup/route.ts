@@ -1,29 +1,13 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { getSupabase, type SupabaseClient } from "@/db";
+import { getSupabase } from "@/db";
 import { ApiError, checkDb, handler, requireMember } from "@/lib/server";
-import { playerPhotoUrl } from "@/lib/player-photo";
+import { decorateLineupPlayers } from "@/lib/lineup-decorate";
 import type { MatchLineup, NextMatchLineup, SavedMatchLineup } from "@/lib/next-match-lineup";
 
 type Ctx = { params: Promise<{ id: string }> };
 export const dynamic = "force-dynamic";
 const noStore = { headers: { "Cache-Control": "private, no-store" } };
-
-// Keep historical positions, names and order from the verified snapshot. Photos
-// and active status are display data only; a missing current player is archived.
-async function decorate(sb: SupabaseClient, league: string, lineups: MatchLineup[]) {
-  const ids = [...new Set(lineups.flatMap((l) => l.players.map((p) => p.id)))];
-  if (!ids.length) return;
-  const { data, error } = await sb.from("players").select("id,photo_url,shirt_number,status,availability,team_id,position")
-    .eq("league_id", league).in("id", ids);
-  checkDb(error, "Could not load lineup players");
-  const byId = new Map((data ?? []).map((p) => [p.id, p]));
-  for (const l of lineups) l.players = l.players.map((p) => {
-    const row = byId.get(p.id);
-    return { ...p, photoUrl: playerPhotoUrl(row?.photo_url ?? null, league, p.id), shirtNumber: row?.shirt_number ?? null,
-      status: row?.position === p.position ? row.status : "archived", availability: row?.availability ?? "unavailable", teamId: row?.team_id ?? null };
-  });
-}
 
 export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
@@ -33,7 +17,7 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   checkDb(error, "Could not load the next match lineup");
   if (!data?.serverNow) throw new ApiError("Could not confirm the next match lineup", 503);
   const result = data as NextMatchLineup;
-  await decorate(sb, id, [result.previous?.lineup, result.inPlay?.lineup, result.saved?.lineup, result.preparation?.lineup].filter((l): l is MatchLineup => Boolean(l)));
+  await decorateLineupPlayers(sb, id, [result.previous?.lineup, result.inPlay?.lineup, result.saved?.lineup, result.preparation?.lineup].filter((l): l is MatchLineup => Boolean(l)));
   return Response.json(result, noStore);
 });
 

@@ -43,6 +43,17 @@ type DashboardData = {
     complete: boolean;
     players: SquadEntry[];
   } | null;
+  /** The squad in force: lineup in play or previous match's official lineup. */
+  lineup?: {
+    matchId: string;
+    title: string;
+    kickOff: string;
+    inPlay: boolean;
+    formation: string;
+    captainId: string | null;
+    viceCaptainId: string | null;
+    players: SquadEntry[];
+  } | null;
   standings: {
     profileId: string;
     rank: number;
@@ -228,7 +239,7 @@ export default function DashboardPage() {
 
         {/* ---- right rail ---- */}
         <div className="min-w-0 space-y-5">
-          <SquadPreview key={data.league.id} league={data.league} squad={data.squad} latestPlayerGames={data.latestPlayerGames} />
+          <SquadPreview key={data.league.id} league={data.league} squad={data.squad} lineup={data.lineup ?? null} latestPlayerGames={data.latestPlayerGames} />
 
           {/* fixtures */}
           <Panel className="p-4">
@@ -316,14 +327,18 @@ export default function DashboardPage() {
   );
 }
 
-function SquadPreview({ league, squad, latestPlayerGames }: Pick<DashboardData, "league" | "squad" | "latestPlayerGames">) {
-  const players = squad?.players ?? [];
+function SquadPreview({ league, squad, lineup, latestPlayerGames }: Pick<DashboardData, "league" | "squad" | "lineup" | "latestPlayerGames">) {
+  // The pitch shows the squad in force: the locked lineup of the match in
+  // play or the previous match's official lineup when either exists, exactly
+  // like My Team. The default squad is the fallback while no match has
+  // locked a lineup yet. Editable next-match drafts never appear here.
+  const players = lineup?.players ?? squad?.players ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = players.find((p) => p.id === selectedId);
   // The latest points of the squad players arrive with the dashboard itself,
   // so the pitch never waits for a second request.
   const latest = latestPlayerGames ?? {};
-  const formation = deriveFormation(league, players, squad?.formation);
+  const formation = deriveFormation(league, players, lineup?.formation ?? squad?.formation);
   const bench = orderedBench(players);
   const hasBenchKeeper = bench.some((p) => p.position === "GK");
   return (
@@ -332,13 +347,17 @@ function SquadPreview({ league, squad, latestPlayerGames }: Pick<DashboardData, 
         <Slate>Your squad</Slate>
         <Link href="/team" className="text-xs font-semibold text-green hover:text-green-glow">View Full Squad</Link>
       </div>
+      {lineup && <p className="mb-3 text-xs text-sage">
+        {lineup.inPlay ? "Lineup in play" : "Previous match lineup"} ·{" "}
+        <Link href={`/matches/${lineup.matchId}`} className="hover:text-green">{lineup.title}</Link> · Read-only
+      </p>}
       <Pitch compact players={players} formation={formation ?? FORMATIONS[league.format][0]} format={league.format}
-        captainId={squad?.captainId ?? null} viceCaptainId={squad?.viceCaptainId ?? null} latest={latest} onSelect={setSelectedId} />
-      {!squad ? <div className="mt-3 text-center">
+        captainId={lineup?.captainId ?? squad?.captainId ?? null} viceCaptainId={lineup?.viceCaptainId ?? squad?.viceCaptainId ?? null} latest={latest} onSelect={setSelectedId} />
+      {!squad && !lineup ? <div className="mt-3 text-center">
         <p className="text-sm text-sage">You haven’t picked a squad in this league.</p>
         <Button href="/team/pick" size="sm" className="mt-2">Pick Your Squad <ChevronRight className="h-4 w-4" /></Button>
       </div> : <>
-        {!formation && <p className="mt-2 text-xs text-card-y">Some starters no longer fit. Review the full squad to fix the lineup.</p>}
+        {!lineup && !formation && <p className="mt-2 text-xs text-card-y">Some starters no longer fit. Review the full squad to fix the lineup.</p>}
         {bench.length > 0 && <div className="mt-3 border-t border-line pt-2">
           <Slate>Bench</Slate>
           <ul className="mt-2 grid grid-cols-2 gap-1.5">
@@ -351,7 +370,7 @@ function SquadPreview({ league, squad, latestPlayerGames }: Pick<DashboardData, 
             </button></li>)}
           </ul>
         </div>}
-        {!squad.complete && <Button href="/team/pick" size="sm" variant="outline" className="mt-3 w-full">
+        {!lineup && squad && !squad.complete && <Button href="/team/pick" size="sm" variant="outline" className="mt-3 w-full">
           Finish squad ({squad.size}/{league.squadSize})
         </Button>}
       </>}

@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getSupabase } from "@/db";
 import { ApiError, handler, leagueRules, requireMember, checkDb } from "@/lib/server";
-import { normalizeBench, validateSquad, validateSquadDraft, type Position } from "@/lib/domain";
+import { normalizeBench, squadCompositionErrors, validateSquad, validateSquadDraft, type Position } from "@/lib/domain";
 import type { AutoSubReport, SquadEntry, SquadResponse } from "@/lib/squad";
 
 import type { LiveMatchPoints } from "@/lib/live-points";
@@ -96,6 +96,15 @@ export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {
     return entryDto(p, e, id);
   }));
   const complete = players.length === rules.squadSize;
+  // The starting lineup must cover every line once the squad is complete;
+  // check it first so a full squad missing a line reports the position
+  // clearly instead of a generic formation count error. Partial drafts stay
+  // saveable so a manager can finish building later; the database enforces
+  // the same rule again for every complete save.
+  if (complete) {
+    const composition = squadCompositionErrors(players);
+    if (composition.length) throw new ApiError(composition.join(" "), 422, composition);
+  }
   const validation = (complete ? validateSquad : validateSquadDraft)(rules, players, {
     formation: input.formation, captainId: input.captainId, viceId: input.viceCaptainId,
   });

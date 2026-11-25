@@ -4,7 +4,9 @@ import { ApiError, checkDb, handler, leagueRules, requireMember } from "@/lib/se
 
 import { playerPhotoUrl } from "@/lib/player-photo";
 import { toLatestPlayerGames } from "@/lib/player-performance";
+import { decorateLineupPlayers } from "@/lib/lineup-decorate";
 import type { SquadEntry } from "@/lib/squad";
+import type { NextMatchLineup } from "@/lib/next-match-lineup";
 import { deriveFormation, validateSquad, type Position, type SquadPlayer } from "@/lib/domain";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +16,7 @@ export const GET = handler(async (req: NextRequest) => {
   const sb = await getSupabase();
   const membership = await requireMember(leagueId, sb);
   const user = membership.profileId;
-  const [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames] = await Promise.all([
+  const [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames, nextLineup] = await Promise.all([
     sb.from("fantasy_squads").select(
       "id,formation,captain_id,vice_captain_id,completed_at,fantasy_squad_players(player_id,slot,order,players(full_name,position,status,photo_url,team_id,shirt_number,availability,league_id))",
     ).eq("league_id", leagueId).eq("profile_id", user).maybeSingle(),
@@ -32,8 +34,13 @@ export const GET = handler(async (req: NextRequest) => {
     // The latest points of the manager's own squad players travel with the
     // dashboard, so the pitch never has to wait for a second request.
     sb.rpc("ff_my_latest_display_player_points", { p_league: leagueId }),
+    // The same resolution My Team uses: the lineup in play, else the previous
+    // match's official lineup. The default squad alone freezes once matches
+    // exist (it becomes next-match-only editable), so reading it here would
+    // drift away from what My Team shows.
+    sb.rpc("ff_next_match_lineup", { p_league: leagueId }),
   ]);
-  for (const result of [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames]) {
+  for (const result of [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames, nextLineup]) {
     checkDb(result.error, "Could not load dashboard");
   }
   const names = new Map((members.data ?? []).map((m) => [m.profile_id, m.team_name]));
@@ -51,12 +58,27 @@ export const GET = handler(async (req: NextRequest) => {
   const shape = deriveFormation(settings, players, squad.data?.formation);
   const complete = Boolean(squad.data?.completed_at && shape && entries.every((p) => p.players?.status === "active") &&
     validateSquad(settings, players, { formation: shape.label, captainId: squad.data.captain_id, viceId: squad.data.vice_captain_id }).ok);
+  // The squad in force: the locked lineup of the match in play, else the
+  // previous match's official lineup, else the current default squad — the
+  // exact precedence My Team applies, from the same RPC. The editable
+  // next-match preparation is never shown here: it is a draft, not a record.
+  const next = nextLineup.data as NextMatchLineup | null;
+  const relevant = next?.inPlay ?? next?.previous ?? null;
+  let lineup: { matchId: string; title: string; kickOff: string; inPlay: boolean;
+    formation: string; captainId: string | null; viceCaptainId: string | null; players: SquadEntry[] } | null = null;
+  if (relevant) {
+    const snapshot = { ...relevant.lineup, players: [...relevant.lineup.players] };
+    await decorateLineupPlayers(sb, leagueId, [snapshot]);
+    lineup = { matchId: relevant.matchId, title: relevant.title, kickOff: relevant.kickOff, inPlay: Boolean(next?.inPlay),
+      formation: snapshot.formation, captainId: snapshot.captainId, viceCaptainId: snapshot.viceId, players: snapshot.players };
+  }
   return Response.json({
     league: { id: league.id, name: league.name, format: league.format, starters: league.starters, subsCount: league.subs_count, squadSize: league.squad_size, inviteCode: league.invite_code, role: membership.role },
     squad: squad.data && players.length > 0 ? { id: squad.data.id, formation: shape?.label ?? "—", captainId: squad.data.captain_id, viceCaptainId: squad.data.vice_captain_id,
       players, size: players.length, starters: players.filter((p) => p.slot === "starter").length,
       subs: players.filter((p) => p.slot === "sub").length,
       complete } : null,
+    lineup,
     standings: (standings.data ?? []).slice(0, 8).map((s: any) => ({
       profileId: s.profile_id, rank: s.rank, prevRank: s.prev_rank, totalPoints: Number(s.total_points),
       matchesPlayed: s.matches_played, displayName: s.profiles?.display_name, teamName: names.get(s.profile_id) ?? null,
