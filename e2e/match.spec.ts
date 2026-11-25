@@ -55,10 +55,13 @@ test.describe("journeys J14–J16 — match lifecycle", () => {
     await expect(page).toHaveURL(/\/matches\/[^/]+$/);
 
     await page.getByRole("button", { name: /^Events \(\d+\)$/ }).click();
-    await page.getByLabel("Team").selectOption({ label: teamA });
-    await page.getByLabel("Event").selectOption("goal");
-    await page.getByLabel("Player").selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Add event" }).click();
+    // Both the "Record an event" and "Record a substitution" panels have
+    // Team/Event/Player selects — scope strictly to the event panel.
+    const eventPanel = page.locator("section").filter({ hasText: "Record an event" });
+    await eventPanel.getByLabel("Team").selectOption({ label: teamA });
+    await eventPanel.getByLabel("Event").selectOption("goal");
+    await eventPanel.getByLabel("Player").selectOption({ index: 1 });
+    await eventPanel.getByRole("button", { name: "Add event" }).click();
     await expect(page.getByRole("button", { name: "Events (1)" })).toBeVisible();
   });
 

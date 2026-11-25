@@ -250,13 +250,16 @@ jobs:
               echo "**Playwright totals:**"; echo; echo '```'
               grep -E "^[[:space:]]*[0-9]+ (passed|failed|skipped|did not run|flaky)" playwright-run.log || echo "(no totals line found — suite may not have completed)"
               echo '```'; echo
+              echo "**Failed journeys (title → first error line):**"; echo; echo '```'
+              awk '/^  [0-9]+\) e2e\//{print; want=14; next} want>0 && /^    (Error|Test timeout)/{sub(/^ +/,""); print "    → " $0; want=0; next} want>0{want--}' playwright-run.log || true
+              echo '```'; echo
             fi
             echo '```'
-            [ -f playwright-run.log ] && tail -c 20000 playwright-run.log || echo "(no run log — suite did not reach the Playwright step)"
+            [ -f playwright-run.log ] && tail -c 12000 playwright-run.log || echo "(no run log — suite did not reach the Playwright step)"
             echo '```'
-            find test-results -name '*error-context*' 2>/dev/null | head -20 | while read -r f; do
+            find test-results -name '*error-context*' 2>/dev/null | head -8 | while read -r f; do
               echo "<details><summary>${f}</summary>"; echo; echo '```'
-              head -c 8000 "$f"
+              head -c 3000 "$f"
               echo; echo '```'; echo '</details>'; echo
             done
           } | perl -pe '

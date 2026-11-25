@@ -42,7 +42,10 @@ export async function uiSignIn(page: Page, user: E2EUser) {
   await page.getByLabel("Email").fill(user.email);
   await page.getByLabel("Password").fill(E2E_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expectNavigation(page, /\/dashboard/, `uiSignIn(${user.username})`);
+  // League-less accounts are intentionally routed from /dashboard to /leagues
+  // by useActiveLeague (LeagueContext onboarding guard). Both landings prove
+  // a signed-in app session; /leagues-only assertions belong to the journeys.
+  await expectNavigation(page, /\/(dashboard|leagues)/, `uiSignIn(${user.username})`);
 }
 
 /** Create a league via the UI; on success the app navigates to /dashboard. */
@@ -65,18 +68,26 @@ export async function joinLeague(page: Page, code: string) {
   await expectNavigation(page, /\/dashboard/, `joinLeague(code len=${code.length})`);
 }
 
-/** Select a league by name from /leagues, so the active league is deterministic. */
+/** Select a league by exact name from /leagues (earlier runs leave same-prefix leagues behind). */
 export async function selectLeague(page: Page, name: string) {
   await page.goto("/leagues");
-  await page.getByRole("link", { name: new RegExp(name) }).first().click();
+  const row = page.locator("li").filter({ has: page.getByText(name, { exact: true }) }).first();
+  await row.getByRole("link").click();
   await expect(page).toHaveURL(/\/dashboard/);
 }
 
 /** Read the invitation code printed on the league's /leagues list entry. */
 export async function inviteCodeOf(page: Page, name: string): Promise<string> {
   await page.goto("/leagues");
-  const text = await page.locator("li", { hasText: name }).first().textContent();
-  const match = text?.match(/code\s+([A-Z0-9]{4,20})/i);
+  // Exact-name row: a substring filter can read a stale same-prefix league's
+  // code from an earlier run on the shared disposable project.
+  const row = page.locator("li").filter({ has: page.getByText(name, { exact: true }) }).first();
+  // The code sits in its own span ("{team} · code {CODE}"). Reading the whole
+  // li concatenates the role badge onto the capture (textContent adds no
+  // whitespace): "AB12CD34" came back as "AB12CD34League" (len=14) and the
+  // join correctly failed with "No league found with that code".
+  const line = await row.locator("span").filter({ hasText: /· code / }).last().textContent();
+  const match = line?.match(/code\s+([A-Z0-9]{4,20})\s*$/i);
   if (!match) throw new Error(`No invitation code visible for league "${name}" — is the caller a member?`);
   return match[1].toUpperCase();
 }

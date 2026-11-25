@@ -55,17 +55,29 @@ test.describe("journeys J17–J18 — notifications and profile", () => {
     const member = await pageAs(browser, MANAGER_STATE);
     try {
       const page = member.page;
+      const save = async () => {
+        await page.getByRole("button", { name: "Save profile" }).click();
+        const saved = page.getByText("All changes saved");
+        const toast = page.getByRole("status").first();
+        // Race the success indicator against the error toast, which
+        // auto-dismisses after ~4s — an un-raced timeout would lose the
+        // actual failure message from the page.
+        await expect(saved.or(toast)).toBeVisible();
+        const toastText = ((await toast.textContent().catch(() => "")) ?? "").trim();
+        if (toastText && !toastText.includes("Profile saved")) {
+          throw new Error(`Profile save surfaced an error toast: ${toastText}`);
+        }
+        await expect(saved).toBeVisible();
+      };
       await page.goto("/profile");
       await page.getByLabel("Display name").fill(newName);
-      await page.getByRole("button", { name: "Save profile" }).click();
-      await expect(page.getByText("All changes saved")).toBeVisible();
+      await save();
       await page.reload();
       await expect(page.getByLabel("Display name")).toHaveValue(newName);
 
       // Restore the canonical display name for the other journeys.
       await page.getByLabel("Display name").fill(E2E_USERS.manager.displayName);
-      await page.getByRole("button", { name: "Save profile" }).click();
-      await expect(page.getByText("All changes saved")).toBeVisible();
+      await save();
     } finally {
       await member.close();
     }

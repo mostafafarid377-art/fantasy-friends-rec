@@ -41,9 +41,13 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
   });
 
-  test("J04 sign in with valid credentials lands on the dashboard", async ({ page }) => {
+  test("J04 sign in with valid credentials lands in the app", async ({ page }) => {
     await uiSignIn(page, E2E_USERS.leader);
-    await expect(page.getByRole("heading", { name: /Matchday HQ/i })).toBeVisible();
+    // The leader owns no league yet (leagues are created in later journeys),
+    // so the app intentionally routes the session to the /leagues onboarding
+    // page (useActiveLeague) instead of /dashboard. Either landing is the
+    // correct signed-in destination; the signed-in chrome must render.
+    await expect(page.getByRole("link", { name: "Profile" }).first()).toBeVisible();
     // Regression lock: credentials must never be serialized into the URL.
     expect(page.url()).not.toContain("password");
     expect(page.url()).not.toContain(encodeURIComponent(E2E_USERS.leader.email));
