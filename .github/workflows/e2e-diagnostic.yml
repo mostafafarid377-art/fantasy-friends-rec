@@ -164,29 +164,50 @@ jobs:
           echo "E2E_SUPABASE_URL present: $UP"
           echo "service role key present: $SP"
           echo "anon key present: $AP"
-          # Record presence booleans (never values) so the PR report shows
-          # exactly which precondition failed instead of a bare "(no run log)".
-          {
-            echo "credential guard: url=$UP service=$SP anon=$AP"
-            case "$U" in *ssvwzakelcumisccsuly*) echo "disposable-guard: would-pass";; *) echo "disposable-guard: would-REFUSE (url is not the disposable project)";; esac
-          } > guard-result.txt
           if [ -z "$U" ] || [ -z "$S" ] || [ -z "$SECRET_ANON" ]; then
+            {
+              echo "credential guard: url=$UP service=$SP anon=$AP"
+              echo "status: BLOCKED — secrets not configured"
+            } > guard-result.txt
             echo "::error::BLOCKED — GitHub Actions secrets are not configured. Need E2E_SUPABASE_URL, E2E_SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_ROLE_KEY) and NEXT_PUBLIC_SUPABASE_ANON_KEY of the DISPOSABLE project ssvwzakelcumisccsuly. The 19-journey suite cannot authenticate without them; no result is fabricated."
             exit 1
           fi
+          # Hard refusals first: the production ref is never an acceptable value.
           case "$U" in
-            *ssvwzakelcumisccsuly*) echo "disposable-project guard: OK" ;;
-            *) echo "::error::REFUSED — the configured Supabase URL is not the disposable project ssvwzakelcumisccsuly. Never run E2E against production."; exit 1 ;;
+            *zkrfgdiujpagaddsxbcb*)
+              echo "status: REFUSED — production project reference detected" > guard-result.txt
+              echo "::error::REFUSED — production project reference detected."
+              exit 1 ;;
           esac
+          # Canonicalize the configured URL to the disposable project's bare
+          # origin. Connection settings are commonly copied WITH an API path
+          # (…/rest/v1/) or a trailing slash; both unambiguously name the same
+          # project, so the canonical form is derived here. Anything that is
+          # not https on the disposable host is refused. The value itself is
+          # never printed — only shape booleans.
           case "$U" in
-            *zkrfgdiujpagaddsxbcb*) echo "::error::REFUSED — production project reference detected."; exit 1 ;;
+            https://ssvwzakelcumisccsuly.supabase.co|https://ssvwzakelcumisccsuly.supabase.co/*)
+              CANON="https://ssvwzakelcumisccsuly.supabase.co"
+              if [ "$U" = "$CANON" ]; then CANON_NOTE="already canonical"; else CANON_NOTE="normalized to bare origin (path/trailing slash dropped)"; fi
+              ;;
+            *)
+              {
+                echo "credential guard: url=$UP service=$SP anon=$AP"
+                echo "status: REFUSED — URL is not https on host ssvwzakelcumisccsuly.supabase.co"
+              } > guard-result.txt
+              echo "::error::REFUSED — the configured Supabase URL is not https://ssvwzakelcumisccsuly.supabase.co (an API path like /rest/v1 is fine). Never run E2E against production."
+              exit 1 ;;
           esac
           {
-            echo "NEXT_PUBLIC_SUPABASE_URL=$U"
+            echo "credential guard: url=$UP service=$SP anon=$AP"
+            echo "disposable-guard: PASS ($CANON_NOTE)"
+          } > guard-result.txt
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$CANON"
             echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$SECRET_ANON"
             echo "SUPABASE_SERVICE_ROLE_KEY=$S"
           } > .env.local
-          echo "E2E_SUPABASE_URL=$U" >> "$GITHUB_ENV"
+          echo "E2E_SUPABASE_URL=$CANON" >> "$GITHUB_ENV"
           echo "E2E_SUPABASE_SERVICE_ROLE_KEY=$S" >> "$GITHUB_ENV"
           [ -n "$SECRET_PW" ] && echo "E2E_USER_PASSWORD=$SECRET_PW" >> "$GITHUB_ENV" || true
 
@@ -194,7 +215,11 @@ jobs:
       - run: npx playwright install --with-deps chromium
 
       - name: Run all 19 journeys (dev server auto-started by Playwright webServer)
-        run: npx playwright test 2>&1 | tee playwright-run.log
+        run: |
+          # pipefail: without it the pipeline exits with tee's status and a
+          # failing Playwright run would be reported as a green job.
+          set -o pipefail
+          npx playwright test 2>&1 | tee playwright-run.log
 
       - name: Prepare redacted E2E report (secrets stripped)
         if: always()
@@ -203,6 +228,11 @@ jobs:
             echo "### E2E suite — run ${GITHUB_RUN_ID}"
             echo
             [ -f guard-result.txt ] && { echo "**Credential guard:**"; echo; echo '```'; cat guard-result.txt; echo '```'; echo; }
+            if [ -f playwright-run.log ]; then
+              echo "**Playwright totals:**"; echo; echo '```'
+              grep -E "^[[:space:]]*[0-9]+ (passed|failed|skipped|did not run|flaky)" playwright-run.log || echo "(no totals line found — suite may not have completed)"
+              echo '```'; echo
+            fi
             echo '```'
             [ -f playwright-run.log ] && tail -c 20000 playwright-run.log || echo "(no run log — suite did not reach the Playwright step)"
             echo '```'

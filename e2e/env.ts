@@ -50,18 +50,63 @@ export const E2E_USERS = {
 
 export type E2EUser = (typeof E2E_USERS)[keyof typeof E2E_USERS];
 
-/** Admin credentials of the DISPOSABLE Supabase project (Node setup only, never shipped to the browser). */
+/** Project refs: the disposable E2E project (only valid target) and production (always refused). */
+export const DISPOSABLE_PROJECT_REF = "ssvwzakelcumisccsuly";
+export const PRODUCTION_PROJECT_REF = "zkrfgdiujpagaddsxbcb";
+
+/**
+ * Admin credentials of the DISPOSABLE Supabase project (Node setup only, never shipped to the browser).
+ *
+ * The only accepted hosted URL is the disposable project's origin
+ * `https://ssvwzakelcumisccsuly.supabase.co`. Formatting variants that still
+ * unambiguously name that project — surrounding whitespace, a trailing
+ * slash, or a standard API path such as `/rest/v1/` (a common copy-paste
+ * from connection settings) — are normalized to the bare origin via
+ * `URL.origin`. What is accepted never changes: same host, same project,
+ * HTTPS only. The production project ref is refused explicitly, before any
+ * other check, and any other Supabase ref is refused as well.
+ * localhost/127.0.0.1 remain allowed for local `supabase start` development.
+ *
+ * Error messages deliberately describe only the SHAPE of the configured
+ * value (scheme/host-suffix booleans, length) and never echo the value
+ * itself: this function runs in CI where logs become PR comments.
+ */
 export function supabaseAdminEnv(): { url: string; serviceRoleKey: string } {
-  const url = process.env.E2E_SUPABASE_URL;
+  const rawUrl = (process.env.E2E_SUPABASE_URL ?? "").trim();
   const serviceRoleKey = process.env.E2E_SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) {
+  if (!rawUrl || !serviceRoleKey) {
     throw new Error(
       "E2E setup requires E2E_SUPABASE_URL and E2E_SUPABASE_SERVICE_ROLE_KEY of a DISPOSABLE Supabase project. " +
         "See E2E_TESTING.md — never use production credentials.",
     );
   }
-  if (!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i.test(url) && !url.includes("127.0.0.1") && !url.includes("localhost")) {
-    throw new Error(`E2E_SUPABASE_URL does not look like a Supabase project URL: ${url}`);
+  // Production is refused by substring, before any parsing or normalization.
+  if (rawUrl.toLowerCase().includes(PRODUCTION_PROJECT_REF)) {
+    throw new Error(`E2E_SUPABASE_URL points at the PRODUCTION project (${PRODUCTION_PROJECT_REF}) — refused.`);
   }
-  return { url, serviceRoleKey };
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(rawUrl);
+  if (isLocal) {
+    return { url: rawUrl.replace(/\/+$/, ""), serviceRoleKey };
+  }
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    parsed = null;
+  }
+  const disposableHost = `${DISPOSABLE_PROJECT_REF}.supabase.co`;
+  if (!parsed || parsed.protocol !== "https:" || parsed.hostname !== disposableHost) {
+    const shape = [
+      `https=${parsed?.protocol === "https:" ? "yes" : "no"}`,
+      `hostIsDisposableProject=${parsed?.hostname === disposableHost ? "yes" : "no"}`,
+      `hostIsSupabase=${parsed?.hostname.endsWith(".supabase.co") === true ? "yes" : "no"}`,
+      `length=${rawUrl.length}`,
+    ].join(" ");
+    throw new Error(
+      `E2E_SUPABASE_URL is not the disposable project's URL (${shape}). ` +
+        `Expected ${disposableHost} (paths like /rest/v1 are fine and are normalized away).`,
+    );
+  }
+  // Canonical origin: strips any path/query/trailing slash (e.g. /rest/v1/).
+  return { url: parsed.origin, serviceRoleKey };
 }

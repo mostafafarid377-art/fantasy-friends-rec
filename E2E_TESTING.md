@@ -157,7 +157,13 @@ touches production credentials or data.
    `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
    `SUPABASE_SERVICE_ROLE_KEY` (server-side routes only).
 6. **E2E environment** (shell exports, disposable project values only):
-   - `E2E_SUPABASE_URL` — required.
+   - `E2E_SUPABASE_URL` — required. The disposable project's URL,
+     `https://ssvwzakelcumisccsuly.supabase.co`. Only that exact host over
+     HTTPS is accepted; the production ref is refused explicitly. Formatting
+     variants that still name the same project — a trailing slash or an API
+     path such as `/rest/v1/` copied from connection settings — are
+     normalized to the bare origin (`e2e/env.ts`). Validation errors report
+     only the value's shape, never the value itself.
    - `E2E_SUPABASE_SERVICE_ROLE_KEY` — required; read only by Playwright's
      Node process (`e2e/global-setup.ts`), never shipped to the browser.
    - `E2E_BASE_URL` — optional; defaults to `http://127.0.0.1:3000` and the
