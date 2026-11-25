@@ -1,24 +1,26 @@
 import { expect, test } from "@playwright/test";
 import { E2E_USERS } from "./env";
-import { addTeam, createLeague, inviteCodeOf, joinLeague, LEADER_STATE, MANAGER_STATE, pageAs, unique } from "./helpers";
+import { addTeam, createLeague, inviteCodeOf, joinLeague, LEADER_STATE, MANAGER_STATE, nameOf, pageAs, seededName, unique } from "./helpers";
 
 /**
  * J17–J18 cover the account surface: notifications driven by a real league
  * event (creating a match notifies every other member) and profile editing
  * with a verified read-back.
+ * seededName: a worker restart re-evaluates module constants, so cross-test
+ * names resolve the per-file seed lazily instead (see helpers.seededName).
  */
-const leagueName = unique("E2E Notify League");
-const teamA = unique("E2E Notify A");
-const teamB = unique("E2E Notify B");
-const matchTitle = unique("E2E Notify Match");
+const leagueName = seededName("E2E Notify League");
+const teamA = seededName("E2E Notify A");
+const teamB = seededName("E2E Notify B");
+const matchTitle = seededName("E2E Notify Match");
 
 test.describe("journeys J17–J18 — notifications and profile", () => {
   test("J17 a league event notifies the other member and mark-all-read clears it", async ({ browser }) => {
     const leader = await pageAs(browser, LEADER_STATE);
-    await createLeague(leader.page, leagueName);
-    await addTeam(leader.page, teamA);
-    await addTeam(leader.page, teamB);
-    const code = await inviteCodeOf(leader.page, leagueName);
+    await createLeague(leader.page, nameOf(leagueName));
+    await addTeam(leader.page, nameOf(teamA));
+    await addTeam(leader.page, nameOf(teamB));
+    const code = await inviteCodeOf(leader.page, nameOf(leagueName));
 
     const member = await pageAs(browser, MANAGER_STATE);
     await joinLeague(member.page, code);
@@ -26,9 +28,9 @@ test.describe("journeys J17–J18 — notifications and profile", () => {
 
     // Leader creates a match — every other member is notified.
     await leader.page.goto("/matches/new");
-    await leader.page.getByLabel("Match title").fill(matchTitle);
-    await leader.page.getByLabel("Team A").selectOption({ label: teamA });
-    await leader.page.getByLabel("Team B").selectOption({ label: teamB });
+    await leader.page.getByLabel("Match title").fill(nameOf(matchTitle));
+    await leader.page.getByLabel("Team A").selectOption({ label: nameOf(teamA) });
+    await leader.page.getByLabel("Team B").selectOption({ label: nameOf(teamB) });
     const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, "0");
     await leader.page.getByLabel("Kick-off").fill(

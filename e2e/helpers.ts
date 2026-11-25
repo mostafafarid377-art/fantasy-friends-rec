@@ -48,6 +48,26 @@ export function uniqueSuffix(): string {
 }
 
 /**
+ * A cross-test shared name with a stable per-file suffix. Names are declared
+ * once at module scope (`unique("E2E Match League")`) but the suffix can only
+ * be resolved while a test runs — and a worker restart re-evaluates module
+ * constants. seededName() resolves the same seed file in every process, so
+ * J14 and J15 agree on the league name no matter which worker runs them.
+ */
+export function seededName(prefix: string): { value: string } {
+  return {
+    get value() {
+      return `${prefix} ${uniqueSuffix()}`;
+    },
+  };
+}
+
+/** Resolve a seededName() (or a plain string) to the name for this run. */
+export function nameOf(named: string | { value: string }): string {
+  return typeof named === "string" ? named : named.value;
+}
+
+/**
  * Await an expected navigation; on timeout, fail with the page's own visible
  * feedback (role="alert" notes, role="status" toasts) and the current URL so
  * a failure identifies its real cause instead of a bare locator timeout.
