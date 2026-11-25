@@ -60,6 +60,11 @@ profile — with **test accounts only**, against a **disposable environment**.
 
 ## Running
 
+Requires **Node.js 22+**: `@supabase/supabase-js` eagerly initializes its
+Realtime client in `createClient()`, which needs the native WebSocket global
+that only exists in Node 22+ (CI pins `node-version: 22`; on Node 20 global
+setup fails with "Node.js detected but native WebSocket not found").
+
 ```bash
 npx playwright install chromium   # once, downloads the browser
 npm run test:e2e                  # starts `npm run dev` automatically when E2E_BASE_URL is unset
