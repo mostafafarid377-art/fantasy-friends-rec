@@ -158,9 +158,18 @@ jobs:
         run: |
           U="${SECRET_URL_A:-$SECRET_URL_B}"
           S="${SECRET_SERVICE:-$SECRET_SERVICE_B}"
-          echo "E2E_SUPABASE_URL present: $([ -n "$U" ] && echo yes || echo no)"
-          echo "service role key present: $([ -n "$S" ] && echo yes || echo no)"
-          echo "anon key present: $([ -n "$SECRET_ANON" ] && echo yes || echo no)"
+          UP=$([ -n "$U" ] && echo yes || echo no)
+          SP=$([ -n "$S" ] && echo yes || echo no)
+          AP=$([ -n "$SECRET_ANON" ] && echo yes || echo no)
+          echo "E2E_SUPABASE_URL present: $UP"
+          echo "service role key present: $SP"
+          echo "anon key present: $AP"
+          # Record presence booleans (never values) so the PR report shows
+          # exactly which precondition failed instead of a bare "(no run log)".
+          {
+            echo "credential guard: url=$UP service=$SP anon=$AP"
+            case "$U" in *ssvwzakelcumisccsuly*) echo "disposable-guard: would-pass";; *) echo "disposable-guard: would-REFUSE (url is not the disposable project)";; esac
+          } > guard-result.txt
           if [ -z "$U" ] || [ -z "$S" ] || [ -z "$SECRET_ANON" ]; then
             echo "::error::BLOCKED — GitHub Actions secrets are not configured. Need E2E_SUPABASE_URL, E2E_SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_ROLE_KEY) and NEXT_PUBLIC_SUPABASE_ANON_KEY of the DISPOSABLE project ssvwzakelcumisccsuly. The 19-journey suite cannot authenticate without them; no result is fabricated."
             exit 1
@@ -193,8 +202,9 @@ jobs:
           {
             echo "### E2E suite — run ${GITHUB_RUN_ID}"
             echo
+            [ -f guard-result.txt ] && { echo "**Credential guard:**"; echo; echo '```'; cat guard-result.txt; echo '```'; echo; }
             echo '```'
-            [ -f playwright-run.log ] && tail -c 20000 playwright-run.log || echo "(no run log)"
+            [ -f playwright-run.log ] && tail -c 20000 playwright-run.log || echo "(no run log — suite did not reach the Playwright step)"
             echo '```'
             find test-results -name '*error-context*' 2>/dev/null | head -20 | while read -r f; do
               echo "<details><summary>${f}</summary>"; echo; echo '```'
