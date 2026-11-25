@@ -113,18 +113,25 @@ jobs:
         with:
           script: |
             const fs = require("fs");
+            const files = [
+              ["diagnostic-dev.json", "control: dev @127.0.0.1, current config"],
+              ["diagnostic-dev-localhost.json", "experiment 1: dev @localhost, current config"],
+              ["diagnostic-dev-allowed-origins.json", "experiment 2: dev @127.0.0.1 + in-CI allowedDevOrigins patch"],
+              ["diagnostic-prod.json", "reference: production build @127.0.0.1"],
+            ];
             let body = `### Hydration diagnostic — run ${context.runId} (${context.sha.slice(0, 7)})\n\n`;
-            for (const f of ["diagnostic-dev.json", "diagnostic-dev-localhost.json", "diagnostic-dev-allowed-origins.json", "diagnostic-prod.json"]) {
-              if (!fs.existsSync(f)) { body += `_${f}: missing_\n\n`; continue; }
-              let content = fs.readFileSync(f, "utf8");
-              if (content.length > 30000) content = content.slice(0, 30000) + "\n…TRUNCATED…";
-              body += `<details><summary>${f}</summary>\n\n\`\`\`json\n${content}\n\`\`\`\n</details>\n\n`;
+            body += "| scenario | page | inline JS | runtime | scripts loaded | CSP violations | page errors | WS errors | hydration | submit |\n";
+            body += "|---|---|---|---|---|---|---|---|---|---|\n";
+            for (const [f, label] of files) {
+              if (!fs.existsSync(f)) { body += `| ${label} | — | file missing |\n`; continue; }
+              let arr; try { arr = JSON.parse(fs.readFileSync(f, "utf8")); } catch { body += `| ${label} | — | unparsable |\n`; continue; }
+              for (const sc of arr) {
+                const ws = (sc.console || []).filter((l) => l.includes("WebSocket")).length;
+                const hyd = sc.hydrationProbe.startsWith("HYDRATED") ? "**HYDRATED**" : "NOT HYDRATED";
+                body += `| ${label} | ${sc.scenario} | ${sc.inlineScriptsExecuted} | ${sc.runtimeChunkExecuted} | ${(sc.scriptEvents || []).length} | ${(sc.cspViolations || []).length} | ${(sc.pageErrors || []).length} | ${ws} | ${hyd} | ${String(sc.submitProbe).slice(0, 60)} |\n`;
+              }
             }
-            if (fs.existsSync("dev-server.log")) {
-              const lines = fs.readFileSync("dev-server.log", "utf8").trim().split("\n").slice(-40).join("\n");
-              body += `<details><summary>dev-server.log (tail)</summary>\n\n\`\`\`\n${lines}\n\`\`\`\n</details>`;
-            }
-            if (body.length > 60000) body = body.slice(0, 60000) + "\n…TRUNCATED…";
+            body += "\nFull redacted JSON is in the `hydration-diagnostic` workflow artifact. No bodies, cookies, tokens or credentials are captured.\n";
             await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: 41, body });
 
   e2e:
