@@ -24,14 +24,15 @@ function pastKickoffLocal(): string {
  * Save a starting XI for one team on the match's Line-ups tab. The only
  * formation rule that matters for the six-player pool J14 registers (GK,
  * DEF, MID, FWD + two more) is exactly five starters with one goalkeeper,
- * so the first five players in the list always satisfy it. J15's event
- * roster and J16's result both require persisted lineups.
+ * so five clicks on the first available player always satisfy it. Each
+ * click re-renders the roster list, so a static nth() handle goes stale —
+ * always pick the first player that is not already a starter.
  */
 async function setLineup(page: Page, team: string) {
   const panel = page.locator("section").filter({ has: page.getByRole("heading", { name: team, exact: true }) });
-  const buttons = panel.locator("ul li").getByRole("button", { name: "XI", exact: true });
   for (let i = 0; i < 5; i++) {
-    await buttons.nth(i).click();
+    await panel.locator("ul li").filter({ hasNot: page.getByRole("button", { name: "XI", exact: true, pressed: true }) })
+      .first().getByRole("button", { name: "XI", exact: true }).click();
   }
   await panel.getByRole("button", { name: "Save line-up" }).click();
   await expect(panel.getByRole("button", { name: "Save line-up" })).toBeEnabled();
