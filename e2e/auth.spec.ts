@@ -41,33 +41,35 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     await page.getByLabel("Confirm").fill("J03-Passw0rd-Ok!");
     await page.getByRole("button", { name: "Create account" }).click();
     // The disposable project keeps email confirmations ON (see E2E_TESTING.md).
-    // GoTrue also caps SMTP sends per project per hour, and repeated runs
-    // exhaust it: the app then renders "email rate limit exceeded" inline.
-    // Skipping here would misreport the journey, so retry across the window
-    // (the cap resets hourly) and only fail with the page's own feedback.
-    const deadline = Date.now() + 65 * 60 * 1000;
-    for (;;) {
-      try {
-        await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible({ timeout: 15_000 });
-        return;
-      } catch (err) {
-        const formText = ((await page.locator("form").first().textContent().catch(() => "")) ?? "")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 300);
-        const limited = /email rate limit/i.test(formText);
-        if (limited && Date.now() < deadline) {
-          // GoTrue's email-send window is hourly; wait it out and resubmit
-          // the same form rather than failing the journey on a shared cap.
-          await page.waitForTimeout(5 * 60 * 1000);
-          await page.getByRole("button", { name: "Create account" }).click();
-          continue;
-        }
+    // Two rate limits can block the confirmation step: our own auth.signup
+    // (5/hour per email+IP, fixed epoch windows) and GoTrue's SMTP send cap.
+    // Neither is a product bug, so wait out the current window and retry the
+    // SAME signup once — the form data is unchanged, and only a genuinely
+    // fresh attempt after the window reset proves the journey.
+    const first = await page.getByRole("heading", { name: "Check your email" }).isVisible().catch(() => false);
+    if (!first) {
+      const formText = ((await page.locator("form").first().textContent().catch(() => "")) ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      const limited = /too many attempts|email rate limit/i.test(formText);
+      if (!limited) {
         const alerts = await page.getByRole("alert").allTextContents().catch(() => [] as string[]);
         throw new Error(
           `J03: confirmation step not shown at ${page.url()}. Form: ${JSON.stringify(formText)}. Alerts: ${JSON.stringify(alerts)}.`,
-          { cause: err },
         );
+      }
+      // Wait for the next fixed window (both caps are hourly), then resubmit.
+      await page.waitForTimeout(61 * 60 * 1000);
+      await page.getByRole("button", { name: "Create account" }).click();
+      try {
+        await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible({ timeout: 15_000 });
+      } catch (err) {
+        const formText2 = ((await page.locator("form").first().textContent().catch(() => "")) ?? "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 300);
+        throw new Error(`J03: still no confirmation after the rate-limit window. Form: ${JSON.stringify(formText2)}.`, { cause: err });
       }
     }
   });

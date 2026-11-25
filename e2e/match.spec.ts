@@ -31,20 +31,20 @@ function pastKickoffLocal(): string {
 async function setLineup(page: Page, team: string) {
   const panel = page.locator("section").filter({ has: page.getByRole("heading", { name: team, exact: true }) });
   try {
+    // The roster list re-renders after every click, so always operate on the
+    // current first row whose XI button is still unpressed.
     for (let i = 0; i < 5; i++) {
-      // Rows already in the XI are marked aria-pressed="true"; pick the first
-      // row whose XI button is still unpressed, every time the list re-renders.
-      await panel.locator("ul li").filter({ has: page.locator('button[aria-pressed="false"]', { hasText: "XI" }) })
-        .first().locator('button[aria-pressed="false"]', { hasText: "XI" }).click();
+      await panel.locator("ul li:has(button[aria-pressed=\"false\"]:text-is(\"XI\"))").first()
+        .locator('button[aria-pressed="false"]:text-is("XI")').click();
     }
     await panel.getByRole("button", { name: "Save line-up" }).click();
     await expect(panel.getByRole("button", { name: "Save line-up" })).toBeEnabled();
   } catch (err) {
     const rows = await panel.locator("ul li").allTextContents().catch(() => [] as string[]);
-    const xiCount = await panel.locator('button[aria-pressed="false"]', { hasText: "XI" }).count().catch(() => -1);
-    const disabled = await panel.locator('button[aria-pressed="false"][disabled]', { hasText: "XI" }).count().catch(() => -1);
+    const xi = await panel.locator('button[aria-pressed="false"]').allTextContents().catch(() => [] as string[]);
+    const disabled = await panel.locator('button[aria-pressed="false"][disabled]').allTextContents().catch(() => [] as string[]);
     throw new Error(
-      `setLineup(${team}) failed: ${xiCount} unpressed XI buttons, ${disabled} disabled. Rows: ${JSON.stringify(rows)}.`,
+      `setLineup(${team}) failed: ${xi.length} unpressed XI (${JSON.stringify(xi)}), ${disabled.length} disabled. Rows: ${JSON.stringify(rows)}.`,
       { cause: err },
     );
   }
