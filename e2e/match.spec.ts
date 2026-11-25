@@ -34,7 +34,7 @@ async function setLineup(page: Page, team: string) {
     // The roster list re-renders after every click, so always operate on the
     // current first row whose XI button is still unpressed.
     for (let i = 0; i < 5; i++) {
-      await panel.locator('ul li:has(button[aria-pressed="false"])').first()
+      await panel.locator("ul li").filter({ has: page.locator('button[aria-pressed="false"]') }).first()
         .locator('button[aria-pressed="false"]').first().click();
     }
     await panel.getByRole("button", { name: "Save line-up" }).click();
