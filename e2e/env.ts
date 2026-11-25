@@ -41,11 +41,19 @@ export const E2E_EMAIL_DOMAIN = "ssvwzakelcumisccsuly.supabase.co";
 /**
  * Deterministic test accounts, provisioned by global-setup.ts. Addresses are
  * random-collision-proof and can only ever belong to the disposable project.
+ *
+ * The usernames carry an `_ffr` suffix on purpose: profiles.username has a
+ * unique index (0001_schema.sql), and the disposable project still holds the
+ * pre-domain-fix fixture users (…@fantasyfriends.test) whose profiles claim
+ * the bare `e2e_leader`/`e2e_manager`/`e2e_outsider` usernames. Reusing those
+ * made GoTrue's createUser fail with "Database error creating new user"
+ * (unique violation in the handle_new_auth_user trigger). The suite never
+ * deletes existing rows, so fresh deterministic usernames are the fix.
  */
 export const E2E_USERS = {
-  leader: { email: `e2e-leader@${E2E_EMAIL_DOMAIN}`, username: "e2e_leader", displayName: "E2E Leader" },
-  manager: { email: `e2e-manager@${E2E_EMAIL_DOMAIN}`, username: "e2e_manager", displayName: "E2E Manager" },
-  outsider: { email: `e2e-outsider@${E2E_EMAIL_DOMAIN}`, username: "e2e_outsider", displayName: "E2E Outsider" },
+  leader: { email: `e2e-leader@${E2E_EMAIL_DOMAIN}`, username: "e2e_leader_ffr", displayName: "E2E Leader" },
+  manager: { email: `e2e-manager@${E2E_EMAIL_DOMAIN}`, username: "e2e_manager_ffr", displayName: "E2E Manager" },
+  outsider: { email: `e2e-outsider@${E2E_EMAIL_DOMAIN}`, username: "e2e_outsider_ffr", displayName: "E2E Outsider" },
 } as const;
 
 export type E2EUser = (typeof E2E_USERS)[keyof typeof E2E_USERS];

@@ -47,7 +47,12 @@ export default async function globalSetup() {
         email_confirm: true,
         user_metadata: { username: user.username, display_name: user.displayName },
       });
-      if (error) throw new Error(`Could not create E2E user ${user.email}: ${error.message}`);
+      if (error) {
+        const hint = /database error/i.test(error.message)
+          ? " Hint: a stale profile row on the disposable project may already claim this username (profiles_username_uq) — pick a fresh username in e2e/env.ts; the suite never deletes existing data."
+          : "";
+        throw new Error(`Could not create E2E user ${user.email}: ${error.message}.${hint}`);
+      }
     }
   }
 
