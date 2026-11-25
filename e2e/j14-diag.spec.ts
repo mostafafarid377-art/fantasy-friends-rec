@@ -10,9 +10,11 @@ const leagueName = seededName("E2E Diag League");
 const teamA = seededName("E2E Diag A");
 const teamB = seededName("E2E Diag B");
 
-test("J14-DIAG lineup save with full DOM tracing", async ({ page }) => {
-  test.setTimeout(5 * 60 * 1000);
-  test.use({ storageState: LEADER_STATE } as never);
+test.describe("J14-DIAG", () => {
+  test.use({ storageState: LEADER_STATE });
+
+  test("lineup save with full DOM tracing", async ({ page }) => {
+    test.setTimeout(5 * 60 * 1000);
 
   await createLeague(page, nameOf(leagueName));
   await addTeam(page, nameOf(teamA));
@@ -83,4 +85,5 @@ test("J14-DIAG lineup save with full DOM tracing", async ({ page }) => {
   await saveBtn.click();
   await expect(saveBtn).toBeEnabled();
   console.log("[J14-DIAG] lineup saved OK");
+  });
 });

@@ -69,9 +69,12 @@ test.describe("journeys J14–J16 — match lifecycle", () => {
     await addTeam(page, nameOf(teamA));
     await addTeam(page, nameOf(teamB));
     let shirt = 0;
-    for (const [team, positions] of [[nameOf(teamA), ["GK", "DEF", "FWD"]], [nameOf(teamB), ["GK", "DEF", "FWD"]]] as const) {
+    // The default 5v5 formation starts 5 players with exactly one goalkeeper,
+    // so register five per team (GK, DEF, MID, FWD, FWD) — three is never
+    // enough to reach XI 5/5 and the save button stays disabled.
+    for (const [team, positions] of [[nameOf(teamA), ["GK", "DEF", "MID", "FWD", "FWD"]], [nameOf(teamB), ["GK", "DEF", "MID", "FWD", "FWD"]]] as const) {
       for (const position of positions) {
-        await addPlayer(page, `${team} ${position} ${nameOf(matchTitle).split(" ").pop()}`, position, team, String(++shirt));
+        await addPlayer(page, `${team} ${position} ${++shirt}`, position, team, String(shirt));
       }
     }
     await createMatch(page);
