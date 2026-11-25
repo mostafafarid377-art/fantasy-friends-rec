@@ -16,6 +16,13 @@ concurrency:
   group: e2e-diag-${{ github.ref }}
   cancel-in-progress: true
 
+# The runner posts the REDACTED outputs as PR comments: artifact/log download
+# endpoints are unreachable from the diagnostics sandbox, PR comments are API.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 jobs:
   diagnose:
     name: Hydration diagnostic (dev + prod, no secrets)
@@ -71,6 +78,26 @@ jobs:
             build.log
           if-no-files-found: warn
 
+      - name: Publish redacted diagnostic output to PR #41
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            let body = `### Hydration diagnostic — run ${context.runId} (${context.sha.slice(0, 7)})\n\n`;
+            for (const f of ["diagnostic-dev.json", "diagnostic-prod.json"]) {
+              if (!fs.existsSync(f)) { body += `_${f}: missing_\n\n`; continue; }
+              let content = fs.readFileSync(f, "utf8");
+              if (content.length > 30000) content = content.slice(0, 30000) + "\n…TRUNCATED…";
+              body += `<details><summary>${f}</summary>\n\n\`\`\`json\n${content}\n\`\`\`\n</details>\n\n`;
+            }
+            if (fs.existsSync("dev-server.log")) {
+              const lines = fs.readFileSync("dev-server.log", "utf8").trim().split("\n").slice(-40).join("\n");
+              body += `<details><summary>dev-server.log (tail)</summary>\n\n\`\`\`\n${lines}\n\`\`\`\n</details>`;
+            }
+            if (body.length > 60000) body = body.slice(0, 60000) + "\n…TRUNCATED…";
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: 41, body });
+
   e2e:
     name: Full 19-journey E2E (requires disposable-project secrets)
     runs-on: ubuntu-latest
@@ -123,6 +150,39 @@ jobs:
 
       - name: Run all 19 journeys (dev server auto-started by Playwright webServer)
         run: npx playwright test 2>&1 | tee playwright-run.log
+
+      - name: Prepare redacted E2E report (secrets stripped)
+        if: always()
+        run: |
+          {
+            echo "### E2E suite — run ${GITHUB_RUN_ID}"
+            echo
+            echo '```'
+            [ -f playwright-run.log ] && tail -c 20000 playwright-run.log || echo "(no run log)"
+            echo '```'
+            find test-results -name '*error-context*' 2>/dev/null | head -20 | while read -r f; do
+              echo "<details><summary>${f}</summary>"; echo; echo '```'
+              head -c 8000 "$f"
+              echo; echo '```'; echo '</details>'; echo
+            done
+          } | perl -pe '
+            for my $v ($ENV{E2E_USER_PASSWORD}, $ENV{E2E_SUPABASE_SERVICE_ROLE_KEY}, $ENV{SECRET_ANON}) {
+              next unless defined $v && length $v >= 6;
+              my $q = quotemeta($v);
+              s/$q/[REDACTED]/g;
+            }
+          ' > e2e-comment.md
+
+      - name: Publish redacted E2E report to PR #41
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            if (!fs.existsSync("e2e-comment.md")) { console.log("no e2e-comment.md"); return; }
+            let body = fs.readFileSync("e2e-comment.md", "utf8");
+            if (body.length > 60000) body = body.slice(0, 60000) + "\n…TRUNCATED…";
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: 41, body });
 
       - uses: actions/upload-artifact@v4
         if: always()
