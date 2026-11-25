@@ -314,6 +314,141 @@ describe("PostgreSQL integration: squad creation", () => {
   });
 });
 
+describe("PostgreSQL integration: player club editing by League Leaders (RLS)", () => {
+  // Regression coverage for "Could not update player: permission denied" after
+  // a Manager was promoted to League Leader: players_write (0002) applied its
+  // INSERT self-attribution check (created_by = auth.uid()) to UPDATE as well,
+  // so only the creating leader could ever update a player row.
+  const userDId = "44444444-4444-4444-4444-444444444444";
+  let clubLeagueId: string | undefined;
+  let clubTeamX: string | undefined;
+  let clubTeamY: string | undefined;
+  let clubPlayerId: string | undefined;
+
+  it("sets up a league where leader A owns a player and user D is a plain manager", async () => {
+    await sql(admin, `INSERT INTO auth.users (id, email, email_confirmed_at, created_at, updated_at)
+      VALUES ($1, 'userD@example.com', now(), now(), now()) ON CONFLICT (id) DO NOTHING`, [userDId]);
+    await sql(admin, `INSERT INTO profiles (id, email, email_lower, password_hash, username, display_name, email_verified_at, created_at, updated_at)
+      VALUES ($1, 'userD@example.com', 'userd@example.com', '', 'userd', 'User D', now(), now(), now()) ON CONFLICT (id) DO NOTHING`, [userDId]);
+
+    const cA = await freshClient();
+    try {
+      await setAuthUid(cA, userAId);
+      const { rows: lg } = await sql(cA, `INSERT INTO public.leagues (id, name, format, starters, subs_count, invite_code, created_by, created_at, updated_at) VALUES (gen_random_uuid()::text, 'Club Edit League', '5v5', 5, 5, 'CLUBED12', $1, now(), now()) RETURNING id`, [userAId]);
+      clubLeagueId = lg[0].id;
+      await sql(cA, `INSERT INTO public.league_members (id, league_id, profile_id, role, team_name, created_at) VALUES (gen_random_uuid()::text, $1, $2, 'leader', 'A Club XI', now())`, [clubLeagueId, userAId]);
+      const { rows: teams } = await sql(cA, `INSERT INTO public.teams (id, league_id, name, created_at) VALUES (gen_random_uuid()::text, $1, 'Club Reds', now()), (gen_random_uuid()::text, $1, 'Club Blues', now()) RETURNING id`, [clubLeagueId]);
+      [clubTeamX, clubTeamY] = [teams[0].id, teams[1].id];
+      const { rows: pl } = await sql(cA, `INSERT INTO public.players (id, league_id, team_id, full_name, position, created_by, created_at, updated_at) VALUES (gen_random_uuid()::text, $1, $2, 'Club Player', 'DEF', $3, now(), now()) RETURNING id`, [clubLeagueId, clubTeamX, userAId]);
+      clubPlayerId = pl[0].id;
+    } finally {
+      cA.release();
+    }
+    // D joins as an ordinary manager.
+    await sql(admin, `INSERT INTO public.league_members (id, league_id, profile_id, role, team_name, created_at) VALUES (gen_random_uuid()::text, $1, $2, 'manager', 'D XI', now())`, [clubLeagueId, userDId]);
+
+    const { rows: check } = await sql(admin, `SELECT created_by FROM public.players WHERE id = $1`, [clubPlayerId]);
+    expect(check[0].created_by).toBe(userAId);
+  });
+
+  it("blocks an ordinary Manager from changing a player's club", async () => {
+    const cD = await freshClient();
+    try {
+      await setAuthUid(cD, userDId);
+      // RLS hides the row from the UPDATE: zero rows, no error.
+      const r = await sql(cD, `UPDATE public.players SET team_id = $1, updated_at = now() WHERE id = $2 AND league_id = $3 RETURNING id`, [clubTeamY, clubPlayerId, clubLeagueId]);
+      expect(r.rowCount).toBe(0);
+      const { rows: after } = await sql(admin, `SELECT team_id FROM public.players WHERE id = $1`, [clubPlayerId]);
+      expect(after[0].team_id).toBe(clubTeamX);
+    } finally {
+      cD.release();
+    }
+  });
+
+  it("lets a Manager change the club immediately after promotion to League Leader (regression)", async () => {
+    const cA = await freshClient();
+    const cD = await freshClient();
+    try {
+      await setAuthUid(cA, userAId);
+      await setAuthUid(cD, userDId);
+      await sql(cA, `SELECT public.set_member_role($1, $2, 'leader')`, [clubLeagueId, userDId]);
+
+      // Same session, no re-join: is_leader() reads the live membership row.
+      const r = await sql(cD, `UPDATE public.players SET team_id = $1, updated_at = now() WHERE id = $2 AND league_id = $3 RETURNING id, team_id`, [clubTeamY, clubPlayerId, clubLeagueId]);
+      expect(r.rowCount).toBe(1);
+      expect(r.rows[0].team_id).toBe(clubTeamY);
+
+      // Confirm through the API-shaped write the route performs (column-scoped).
+      const r2 = await sql(cD, `UPDATE public.players SET full_name = 'Club Player Renamed', updated_at = now() WHERE id = $1 AND league_id = $2 RETURNING full_name`, [clubPlayerId, clubLeagueId]);
+      expect(r2.rowCount).toBe(1);
+      expect(r2.rows[0].full_name).toBe("Club Player Renamed");
+    } finally {
+      cA.release();
+      cD.release();
+    }
+  });
+
+  it("keeps every League Leader authorized, including the original creator", async () => {
+    const cA = await freshClient();
+    try {
+      await setAuthUid(cA, userAId);
+      const r = await sql(cA, `UPDATE public.players SET shirt_number = 5, updated_at = now() WHERE id = $1 AND league_id = $2 RETURNING shirt_number`, [clubPlayerId, clubLeagueId]);
+      expect(r.rowCount).toBe(1);
+      expect(r.rows[0].shirt_number).toBe(5);
+    } finally {
+      cA.release();
+    }
+  });
+
+  it("blocks a League Leader from updating players in a league they do not lead", async () => {
+    // user B leads league B but holds no role in the club-edit league.
+    const cB = await freshClient();
+    try {
+      await setAuthUid(cB, userBId);
+      const { rows: before } = await sql(admin, `SELECT team_id FROM public.players WHERE id = $1`, [clubPlayerId]);
+      const r = await sql(cB, `UPDATE public.players SET team_id = $1, updated_at = now() WHERE id = $2 AND league_id = $3 RETURNING id`, [clubTeamX, clubPlayerId, clubLeagueId]);
+      expect(r.rowCount).toBe(0);
+      const { rows: after } = await sql(admin, `SELECT team_id FROM public.players WHERE id = $1`, [clubPlayerId]);
+      expect(after[0].team_id).toBe(before[0].team_id);
+    } finally {
+      cB.release();
+    }
+  });
+
+  it("still requires INSERT self-attribution for leaders", async () => {
+    const cD = await freshClient();
+    try {
+      await setAuthUid(cD, userDId);
+      // A leader may not attribute a new player to someone else.
+      await expect(sql(cD, `INSERT INTO public.players (id, league_id, team_id, full_name, position, created_by, created_at, updated_at) VALUES (gen_random_uuid()::text, $1, $2, 'Forged Player', 'MID', $3, now(), now())`, [clubLeagueId, clubTeamX, userAId]))
+        .rejects.toMatchObject({ code: "42501" });
+      // Creating a player attributed to themselves still works.
+      const r = await sql(cD, `INSERT INTO public.players (id, league_id, team_id, full_name, position, created_by, created_at, updated_at) VALUES (gen_random_uuid()::text, $1, $2, 'D Player', 'MID', $3, now(), now()) RETURNING created_by`, [clubLeagueId, clubTeamX, userDId]);
+      expect(r.rows[0].created_by).toBe(userDId);
+    } finally {
+      cD.release();
+    }
+  });
+
+  it("revokes the permission again when the leader is demoted to Manager", async () => {
+    const cA = await freshClient();
+    const cD = await freshClient();
+    try {
+      await setAuthUid(cA, userAId);
+      await setAuthUid(cD, userDId);
+      await sql(cA, `SELECT public.set_member_role($1, $2, 'manager')`, [clubLeagueId, userDId]);
+      const { rows: before } = await sql(admin, `SELECT team_id FROM public.players WHERE id = $1`, [clubPlayerId]);
+      const r = await sql(cD, `UPDATE public.players SET team_id = $1, updated_at = now() WHERE id = $2 AND league_id = $3 RETURNING id`, [clubTeamX, clubPlayerId, clubLeagueId]);
+      expect(r.rowCount).toBe(0);
+      const { rows: after } = await sql(admin, `SELECT team_id FROM public.players WHERE id = $1`, [clubPlayerId]);
+      expect(after[0].team_id).toBe(before[0].team_id);
+    } finally {
+      cA.release();
+      cD.release();
+    }
+  });
+});
+
 describe("PostgreSQL integration: match management", () => {
   let matchTeams: any[];
 
