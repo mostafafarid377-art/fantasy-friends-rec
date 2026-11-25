@@ -17,6 +17,7 @@ const destructive = readFileSync(
   join(dir, "..", "legacy", "0000_destructive_removal.sql"),
   "utf8"
 );
+const playersAnyLeader = readFileSync(join(dir, "0034_players_update_any_leader.sql"), "utf8");
 const matchFlow = readFileSync(join(process.cwd(), "src", "app", "api", "matches", "[id]", "flow", "route.ts"), "utf8");
 const matchPage = readFileSync(join(process.cwd(), "src", "app", "(app)", "matches", "[id]", "page.tsx"), "utf8");
 const membersPage = readFileSync(join(process.cwd(), "src", "app", "(app)", "members", "page.tsx"), "utf8");
@@ -118,6 +119,27 @@ describe("row level security", () => {
   it("keeps notification rows private to their owner", () => {
     expect(rls).toMatch(/create policy notifications_select[\s\S]*?profile_id = auth\.uid\(\)/);
     expect(rls).toMatch(/create policy notifications_delete[\s\S]*?profile_id = auth\.uid\(\)/);
+  });
+
+  it("lets every League Leader update the league's players (0034)", () => {
+    // Regression lock for "Could not update player: permission denied" after a
+    // Manager's promotion: the UPDATE policy must not be gated on the row's
+    // original creator — any current leader of the player's league qualifies.
+    expect(playersAnyLeader).toMatch(/drop policy if exists players_write on public\.players/i);
+    const insert = playersAnyLeader.match(/create policy players_insert[\s\S]*?;/i)?.[0] ?? "";
+    const update = playersAnyLeader.match(/create policy players_update[\s\S]*?;/i)?.[0] ?? "";
+    const del = playersAnyLeader.match(/create policy players_delete[\s\S]*?;/i)?.[0] ?? "";
+    // INSERT keeps self-attribution; UPDATE/DELETE must not require it.
+    expect(insert).toMatch(/for insert to authenticated/i);
+    expect(insert).toMatch(/public\.is_leader\(league_id\)/);
+    expect(insert).toMatch(/created_by = auth\.uid\(\)::text/);
+    expect(update).toMatch(/for update to authenticated/i);
+    expect(update).toMatch(/using \(public\.is_leader\(league_id\)\)/i);
+    expect(update).toMatch(/with check \(public\.is_leader\(league_id\)\)/i);
+    expect(update).not.toMatch(/created_by/);
+    expect(del).toMatch(/for delete to authenticated/i);
+    expect(del).toMatch(/using \(public\.is_leader\(league_id\)\)/i);
+    expect(del).not.toMatch(/created_by/);
   });
 });
 
