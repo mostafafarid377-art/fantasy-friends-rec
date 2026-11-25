@@ -233,7 +233,7 @@ jobs:
           echo "E2E_SUPABASE_URL=$CANON" >> "$GITHUB_ENV"
           echo "E2E_SUPABASE_SERVICE_ROLE_KEY=$S" >> "$GITHUB_ENV"
           [ -n "$SECRET_PW" ] && echo "E2E_USER_PASSWORD=$SECRET_PW" >> "$GITHUB_ENV" || true
-      echo "E2E_GREP=${{ inputs.e2e_grep || '' }}" >> "$GITHUB_ENV"
+          echo "E2E_GREP=${{ inputs.e2e_grep || '' }}" >> "$GITHUB_ENV"
 
       - run: npm ci
       - run: npx playwright install --with-deps chromium
