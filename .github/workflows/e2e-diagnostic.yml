@@ -160,7 +160,7 @@ jobs:
       SECRET_URL_B: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SECRET_SERVICE: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
       SECRET_SERVICE_B: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      SECRET_ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SECRET_ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
       SECRET_PW: ${{ secrets.E2E_USER_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
@@ -219,7 +219,7 @@ jobs:
           } > guard-result.txt
           {
             echo "NEXT_PUBLIC_SUPABASE_URL=$CANON"
-            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$SECRET_ANON"
+            echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$SECRET_ANON"
             echo "SUPABASE_SERVICE_ROLE_KEY=$S"
           } > .env.local
           echo "E2E_SUPABASE_URL=$CANON" >> "$GITHUB_ENV"
