@@ -281,6 +281,32 @@ it("previews real starters, captaincy and substitutes, refreshes an edited squad
   expect(screen.getByRole("link", { name: "Pick Your Squad" }).getAttribute("href")).toBe("/team/pick");
 });
 
+it("shows the previous match lineup on the dashboard once one exists, not the frozen default squad", async () => {
+  // Root cause of the dashboard/My Team drift: once a lineup is locked, the
+  // default squad stops accepting saves, so fantasy_squads freezes. The
+  // dashboard must show the same in-play/previous lineup My Team resolves.
+  const make = (p: PoolPlayer, slot: "starter" | "sub", order: number) => ({ ...p, slot, order, name: p.fullName });
+  const staleSquad = { formation: "1-2-1", captainId: "gk-a", viceCaptainId: null,
+    players: [make(pool[0], "starter", 0), make(pool[4], "starter", 1), make(pool[5], "starter", 2), make(pool[6], "starter", 3), make(pool[8], "starter", 4)] };
+  const previousLineup = { matchId: "match-1", title: "Opening match", kickOff: "2026-11-18T10:00:00Z", inPlay: false,
+    formation: "1-2-1", captainId: "gk-b", viceCaptainId: null,
+    players: [make(pool[1], "starter", 0), make(pool[4], "starter", 1), make(pool[5], "starter", 2), make(pool[6], "starter", 3), make(pool[8], "starter", 4)] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url === "/api/auth/session") return Response.json(session);
+    const l = url.endsWith(b.id) ? b : a;
+    return Response.json({ league: { ...l, squadSize: 9 },
+      squad: l === a ? staleSquad : null, lineup: l === a ? previousLineup : null,
+      standings: [], myRank: null, lastGame: null, fixtures: [], matches: [], notifications: [],
+      rulesApproved: true, emailVerified: true, memberCount: 1, latestPlayerGames: {} });
+  }));
+  renderInShell(<DashboardPage />);
+  const pitch = within(await screen.findByRole("region", { name: "5v5 football pitch, formation 1-2-1" }));
+  // The locked lineup (Zed Keeper) is in force — not the frozen default squad (Ada Keeper).
+  expect(await pitch.findByRole("button", { name: "Zed Keeper, GK, captain" })).toBeTruthy();
+  expect(pitch.queryByText("Ada Keeper")).toBeNull();
+  expect(screen.getByText(/Previous match lineup/)).toBeTruthy();
+});
+
 it("shows individual points on the pitch and bench and keeps the separate official team total above the squad", async () => {
   const { saved, fetch, latest, histories, historyError, put } = fixture();
   saved.set(a.id, { ...empty(a), squad: { id: "s-a", formation: "1-2-1", captainId: "gk-a", viceCaptainId: null, completedAt: null, updatedAt: "2026-11-01T12:00:00Z" },

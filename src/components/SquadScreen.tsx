@@ -18,7 +18,7 @@ import { useAppRefresh } from "@/lib/client/refresh";
 import { api, ApiRequestError, useApi } from "@/lib/client/api";
 import {
   canSelectPlayer, normalizeBench, orderedBench, compatibleFormations, deriveFormation, findFormation, FORMATIONS, layoutFormation, moveSquadPlayer,
-  nextSquadOrder, OUTFIELD, POSITIONS, squadCaps, validateMatchLineup, validateSquad, validateSquadDraft,
+  nextSquadOrder, OUTFIELD, POSITIONS, squadCaps, squadCompositionErrors, validateMatchLineup, validateSquad, validateSquadDraft,
   type LeagueRules, type Position, type SquadPlayer,
 } from "@/lib/domain";
 import type { PlayerPool, PoolPlayer, SquadEntry, SquadResponse } from "@/lib/squad";
@@ -163,9 +163,15 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const validation = editingNext
     ? validateMatchLineup(rules, players, { formation: shape.label, captainId, viceId })
     : (complete ? validateSquad : validateSquadDraft)(rules, players, { formation: shape.label, captainId, viceId });
+  // Starting-lineup coverage applies once the squad is full — to the default
+  // squad and to a next-match lineup alike. Only starters count: a Forward
+  // on the bench does not satisfy the rule. The same rule is enforced again
+  // by the API and the database.
+  const composition = complete ? squadCompositionErrors(players) : [];
+  const blocked = !validation.ok || composition.length > 0;
   const archived = players.filter((p) => p.status !== "active");
   const missingStarters = editingNext && players.filter((p) => p.slot === "starter").length !== rules.starters;
-  const savedComplete = Boolean(stored.squad?.completedAt) && complete && validation.ok && archived.length === 0;
+  const savedComplete = Boolean(stored.squad?.completedAt) && complete && validation.ok && composition.length === 0 && archived.length === 0;
 
   function begin() {
     if (editingBlocked || saving) return;
@@ -205,7 +211,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
     changePlayers(next, pick.replace ? formation : candidate.label);
   }
   async function save() {
-    if (editingBlocked || saving || conflict || !validation.ok || archived.length || missingStarters || (!players.length && !current.revision)) return;
+    if (editingBlocked || saving || conflict || blocked || archived.length || missingStarters || (!players.length && !current.revision)) return;
     setSaving(true); setMessage(null); setNotice(null);
     try {
       if (current.matchId !== undefined) {
@@ -272,7 +278,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const addStarter = (position: Position) => openPicker({ slot: "starter", position });
   const pickActions = editing ? <>
     <Button variant="outline" onClick={cancel} disabled={saving}>Cancel</Button>
-    <Button onClick={save} loading={saving} disabled={editingBlocked || conflict || !validation.ok || archived.length > 0 || missingStarters || (!players.length && !current.revision)}>
+    <Button onClick={save} loading={saving} disabled={editingBlocked || conflict || blocked || archived.length > 0 || missingStarters || (!players.length && !current.revision)}>
       <Save className="h-4 w-4" /> {editingNext ? "Save for next match" : complete ? "Save squad" : "Save draft"}
     </Button>
   </> : locked && !editsNext ? null : (
@@ -377,7 +383,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
             <p className="mt-2 text-sm text-sage">A saved captain who plays scores double for your fantasy squad. Individual points stay unchanged; the captain contribution is shown separately. {stored.vicePolicy === "auto_captain" ? "If your captain doesn't play, an eligible vice-captain takes over." : "This league does not auto-promote the vice-captain."}</p>
             <p className="mt-2 text-sm text-chalk">Captain: {players.find((p) => p.id === captainId)?.name ?? "Not set"} · Vice: {players.find((p) => p.id === viceId)?.name ?? "Not set"}</p>
             {!historical && archived.length > 0 && <p className="mt-2 text-sm text-card-y">Replace or remove archived players before saving: {archived.map((p) => p.name).join(", ")}.</p>}
-            {!historical && !validation.ok && <ul className="mt-2 space-y-1 text-sm text-card-y">{validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>}
+            {!historical && blocked && <ul className="mt-2 space-y-1 text-sm text-card-y">{[...(!validation.ok ? validation.errors : []), ...composition].map((e) => <li key={e}>{e}</li>)}</ul>}
           </Panel>
           {(["reserve"] as const).filter((slot) => caps[slot] > 0 || players.some((p) => p.slot === slot)).map((slot) => {
             const group = players.filter((p) => p.slot === slot).sort((a,b) => a.order-b.order || a.id.localeCompare(b.id));

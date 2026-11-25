@@ -71,6 +71,69 @@ describe("league squad route", () => {
     expect(db.rpc).not.toHaveBeenCalled();
   });
 
+  it("rejects a complete squad that is missing an outfield position and names them together", async () => {
+    // The mock league is 5v5 with squad_size 8 (5 starters, 2 subs, 1 reserve).
+    // Each scenario builds a full 8-player squad whose starting lineup lacks
+    // one line; the first scenario keeps a Forward on the bench to prove only
+    // starters count.
+    const full_name = "Player";
+    const fill = (position: string, prefix: string, n: number) =>
+      [...Array(n).keys()].map((i) => ({ id: `${prefix}-${i}`, position, full_name, status: "active" }));
+    const scenarios: { rows: { id: string; position: string; full_name: string; status: string }[]; missing: string; formation: string; starterIds: string[]; benchOutfield?: string }[] = [
+      // No Forward in the starting XI — but one sits on the bench. Only
+      // starters count, so this must still be rejected. Formation 1-3-0.
+      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("DEF", "d", 2), ...fill("MID", "m", 3), ...fill("FWD", "f", 1)],
+        missing: "Forward", formation: "1-3-0", starterIds: ["keeper", "d-0", "m-0", "m-1", "m-2"], benchOutfield: "f-0" },
+      // 2 GK + 2 DEF + 4 FWD, no Midfielder anywhere; formation 2-0-2.
+      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("DEF", "d", 2), ...fill("FWD", "f", 4)],
+        missing: "Midfielder", formation: "2-0-2", starterIds: ["keeper", "d-0", "d-1", "f-0", "f-1"] },
+      // 2 GK + 4 MID + 2 FWD, no Defender anywhere; formation 0-2-2.
+      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("MID", "m", 4), ...fill("FWD", "f", 2)],
+        missing: "Defender", formation: "0-2-2", starterIds: ["keeper", "m-0", "m-1", "f-0", "f-1"] },
+    ];
+    for (const { rows, missing, formation, starterIds, benchOutfield } of scenarios) {
+      players = rows;
+      expect(rows).toHaveLength(8);
+      const byId = new Map(rows.map((p) => [p.id, p]));
+      const starters = starterIds.map((id) => byId.get(id)!);
+      const benched = [byId.get("keeper-2")!, byId.get(benchOutfield ?? rows.find((p) => p.position !== "GK" && !starterIds.includes(p.id))!.id)!];
+      const reserves = rows.filter((p) => !starters.includes(p) && !benched.includes(p));
+      const res = await PUT(request("PUT", {
+        formation, captainId: keeper.id, viceCaptainId: starters[1].id, expectedUpdatedAt: null,
+        entries: [
+          ...starters.map((p, i) => ({ playerId: p.id, slot: "starter", order: i })),
+          ...benched.map((p, i) => ({ playerId: p.id, slot: "sub", order: i })),
+          ...reserves.map((p, i) => ({ playerId: p.id, slot: "reserve", order: i })),
+        ],
+      }), ctx);
+      const body = await res.json();
+      expect(res.status).toBe(422);
+      expect(body.error).toContain(`Missing: ${missing}`);
+      expect(body.details?.[0]).toContain(`Missing: ${missing}`);
+    }
+    // Nothing was written: the save RPC was never reached.
+    expect(db.rpc).not.toHaveBeenCalledWith("save_fantasy_squad_v2", expect.anything());
+  });
+
+  it("keeps partial drafts saveable while positions are still missing", async () => {
+    players = [keeper, defender];
+    // A two-player draft with no Midfielder or Forward: the composition rule
+    // does not fire because the squad is not complete yet. Mirror the
+    // revision and receipt of the successful save above.
+    const draft = { ...input, captainId: keeper.id,
+      entries: [
+        { playerId: keeper.id, slot: "starter", order: 0 },
+        { playerId: defender.id, slot: "starter", order: 1 },
+      ] };
+    db.rpc.mockResolvedValue({ data: { squad: receipt.squad, entries: [
+      { ...receipt.entries[0] },
+      { ...receipt.entries[0], id: "entry-b", player_id: defender.id, order: 1 },
+    ] }, error: null });
+    const res = await PUT(request("PUT", { ...draft, expectedUpdatedAt: revision }), ctx);
+    expect(res.status).toBe(200);
+    expect(db.rpc).toHaveBeenCalledWith("save_fantasy_squad_v2", expect.objectContaining({ p_league: "league-a" }));
+  });
+
   it("rejects cross-league players, duplicate selections and incorrect partial formations/captaincy", async () => {
     const put = (body: typeof input) => PUT(request("PUT", body), ctx);
     expect((await put({ ...input, entries: [input.entries[0], input.entries[0]] })).status).toBe(422);

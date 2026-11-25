@@ -8,6 +8,7 @@ import {
   layoutFormation,
   validateLineup,
   validateMatchLineup,
+  squadCompositionErrors,
   validateSquad,
   validateSquadDraft,
   type LeagueRules,
@@ -270,5 +271,56 @@ describe("real-match lineup validation", () => {
       { position: "FWD" as Position },
     ];
     expect(validateLineup(rules5, five, sixBench).ok).toBe(false);
+  });
+});
+
+describe("squadCompositionErrors", () => {
+  const entries = (rows: [string, Position, SquadPlayer["slot"]][]) =>
+    rows.map(([id, position, slot]) => ({ id, position, slot }));
+
+  it("passes a squad whose starting lineup covers every line", () => {
+    expect(squadCompositionErrors(entries([["gk", "GK", "starter"], ["d", "DEF", "starter"], ["m", "MID", "starter"], ["f", "FWD", "starter"]]))).toEqual([]);
+  });
+
+  it("rejects a starting lineup with no Forward — even when a Forward sits on the bench", () => {
+    const [error] = squadCompositionErrors(entries([
+      ["gk", "GK", "starter"], ["d", "DEF", "starter"], ["m", "MID", "starter"],
+      ["f", "FWD", "sub"],
+    ]));
+    expect(error).toContain("Missing: Forward");
+  });
+
+  it("rejects a starting lineup with no Midfielder", () => {
+    const [error] = squadCompositionErrors(entries([
+      ["gk", "GK", "starter"], ["d", "DEF", "starter"], ["f", "FWD", "starter"], ["m", "MID", "reserve"],
+    ]));
+    expect(error).toContain("Missing: Midfielder");
+  });
+
+  it("rejects a starting lineup with no Defender", () => {
+    const [error] = squadCompositionErrors(entries([
+      ["gk", "GK", "starter"], ["m", "MID", "starter"], ["f", "FWD", "starter"], ["d", "DEF", "sub"],
+    ]));
+    expect(error).toContain("Missing: Defender");
+  });
+
+  it("names every missing starting position together", () => {
+    const [error] = squadCompositionErrors(entries([["gk", "GK", "starter"], ["m", "MID", "starter"], ["f1", "FWD", "sub"]]));
+    expect(error).toContain("Forward");
+    expect(error).toContain("Defender");
+    // The missing list names only the lines absent from the starting XI.
+    expect(error.split("Missing:")[1]).not.toContain("Midfielder");
+    expect(error).toContain("Missing: Defender, Forward");
+  });
+
+  it("ignores non-starters entirely", () => {
+    // Full coverage on the bench alone does not help.
+    const [error] = squadCompositionErrors(entries([
+      ["d", "DEF", "sub"], ["m", "MID", "sub"], ["f", "FWD", "reserve"],
+    ]));
+    expect(error).toContain("Forward");
+    expect(error).toContain("Midfielder");
+    expect(error).toContain("Defender");
+    expect(error).toContain("starting lineup");
   });
 });

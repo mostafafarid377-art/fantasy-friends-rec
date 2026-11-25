@@ -141,6 +141,18 @@ assert.match(lifecycleSquad, /not exists \(select 1 from jsonb_to_recordset\(p_e
 assert.match(lifecycleSquad, /where e\.slot='sub' and p\.position='GK'\) > 1/i,
   'the squad function must keep the bench rule of the live function');
 
+// Migration 0035 adds the starting-lineup coverage rule: a complete squad
+// must start at least one Forward, one Midfielder and one Defender. The
+// check is gated on is_complete so drafts and pre-existing squads are never
+// re-validated.
+const coverage = read('./supabase/migrations/0035_squad_position_coverage.sql');
+assert.match(coverage, /create or replace function public\.ff_save_validated_squad/i,
+  'migration 0035 must replace the squad save function, not create a second write path');
+assert.match(coverage, /if is_complete and \(forwards = 0 or mids = 0 or defenders = 0\) then/i,
+  'migration 0035 must gate the starter coverage rule on is_complete using the starter-only counters');
+assert.match(coverage, /starting lineup must contain at least 1 Forward, 1 Midfielder, and 1 Defender/i,
+  'migration 0035 must name the required positions in its error');
+
 // A lineup that is locked in, and a lineup that is captured while scoring,
 // have to carry a captaincy that can be used. A lineup without one is kept
 // exactly as it is; a lineup with a broken one is not an official lineup.
