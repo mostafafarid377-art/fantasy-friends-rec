@@ -136,17 +136,20 @@ jobs:
             }
             body += "\nFull redacted JSON is in the `hydration-diagnostic` workflow artifact. No bodies, cookies, tokens or credentials are captured.\n";
             {
+              // Secondary rate limits on issue comments need minutes, not
+              // seconds — back off generously (10s/30s/60s/120s, 5 attempts).
+              const waits = [10000, 30000, 60000, 120000];
               let posted = false;
-              for (let attempt = 1; attempt <= 3 && !posted; attempt++) {
+              for (let attempt = 0; attempt <= waits.length && !posted; attempt++) {
                 try {
                   await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: 41, body });
                   posted = true;
                 } catch (err) {
-                  console.log(`comment attempt ${attempt} failed: ${err.message}`);
-                  if (attempt < 3) await new Promise((r) => setTimeout(r, 5000));
+                  console.log(`comment attempt ${attempt + 1} failed: ${err.message}`);
+                  if (attempt < waits.length) await new Promise((r) => setTimeout(r, waits[attempt]));
                 }
               }
-              if (!posted) core.setFailed("could not post the PR comment after 3 attempts");
+              if (!posted) core.setFailed("could not post the PR comment after retries");
             }
 
   e2e:
@@ -274,17 +277,20 @@ jobs:
             let body = fs.readFileSync("e2e-comment.md", "utf8");
             if (body.length > 60000) body = body.slice(0, 60000) + "\n…TRUNCATED…";
             {
+              // Secondary rate limits on issue comments need minutes, not
+              // seconds — back off generously (10s/30s/60s/120s, 5 attempts).
+              const waits = [10000, 30000, 60000, 120000];
               let posted = false;
-              for (let attempt = 1; attempt <= 3 && !posted; attempt++) {
+              for (let attempt = 0; attempt <= waits.length && !posted; attempt++) {
                 try {
                   await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: 41, body });
                   posted = true;
                 } catch (err) {
-                  console.log(`comment attempt ${attempt} failed: ${err.message}`);
-                  if (attempt < 3) await new Promise((r) => setTimeout(r, 5000));
+                  console.log(`comment attempt ${attempt + 1} failed: ${err.message}`);
+                  if (attempt < waits.length) await new Promise((r) => setTimeout(r, waits[attempt]));
                 }
               }
-              if (!posted) core.setFailed("could not post the PR comment after 3 attempts");
+              if (!posted) core.setFailed("could not post the PR comment after retries");
             }
 
       - uses: actions/upload-artifact@v4
