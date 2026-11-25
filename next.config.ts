@@ -27,13 +27,13 @@ const previewEnabled = process.env.NODE_ENV === "development" && process.env.LIN
  * - script-src and frame-src additionally allow challenges.cloudflare.com,
  *   the only host Cloudflare Turnstile loads its script and challenge iframe
  *   from (see src/components/TurnstileChallenge.tsx). Nothing else changes.
- * - script-src adds 'unsafe-eval' in DEVELOPMENT only: the dev bundler
- *   (Turbopack, and webpack before it) executes module chunks through eval(),
- *   and React's development build probes eval() availability. Without it the
- *   browser blocks every client chunk, hydration never runs, and forms fall
- *   back to native GET submission — which leaks credentials into the URL.
+ * - script-src adds 'unsafe-eval' in DEVELOPMENT only: Turbopack's dev
+ *   runtime applies HMR updates through eval() (evalModuleEntry), and
+ *   React's development build probes eval() availability (guarded). It is
+ *   NOT needed for initial chunk execution — browser evidence (CI workflow
+ *   e2e-diagnostic.yml) shows identical behavior with the header stripped.
  *   Production bundles contain no eval(), so the production policy stays
- *   unchanged. This is the split the Next.js CSP documentation prescribes.
+ *   unchanged.
  */
 export function buildContentSecurityPolicy(isDev: boolean): string {
   return [
@@ -72,6 +72,20 @@ const nextConfig: NextConfig = previewEnabled ? {
     return [{ source: "/", destination: "/team/next-match-preview", permanent: false }];
   },
 } : {
+  // Development only (Next ignores this key outside `next dev`): the dev
+  // server's cross-site protection allowlists `localhost`/`*.localhost` by
+  // default, but NOT `127.0.0.1`. When the app is browsed via
+  // http://127.0.0.1:<port> — the documented local setup and the E2E
+  // suite's base URL — every WebSocket handshake to /_next/hmr is answered
+  // 403. In Next 16 dev, React Server Component debug info (the Flight
+  // "debug channel") is delivered over that socket; while it never connects,
+  // the client's `hydrate()` awaits a payload that never resolves, so
+  // hydration silently never runs: scripts execute, no console error, but
+  // no event handlers — forms fall back to native submission. Proven by
+  // CI A/B (workflow e2e-diagnostic.yml): same build hydrates at the
+  // localhost origin and at 127.0.0.1 once this key is present, and stays
+  // dead at 127.0.0.1 without it. This widens NOTHING in production.
+  allowedDevOrigins: ["127.0.0.1"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

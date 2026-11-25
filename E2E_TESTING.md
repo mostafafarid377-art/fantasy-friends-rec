@@ -113,12 +113,20 @@ so files are independent and reruns never collide.
   it reports console errors, page errors, failed chunk requests, the served
   CSP header and a hydration probe (redacted — no secrets). Known causes:
   a stale dev server reused via `reuseExistingServer` (stop whatever is on
-  the port first), or a local CSP override blocking the dev runtime — the
-  dev policy includes `'unsafe-eval'` because the dev bundler's HMR updates
-  and React's development build require it. A `Blocked cross-origin request
-  … /_next/hmr from "127.0.0.1"` warning is expected when the suite drives
-  the server via `127.0.0.1`: HMR (unused by the suite) is the only resource
-  blocked, because chunk requests are same-origin and carry no Origin header.
+  the port first), or the dev-server origin allowlist below.
+- **`Blocked cross-origin request … /_next/hmr from "127.0.0.1"` + pages
+  render but never hydrate, zero console errors** — this warning is NOT
+  benign. In Next 16 dev, React Server Component debug info (the Flight
+  debug channel) is delivered over the HMR WebSocket; when the dev server's
+  cross-site protection 403s that socket (its default allowlist covers
+  `localhost`/`*.localhost`, not `127.0.0.1`), the client's `hydrate()`
+  awaits a payload that never resolves and hydration silently never runs.
+  `next.config.ts` therefore sets `allowedDevOrigins: ["127.0.0.1"]`
+  (development only; production is unaffected). Proven by CI A/B in
+  `.github/workflows/e2e-diagnostic.yml`: the same build hydrates at the
+  `localhost` origin and at `127.0.0.1` with the allowlist, and stays dead
+  at `127.0.0.1` without it. If you ever browse the dev server via a
+  different origin (LAN IP, port-forward host), add it there too.
 - **J02-style flakes on slow machines** — the "no request" probe uses a
   1.5s window; increase the timeout in `auth.spec.ts` if needed.
 - **429 responses** — you reran the suite many times within an hour; the
