@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addPlayer, addTeam, createLeague, LEADER_STATE, nameOf, pageAs, seededName, selectLeague } from "./helpers";
+import { addPlayer, addTeam, approveScoringRules, createLeague, LEADER_STATE, nameOf, pageAs, seededName, selectLeague } from "./helpers";
 
 /**
  * J14–J16 build one league with two teams and six players, then run a match
@@ -48,6 +48,9 @@ test.describe("journeys J14–J16 — match lifecycle", () => {
     await expect(page.getByText(nameOf(matchTitle)).first()).toBeVisible();
     await page.goto("/matches");
     await expect(page.getByText(nameOf(matchTitle)).first()).toBeVisible();
+    // Result submission is blocked until the leader approves the league's
+    // scoring rules (J16's "All scoring rules must be approved" alert).
+    await approveScoringRules(page, nameOf(leagueName));
   });
 
   test("J15 the organizer records a goal event on the match", async ({ page }) => {

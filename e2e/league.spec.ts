@@ -37,8 +37,22 @@ test.describe("journeys J09–J11 — leagues and membership", () => {
       // also matches the sidebar profile link and the "@username · …" subtext
       // on the same page (run 45657284354 J11 strict-mode violation).
       const roster = member.page.locator("ul li");
-      await expect(roster.filter({ hasText: E2E_USERS.leader.displayName })).toHaveCount(1);
-      await expect(roster.filter({ hasText: E2E_USERS.manager.displayName })).toHaveCount(1);
+      try {
+        await expect(roster.filter({ hasText: E2E_USERS.leader.displayName })).toHaveCount(1);
+        await expect(roster.filter({ hasText: E2E_USERS.manager.displayName })).toHaveCount(1);
+      } catch (err) {
+        // Surface the roster the page actually rendered: a count of 0 means
+        // the join never took effect (redirect, wrong active league, or a
+        // rejected invitation) and the bare "Received: 0" hides which.
+        const heading = await member.page.getByText(/\d+ managers/).textContent().catch(() => "(no roster header)");
+        const rows = await roster.allTextContents().catch(() => [] as string[]);
+        const alerts = await member.page.getByRole("alert").allTextContents().catch(() => [] as string[]);
+        throw new Error(
+          `J11 member roster check failed at ${member.page.url()}. Roster header: ${JSON.stringify(heading)}. ` +
+            `Rows: ${JSON.stringify(rows)}. Alerts: ${JSON.stringify(alerts)}.`,
+          { cause: err },
+        );
+      }
     } finally {
       await member.close();
     }

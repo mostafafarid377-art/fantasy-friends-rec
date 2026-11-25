@@ -60,11 +60,13 @@ test.describe("journeys J17–J18 — notifications and profile", () => {
       const save = async () => {
         await page.getByRole("button", { name: "Save profile" }).click();
         const saved = page.getByText("All changes saved");
+        // The success banner and the live-region toast can both be visible at
+        // once, so a `.or()` combination trips strict mode. Race them with
+        // first() (order is irrelevant — only one ever renders), then read
+        // the toast text: an error toast auto-dismisses after ~4s, and an
+        // un-raced timeout would lose the actual failure message.
         const toast = page.getByRole("status").first();
-        // Race the success indicator against the error toast, which
-        // auto-dismisses after ~4s — an un-raced timeout would lose the
-        // actual failure message from the page.
-        await expect(saved.or(toast)).toBeVisible();
+        await expect(saved.or(toast).first()).toBeVisible();
         const toastText = ((await toast.textContent().catch(() => "")) ?? "").trim();
         if (toastText && !toastText.includes("Profile saved")) {
           throw new Error(`Profile save surfaced an error toast: ${toastText}`);

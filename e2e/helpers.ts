@@ -145,6 +145,28 @@ export async function selectLeague(page: Page, name: string) {
   await expect(page).toHaveURL(/\/dashboard/);
 }
 
+/**
+ * Initialize and approve the league's scoring rules. A fresh league ships
+ * with zero rules and result submission is blocked until the leader approves
+ * a set (J16's "All scoring rules must be approved before submitting a
+ * result"). Safe to call on an already-approved league.
+ */
+export async function approveScoringRules(page: Page, leagueName: string) {
+  await selectLeague(page, leagueName);
+  await page.goto("/rules");
+  const initialize = page.getByRole("button", { name: "Initialize draft rules" });
+  if (await initialize.isVisible().catch(() => false)) {
+    await initialize.click();
+    await expect(initialize).not.toBeVisible();
+  }
+  const approve = page.getByRole("button", { name: "Approve set" });
+  await approve.waitFor({ state: "visible" });
+  if (await approve.isEnabled()) {
+    await approve.click();
+    await expect(page.getByText("Approved")).toBeVisible();
+  }
+}
+
 /** Read the invitation code printed on the league's /leagues list entry. */
 export async function inviteCodeOf(page: Page, name: string): Promise<string> {
   await page.goto("/leagues");

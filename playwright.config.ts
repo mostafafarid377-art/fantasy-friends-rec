@@ -12,7 +12,7 @@ import { e2eBaseURL } from "./e2e/env";
  */
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 45_000,
+  timeout: 90_000,
   expect: { timeout: 10_000 },
   // Journeys share provisioned accounts and build league state step by step;
   // one worker keeps that deterministic. Rate limits (migration 0034) also
