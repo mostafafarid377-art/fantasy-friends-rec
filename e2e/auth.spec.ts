@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { E2E_USERS } from "./env";
+import { E2E_EMAIL_DOMAIN, E2E_USERS } from "./env";
 import { uiSignIn } from "./helpers";
 
 /**
@@ -19,7 +19,7 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     await page.goto("/signup");
     await page.getByLabel("Display name").fill("Journey Two");
     await page.getByLabel("Username").fill("journey_two");
-    await page.getByLabel("Email").fill("j02-short-pass@fantasyfriends.test");
+    await page.getByLabel("Email").fill(`j02-short-pass@${E2E_EMAIL_DOMAIN}`);
     await page.getByLabel("Password", { exact: true }).fill("short");
     await page.getByLabel("Confirm").fill("short");
     const requests = page.waitForRequest("/api/auth/signup", { timeout: 1500 }).catch(() => null);
@@ -29,7 +29,7 @@ test.describe("journeys J01–J08, J19 — auth", () => {
   });
 
   test("J03 signup with valid details shows the email confirmation step", async ({ page }) => {
-    const email = `j03-${Date.now().toString(36)}@fantasyfriends.test`;
+    const email = `j03-${Date.now().toString(36)}@${E2E_EMAIL_DOMAIN}`;
     await page.goto("/signup");
     await page.getByLabel("Display name").fill("Journey Three");
     await page.getByLabel("Username").fill(`j03_${Date.now().toString(36)}`);
@@ -54,7 +54,7 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     await page.getByLabel("Email").fill(E2E_USERS.manager.email);
     await page.getByLabel("Password").fill("definitely-wrong-password");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("alert")).toContainText("Incorrect email or password");
+    await expect(page.getByRole("alert").filter({ hasText: "Incorrect email or password" })).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
     // Regression lock: a failed attempt must not leak the submitted
     // credentials into the URL (native GET fallback would put them there).
@@ -64,7 +64,7 @@ test.describe("journeys J01–J08, J19 — auth", () => {
 
   test("J06 forgot password answers unknown emails identically (no enumeration)", async ({ page }) => {
     await page.goto("/forgot");
-    await page.getByLabel("Email").fill(`nobody-${Date.now().toString(36)}@fantasyfriends.test`);
+    await page.getByLabel("Email").fill(`nobody-${Date.now().toString(36)}@${E2E_EMAIL_DOMAIN}`);
     await page.getByRole("button", { name: "Send reset link" }).click();
     await expect(page.getByRole("heading", { name: "Check your inbox" })).toBeVisible();
   });
@@ -90,6 +90,11 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     await uiSignIn(page, E2E_USERS.outsider);
     await page.goto("/profile");
     await page.getByRole("button", { name: "Sign out" }).click();
+    // Sign-out is async: wait until the app has finished it (it replaces to
+    // /login) before probing the route guard with a fresh navigation —
+    // otherwise the hard goto races the in-flight logout POST and the
+    // request still carries the old session cookie.
+    await expect(page).toHaveURL(/\/login/);
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/login/);
   });

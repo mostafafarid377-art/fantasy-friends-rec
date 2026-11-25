@@ -26,13 +26,26 @@ export function e2eBaseURL(): string {
 export const E2E_PASSWORD = process.env.E2E_USER_PASSWORD ?? "E2E-Test-Passw0rd!";
 
 /**
- * Deterministic test accounts, provisioned by global-setup.ts. The `.test`
- * TLD cannot receive real email and can never collide with a real user.
+ * Mailbox domain for E2E accounts. Supabase's hosted mailer validates the
+ * recipient host before sending (supabase/auth validateclient): it rejects
+ * RFC 2606 reserved suffixes (.test/.example/.invalid/.local/.localhost),
+ * an explicit blocklist (example.com/.net/.org, test.com, …) and any host
+ * with neither MX nor A DNS records. That is why `@fantasyfriends.test`
+ * signups fail with `Email address "…" is invalid` (email_address_invalid)
+ * even though the Admin API accepts them. The disposable project's own
+ * ref domain always resolves while the project exists, so it is the one
+ * domain guaranteed to pass validation without ever being a real mailbox.
+ */
+export const E2E_EMAIL_DOMAIN = "ssvwzakelcumisccsuly.supabase.co";
+
+/**
+ * Deterministic test accounts, provisioned by global-setup.ts. Addresses are
+ * random-collision-proof and can only ever belong to the disposable project.
  */
 export const E2E_USERS = {
-  leader: { email: "e2e-leader@fantasyfriends.test", username: "e2e_leader", displayName: "E2E Leader" },
-  manager: { email: "e2e-manager@fantasyfriends.test", username: "e2e_manager", displayName: "E2E Manager" },
-  outsider: { email: "e2e-outsider@fantasyfriends.test", username: "e2e_outsider", displayName: "E2E Outsider" },
+  leader: { email: `e2e-leader@${E2E_EMAIL_DOMAIN}`, username: "e2e_leader", displayName: "E2E Leader" },
+  manager: { email: `e2e-manager@${E2E_EMAIL_DOMAIN}`, username: "e2e_manager", displayName: "E2E Manager" },
+  outsider: { email: `e2e-outsider@${E2E_EMAIL_DOMAIN}`, username: "e2e_outsider", displayName: "E2E Outsider" },
 } as const;
 
 export type E2EUser = (typeof E2E_USERS)[keyof typeof E2E_USERS];

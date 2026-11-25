@@ -17,13 +17,32 @@ export function unique(prefix: string): string {
   return `${prefix} ${Date.now().toString(36).slice(-5)}`;
 }
 
+/**
+ * Await an expected navigation; on timeout, fail with the page's own visible
+ * feedback (role="alert" notes, role="status" toasts) and the current URL so
+ * a failure identifies its real cause instead of a bare locator timeout.
+ */
+export async function expectNavigation(page: Page, re: RegExp, action: string) {
+  try {
+    await expect(page).toHaveURL(re);
+  } catch (err) {
+    const alerts = await page.getByRole("alert").allTextContents().catch(() => [] as string[]);
+    const statuses = await page.getByRole("status").allTextContents().catch(() => [] as string[]);
+    throw new Error(
+      `${action}: expected URL ${re}, still at ${page.url()}. ` +
+        `Visible alerts: ${JSON.stringify(alerts)}. Status messages: ${JSON.stringify(statuses)}.`,
+      { cause: err },
+    );
+  }
+}
+
 /** Sign in through the real login form (used by the login journeys). */
 export async function uiSignIn(page: Page, user: E2EUser) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(user.email);
   await page.getByLabel("Password").fill(E2E_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await expectNavigation(page, /\/dashboard/, `uiSignIn(${user.username})`);
 }
 
 /** Create a league via the UI; on success the app navigates to /dashboard. */
@@ -34,7 +53,7 @@ export async function createLeague(page: Page, name: string) {
   await page.getByLabel("Your team name").fill(`${name} XI`);
   // The submit button shares its label with the toggle in the page header.
   await page.getByRole("button", { name: "Create league" }).last().click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await expectNavigation(page, /\/dashboard/, `createLeague(${name})`);
 }
 
 /** Join a league by invitation code via the UI; navigates to /dashboard. */
@@ -43,7 +62,7 @@ export async function joinLeague(page: Page, code: string) {
   await page.getByRole("button", { name: "Join with code" }).click();
   await page.getByLabel("Invitation code").fill(code);
   await page.getByRole("button", { name: "Join league" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await expectNavigation(page, /\/dashboard/, `joinLeague(code len=${code.length})`);
 }
 
 /** Select a league by name from /leagues, so the active league is deterministic. */

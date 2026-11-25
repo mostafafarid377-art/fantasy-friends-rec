@@ -66,7 +66,7 @@ npm run test:e2e                  # starts `npm run dev` automatically when E2E_
 ```
 
 Global setup provisions three users (`e2e-leader@`, `e2e-manager@`,
-`e2e-outsider@fantasyfriends.test`), signs the first two in once, and stores
+`e2e-outsider@<E2E_EMAIL_DOMAIN>`, see `e2e/env.ts`), signs the first two in once, and stores
 their sessions in `e2e/.auth/`. Journeys reuse those sessions, which keeps
 the run well inside the auth rate limits (migrations 0034+0035): a full run makes
 ~4 login requests total instead of ~15.
@@ -127,6 +127,11 @@ so files are independent and reruns never collide.
   `localhost` origin and at `127.0.0.1` with the allowlist, and stays dead
   at `127.0.0.1` without it. If you ever browse the dev server via a
   different origin (LAN IP, port-forward host), add it there too.
+- **J03: `Email address "…" is invalid` after signup** — the disposable
+  project's hosted mailer rejects the recipient domain (reserved TLD or no
+  DNS). Test accounts must live under a domain that resolves; see
+  `E2E_EMAIL_DOMAIN` in `e2e/env.ts`. Never "fix" this by disabling email
+  confirmation on the project.
 - **J02-style flakes on slow machines** — the "no request" probe uses a
   1.5s window; increase the timeout in `auth.spec.ts` if needed.
 - **429 responses** — you reran the suite many times within an hour; the
@@ -161,9 +166,15 @@ touches production credentials or data.
 7. **Test accounts**: created automatically by global setup via the Admin
    API with `email_confirm: true` (the state a real user reaches after
    clicking the confirmation link) — no manual provisioning needed:
-   `e2e-leader@fantasyfriends.test`, `e2e-manager@fantasyfriends.test`,
-   `e2e-outsider@fantasyfriends.test`. The `.test` domain cannot collide
-   with real users.
+   `e2e-leader@`, `e2e-manager@`, `e2e-outsider@<E2E_EMAIL_DOMAIN>`.
+   The domain is the disposable project ref itself: Supabase's hosted mailer
+   validates recipient DNS before sending and rejects reserved TLDs
+   (`.test`, `.example`, `.invalid`, …) and blocklisted hosts
+   (`example.com`, `test.com`, …) with `Email address "…" is invalid`
+   (email_address_invalid) on the PUBLIC signup path — the Admin API used by
+   global setup skips that check, which is why provisioning always worked
+   while J03's real signup flow was rejected. The project-ref domain always
+   resolves while the project exists and can never be a real mailbox.
 8. **Run**:
    ```bash
    npx playwright install chromium   # once

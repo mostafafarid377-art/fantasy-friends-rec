@@ -78,6 +78,15 @@ export default function ProfilePage() {
         },
       });
       setData({ ...data!, profile: res.profile });
+      // Mark the saved values as the new baseline: without this the form
+      // stays dirty after a successful save and the indicator keeps saying
+      // "Unsaved changes" even though everything was persisted.
+      reset({
+        displayName: res.profile.displayName,
+        username: res.profile.username,
+        avatarUrl: res.profile.avatarUrl ?? "",
+        bio: res.profile.bio ?? "",
+      });
       setToast({ message: "Profile saved", tone: "ok" });
       void refresh().catch((error) => console.warn("[session refresh]", error));
     } catch (err) {

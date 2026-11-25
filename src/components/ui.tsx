@@ -226,7 +226,8 @@ export function TableSkeleton({ rows = 6 }: { rows?: number }) {
 
 export function ErrorNote({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3">
+    // role="alert" so assistive tech announces failures and tests can locate them.
+    <div role="alert" className="flex items-start gap-3 rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-card-r" />
       <div className="flex-1 text-sm text-chalk">{message}</div>
       {onRetry && (
@@ -253,7 +254,7 @@ export function Toast({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-x-4 bottom-24 z-[80] flex justify-center md:inset-x-auto md:bottom-6 md:right-6">
+    <div role="status" aria-live="polite" className="fixed inset-x-4 bottom-24 z-[80] flex justify-center md:inset-x-auto md:bottom-6 md:right-6">
       <div
         className={`animate-rise flex items-center gap-3 rounded-lg border px-4 py-3 shadow-2xl backdrop-blur ${
           tone === "ok"
