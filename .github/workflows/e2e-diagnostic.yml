@@ -52,11 +52,37 @@ jobs:
           done
           echo "dev server never answered"; tail -50 dev-server.log; exit 1
 
-      - name: Run diagnostic against dev server
+      - name: Run diagnostic against dev server (control, current config)
         run: node e2e/diagnose-hydration.mjs | tee diagnostic-dev.json
+
+      # Isolation experiment 1: same server, same config, page origin
+      # localhost instead of 127.0.0.1. localhost IS in the dev cross-site
+      # allowlist, so the HMR/debug WebSocket handshake is not 403'd.
+      - name: Run diagnostic against dev server via localhost origin
+        run: E2E_BASE_URL=http://localhost:3000 node e2e/diagnose-hydration.mjs | tee diagnostic-dev-localhost.json
+
+      # Isolation experiment 2: patch next.config IN CI ONLY (not committed)
+      # with allowedDevOrigins: ["127.0.0.1"], restart, retest at 127.0.0.1.
+      # If this hydrates, the WS 403 is proven to be the hydration killer and
+      # allowedDevOrigins is the evidence-backed fix.
+      - name: Run diagnostic with in-CI allowedDevOrigins patch
+        run: |
+          fuser -k 3000/tcp 2>/dev/null || true
+          sleep 2
+          sed -i 's/^} : {/} : {\n  allowedDevOrigins: ["127.0.0.1"],/' next.config.ts
+          grep -n "allowedDevOrigins" next.config.ts
+          nohup npm run dev -- --port 3000 > dev-server-patched.log 2>&1 &
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login || true)
+            [ "$code" = "200" ] && break
+            sleep 3
+          done
+          node e2e/diagnose-hydration.mjs | tee diagnostic-dev-allowed-origins.json
+          git checkout -- next.config.ts
 
       - name: Build production bundle and run diagnostic against prod server
         run: |
+          git checkout -- next.config.ts || true
           npm run build > build.log 2>&1 || { tail -40 build.log; exit 1; }
           nohup npm run start -- --port 3001 > prod-server.log 2>&1 &
           for i in $(seq 1 40); do
@@ -72,8 +98,11 @@ jobs:
           name: hydration-diagnostic
           path: |
             diagnostic-dev.json
+            diagnostic-dev-localhost.json
+            diagnostic-dev-allowed-origins.json
             diagnostic-prod.json
             dev-server.log
+            dev-server-patched.log
             prod-server.log
             build.log
           if-no-files-found: warn
@@ -85,7 +114,7 @@ jobs:
           script: |
             const fs = require("fs");
             let body = `### Hydration diagnostic — run ${context.runId} (${context.sha.slice(0, 7)})\n\n`;
-            for (const f of ["diagnostic-dev.json", "diagnostic-prod.json"]) {
+            for (const f of ["diagnostic-dev.json", "diagnostic-dev-localhost.json", "diagnostic-dev-allowed-origins.json", "diagnostic-prod.json"]) {
               if (!fs.existsSync(f)) { body += `_${f}: missing_\n\n`; continue; }
               let content = fs.readFileSync(f, "utf8");
               if (content.length > 30000) content = content.slice(0, 30000) + "\n…TRUNCATED…";

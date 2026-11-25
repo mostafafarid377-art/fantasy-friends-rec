@@ -73,7 +73,9 @@ const INIT = `
       }
     }
   });
-  mo.observe(document.documentElement, { childList: true, subtree: true });
+  // document.documentElement does not exist yet when an init script runs
+  // (the parser has not created <html>); document itself is always a Node.
+  mo.observe(document, { childList: true, subtree: true });
 })();
 `;
 
