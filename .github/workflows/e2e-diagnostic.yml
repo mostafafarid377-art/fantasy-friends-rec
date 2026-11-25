@@ -9,6 +9,11 @@ name: E2E browser diagnostics
 
 on:
   workflow_dispatch:
+    inputs:
+      e2e_grep:
+        description: "Optional --grep pattern to run a subset of journeys (e.g. 'J14' or 'J14-DIAG')"
+        required: false
+        default: ""
   push:
     branches: [arena/d85f71d8-fantasy-friends-rec]
 
@@ -228,6 +233,7 @@ jobs:
           echo "E2E_SUPABASE_URL=$CANON" >> "$GITHUB_ENV"
           echo "E2E_SUPABASE_SERVICE_ROLE_KEY=$S" >> "$GITHUB_ENV"
           [ -n "$SECRET_PW" ] && echo "E2E_USER_PASSWORD=$SECRET_PW" >> "$GITHUB_ENV" || true
+      echo "E2E_GREP=${{ inputs.e2e_grep || '' }}" >> "$GITHUB_ENV"
 
       - run: npm ci
       - run: npx playwright install --with-deps chromium
@@ -237,7 +243,11 @@ jobs:
           # pipefail: without it the pipeline exits with tee's status and a
           # failing Playwright run would be reported as a green job.
           set -o pipefail
-          npx playwright test 2>&1 | tee playwright-run.log
+          if [ -n "$E2E_GREP" ]; then
+            npx playwright test --grep "$E2E_GREP" 2>&1 | tee playwright-run.log
+          else
+            npx playwright test 2>&1 | tee playwright-run.log
+          fi
 
       - name: Prepare redacted E2E report (secrets stripped)
         if: always()
@@ -259,7 +269,7 @@ jobs:
             echo '```'
             find test-results -name '*error-context*' 2>/dev/null | head -8 | while read -r f; do
               echo "<details><summary>${f}</summary>"; echo; echo '```'
-              head -c 3000 "$f"
+              head -c 12000 "$f"
               echo; echo '```'; echo '</details>'; echo
             done
           } | perl -pe '
