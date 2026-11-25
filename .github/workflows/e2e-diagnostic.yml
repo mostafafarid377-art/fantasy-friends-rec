@@ -267,6 +267,11 @@ jobs:
             echo '```'
             [ -f playwright-run.log ] && tail -c 12000 playwright-run.log || echo "(no run log — suite did not reach the Playwright step)"
             echo '```'
+            # Diagnostic console.log lines from J14-DIAG land in stdout, not the
+            # error context — surface them so the real lineup state is visible.
+            echo "**J14-DIAG console output:**"; echo; echo '```'
+            grep -E "J14-DIAG" playwright-run.log 2>/dev/null | head -60 || echo "(no J14-DIAG output)"
+            echo '```'
             find test-results -name '*error-context*' 2>/dev/null | head -8 | while read -r f; do
               echo "<details><summary>${f}</summary>"; echo; echo '```'
               head -c 12000 "$f"
