@@ -1,4 +1,6 @@
-import { expect, type Browser, type Page } from "@playwright/test";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import { E2E_PASSWORD, type E2EUser } from "./env";
 
 /** Playwright storage states written by global-setup.ts (gitignored). */
@@ -14,7 +16,35 @@ export async function pageAs(browser: Browser, storageState: string): Promise<{ 
 
 /** Short unique suffix so reruns never collide inside a disposable project. */
 export function unique(prefix: string): string {
-  return `${prefix} ${Date.now().toString(36).slice(-5)}`;
+  return `${prefix} ${uniqueSuffix()}`;
+}
+
+/**
+ * One random suffix per spec FILE, persisted under e2e/.auth (gitignored,
+ * deleted by global-setup at the start of every run). Two tests in one file
+ * can run in different processes when a worker restarts mid-run (run
+ * 45657284354: J14 created a league named `… d0t3p`, J15 then waited for
+ * `… d12ef` because the restarted worker re-evaluated module constants).
+ * A seed file is the only store that survives a worker process restart, so
+ * every test in a file shares one seed while different runs still get
+ * different names.
+ */
+export function uniqueSuffix(): string {
+  const file = test.info().file.replace(/[^a-z0-9]+/gi, "_");
+  const seedPath = path.join(__dirname, ".auth", `seed-${file}`);
+  try {
+    return readFileSync(seedPath, "utf8").trim();
+  } catch {
+    const created = Date.now().toString(36).slice(-5);
+    try {
+      mkdirSync(path.dirname(seedPath), { recursive: true });
+      writeFileSync(seedPath, created, { flag: "wx" });
+      return created;
+    } catch {
+      // A concurrent worker created the seed first — use theirs.
+      return readFileSync(seedPath, "utf8").trim();
+    }
+  }
 }
 
 /**
@@ -54,9 +84,28 @@ export async function createLeague(page: Page, name: string) {
   await page.getByRole("button", { name: "Create league" }).first().click();
   await page.getByLabel("League name").fill(name);
   await page.getByLabel("Your team name").fill(`${name} XI`);
-  // The submit button shares its label with the toggle in the page header.
-  await page.getByRole("button", { name: "Create league" }).last().click();
-  await expectNavigation(page, /\/dashboard/, `createLeague(${name})`);
+  // league.create is rate-limited to 10 hits/hour per user in fixed epoch
+  // windows (0034_rate_limiting.sql), and prior runs on the persistent
+  // disposable project spend part of the shared leader account's budget.
+  // Rather than failing the whole cascade, retry the submit until the next
+  // window opens (worst case one full hour).
+  const deadline = Date.now() + 65 * 60 * 1000;
+  for (;;) {
+    // The submit button shares its label with the toggle in the page header.
+    await page.getByRole("button", { name: "Create league" }).last().click();
+    const limited = page.getByRole("alert").filter({ hasText: /too many attempts/i }).first();
+    const landed = await Promise.race([
+      page.waitForURL(/\/dashboard/, { timeout: 15_000 }).then(() => true, () => false),
+      limited.waitFor({ state: "visible", timeout: 15_000 }).then(() => false, () => false),
+    ]);
+    if (landed) return;
+    if (await limited.isVisible().catch(() => false) && Date.now() < deadline) {
+      await page.waitForTimeout(30_000);
+      continue;
+    }
+    await expectNavigation(page, /\/dashboard/, `createLeague(${name})`);
+    return;
+  }
 }
 
 /** Join a league by invitation code via the UI; navigates to /dashboard. */

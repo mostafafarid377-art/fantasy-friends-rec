@@ -95,7 +95,9 @@ export const PATCH = handler(async (req: NextRequest) => {
       ...(input.username !== undefined ? { username: input.username } : {}),
       ...(input.avatarUrl !== undefined ? { avatar_url: input.avatarUrl } : {}),
       ...(input.bio !== undefined ? { bio: input.bio } : {}),
-      updated_at: new Date().toISOString(),
+      // NB: no updated_at here — 0002_rls.sql grants UPDATE on profiles to the
+      // authenticated role for exactly (username, display_name, avatar_url,
+      // bio); writing any other column fails with "permission denied".
     })
     .eq("id", user.id)
     .select("id,email,username,display_name,avatar_url,bio,email_verified_at,created_at")

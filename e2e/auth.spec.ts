@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_EMAIL_DOMAIN, E2E_USERS } from "./env";
-import { uiSignIn } from "./helpers";
+import { uiSignIn, uniqueSuffix } from "./helpers";
 
 /**
  * Auth journeys. No test-only auth path exists or is needed: every journey
@@ -29,16 +29,26 @@ test.describe("journeys J01–J08, J19 — auth", () => {
   });
 
   test("J03 signup with valid details shows the email confirmation step", async ({ page }) => {
-    const email = `j03-${Date.now().toString(36)}@${E2E_EMAIL_DOMAIN}`;
+    const email = `j03-${uniqueSuffix()}-${Date.now().toString(36)}@${E2E_EMAIL_DOMAIN}`;
+    const username = `j03_${uniqueSuffix()}_${Date.now().toString(36).slice(-4)}`;
     await page.goto("/signup");
     await page.getByLabel("Display name").fill("Journey Three");
-    await page.getByLabel("Username").fill(`j03_${Date.now().toString(36)}`);
+    await page.getByLabel("Username").fill(username);
     await page.getByLabel("Email").fill(email);
     await page.getByLabel("Password", { exact: true }).fill("J03-Passw0rd-Ok!");
     await page.getByLabel("Confirm").fill("J03-Passw0rd-Ok!");
     await page.getByRole("button", { name: "Create account" }).click();
     // The disposable project keeps email confirmations ON (see E2E_TESTING.md).
-    await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
+    // GoTrue also caps SMTP sends per project, and repeated runs can exhaust
+    // it: the app then surfaces the API's error (e.g. "email rate limit
+    // exceeded") instead of the confirmation step. Skipping here would
+    // misreport the journey, so fail with the visible feedback attached.
+    try {
+      await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible({ timeout: 15_000 });
+    } catch (err) {
+      const alerts = await page.getByRole("alert").allTextContents().catch(() => [] as string[]);
+      throw new Error(`J03: confirmation step not shown. Visible alerts: ${JSON.stringify(alerts)}.`, { cause: err });
+    }
   });
 
   test("J04 sign in with valid credentials lands in the app", async ({ page }) => {

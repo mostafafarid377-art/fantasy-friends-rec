@@ -33,8 +33,12 @@ test.describe("journeys J09–J11 — leagues and membership", () => {
     try {
       await joinLeague(member.page, code);
       await member.page.goto("/members");
-      await expect(member.page.getByText(E2E_USERS.leader.displayName)).toBeVisible();
-      await expect(member.page.getByText(E2E_USERS.manager.displayName)).toBeVisible();
+      // Scope to the member roster <li> rows: a bare getByText(displayName)
+      // also matches the sidebar profile link and the "@username · …" subtext
+      // on the same page (run 45657284354 J11 strict-mode violation).
+      const roster = member.page.locator("ul li");
+      await expect(roster.filter({ hasText: E2E_USERS.leader.displayName })).toHaveCount(1);
+      await expect(roster.filter({ hasText: E2E_USERS.manager.displayName })).toHaveCount(1);
     } finally {
       await member.close();
     }
@@ -42,7 +46,8 @@ test.describe("journeys J09–J11 — leagues and membership", () => {
     const again = await pageAs(browser, LEADER_STATE);
     try {
       await again.page.goto("/members");
-      await expect(again.page.getByText(E2E_USERS.manager.displayName)).toBeVisible();
+      const roster = again.page.locator("ul li");
+      await expect(roster.filter({ hasText: E2E_USERS.manager.displayName })).toHaveCount(1);
     } finally {
       await again.close();
     }

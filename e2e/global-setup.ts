@@ -1,6 +1,6 @@
 import { request } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { E2E_PASSWORD, E2E_USERS, e2eBaseURL, supabaseAdminEnv } from "./env";
 
@@ -76,6 +76,11 @@ export default async function globalSetup() {
   // Playwright storage states. e2e/.auth is gitignored (session material).
   const dir = path.join(__dirname, ".auth");
   mkdirSync(dir, { recursive: true });
+  // Per-file unique-name seeds (helpers.uniqueSuffix) belong to one run only;
+  // dropping them keeps reruns from colliding with leagues of a previous run.
+  for (const entry of readdirSync(dir)) {
+    if (entry.startsWith("seed-")) unlinkSync(path.join(dir, entry));
+  }
   for (const key of ["leader", "manager"] as const) {
     const ctx = await request.newContext({ baseURL });
     const res = await ctx.post("/api/auth/login", {
