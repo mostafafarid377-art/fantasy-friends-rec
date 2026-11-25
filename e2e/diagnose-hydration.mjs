@@ -130,9 +130,19 @@ async function probePage(browser, path, { stripCsp = false } = {}) {
   page.on("framenavigated", (f) => { if (f === page.mainFrame()) navigations++; });
 
   const t0 = Date.now();
-  const resp = await page.goto(`${base}${path}`, { waitUntil: "load" });
+  // If the failure under investigation is real, `load` may never fire —
+  // a throwing goto must not destroy the partial evidence already collected.
+  let resp = null;
+  try {
+    resp = await page.goto(`${base}${path}`, { waitUntil: "load" });
+  } catch (err) {
+    // `load` never fired — the page object is still inspectable afterwards.
+    out.gotoError = String(err).split("\n")[0].slice(0, 200);
+  }
   out.pageStatus = resp?.status() ?? 0;
-  out.servedCspPresent = stripCsp ? "stripped by route interception" : Boolean(resp?.headers()["content-security-policy"]);
+  const cspHeader = resp?.headers()["content-security-policy"] ?? null;
+  out.servedCspPresent = stripCsp ? "stripped by route interception" : Boolean(cspHeader);
+  out.servedCspHasUnsafeEval = stripCsp ? "n/a" : cspHeader?.includes("'unsafe-eval'") ?? false;
 
   await page.waitForTimeout(6000);
 

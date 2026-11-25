@@ -1,0 +1,135 @@
+name: E2E browser diagnostics
+
+# Runs the redacted browser diagnostic (e2e/diagnose-hydration.mjs) and, when
+# the disposable-project secrets are configured, the full 19-journey E2E
+# suite. The diagnostic job needs NO secrets: it runs the app against dummy
+# Supabase values and never contacts a real project. The e2e job refuses to
+# run unless E2E_SUPABASE_URL points at the disposable project
+# (ssvwzakelcumisccsuly) — production is never a valid target.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [arena/d85f71d8-fantasy-friends-rec]
+
+concurrency:
+  group: e2e-diag-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    name: Hydration diagnostic (dev + prod, no secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Start dev server (dummy Supabase env — diagnostic does not contact it)
+        run: |
+          printf '%s\n' \
+            'NEXT_PUBLIC_SUPABASE_URL=https://ssvwzakelcumisccsuly.supabase.co' \
+            'NEXT_PUBLIC_SUPABASE_ANON_KEY=diagnostic-dummy-not-a-real-key' \
+            'SUPABASE_SERVICE_ROLE_KEY=diagnostic-dummy-not-a-real-key' \
+            > .env.local
+          nohup npm run dev -- --port 3000 > dev-server.log 2>&1 &
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login || true)
+            [ "$code" = "200" ] && exit 0
+            sleep 3
+          done
+          echo "dev server never answered"; tail -50 dev-server.log; exit 1
+
+      - name: Run diagnostic against dev server
+        run: node e2e/diagnose-hydration.mjs | tee diagnostic-dev.json
+
+      - name: Build production bundle and run diagnostic against prod server
+        run: |
+          npm run build > build.log 2>&1 || { tail -40 build.log; exit 1; }
+          nohup npm run start -- --port 3001 > prod-server.log 2>&1 &
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/login || true)
+            [ "$code" = "200" ] && break
+            sleep 3
+          done
+          E2E_BASE_URL=http://127.0.0.1:3001 node e2e/diagnose-hydration.mjs | tee diagnostic-prod.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hydration-diagnostic
+          path: |
+            diagnostic-dev.json
+            diagnostic-prod.json
+            dev-server.log
+            prod-server.log
+            build.log
+          if-no-files-found: warn
+
+  e2e:
+    name: Full 19-journey E2E (requires disposable-project secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: diagnose
+    env:
+      CI: "true"
+      SECRET_URL_A: ${{ secrets.E2E_SUPABASE_URL }}
+      SECRET_URL_B: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SECRET_SERVICE: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
+      SECRET_SERVICE_B: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SECRET_ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SECRET_PW: ${{ secrets.E2E_USER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Resolve and guard disposable-project credentials
+        run: |
+          U="${SECRET_URL_A:-$SECRET_URL_B}"
+          S="${SECRET_SERVICE:-$SECRET_SERVICE_B}"
+          echo "E2E_SUPABASE_URL present: $([ -n "$U" ] && echo yes || echo no)"
+          echo "service role key present: $([ -n "$S" ] && echo yes || echo no)"
+          echo "anon key present: $([ -n "$SECRET_ANON" ] && echo yes || echo no)"
+          if [ -z "$U" ] || [ -z "$S" ] || [ -z "$SECRET_ANON" ]; then
+            echo "::error::BLOCKED — GitHub Actions secrets are not configured. Need E2E_SUPABASE_URL, E2E_SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_ROLE_KEY) and NEXT_PUBLIC_SUPABASE_ANON_KEY of the DISPOSABLE project ssvwzakelcumisccsuly. The 19-journey suite cannot authenticate without them; no result is fabricated."
+            exit 1
+          fi
+          case "$U" in
+            *ssvwzakelcumisccsuly*) echo "disposable-project guard: OK" ;;
+            *) echo "::error::REFUSED — the configured Supabase URL is not the disposable project ssvwzakelcumisccsuly. Never run E2E against production."; exit 1 ;;
+          esac
+          case "$U" in
+            *zkrfgdiujpagaddsxbcb*) echo "::error::REFUSED — production project reference detected."; exit 1 ;;
+          esac
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$U"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$SECRET_ANON"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$S"
+          } > .env.local
+          echo "E2E_SUPABASE_URL=$U" >> "$GITHUB_ENV"
+          echo "E2E_SUPABASE_SERVICE_ROLE_KEY=$S" >> "$GITHUB_ENV"
+          [ -n "$SECRET_PW" ] && echo "E2E_USER_PASSWORD=$SECRET_PW" >> "$GITHUB_ENV" || true
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run all 19 journeys (dev server auto-started by Playwright webServer)
+        run: npx playwright test 2>&1 | tee playwright-run.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results
+          path: |
+            playwright-run.log
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
