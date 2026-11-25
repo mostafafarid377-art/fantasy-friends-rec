@@ -1,24 +1,48 @@
 /**
- * One-off browser diagnostic for the E2E environment. NOT part of the suite
- * (Playwright only picks up *.spec.ts). Run it against a FRESH dev server:
+ * Browser diagnostic v2 for the E2E dead-hydration failure. NOT part of the
+ * suite (Playwright only picks up *.spec.ts).
  *
- *   # stop anything already on :3000 first — Playwright reuses existing
- *   # servers, and a stale one serves stale config:
- *   #   lsof -ti:3000 | xargs kill    (or your platform's equivalent)
- *   npm run dev &                     # fresh server, current code
- *   node e2e/diagnose-hydration.mjs   # prints a redacted JSON report
+ * Run against a FRESH dev server (Playwright reuses existing ones):
  *
- * Captures exactly the evidence needed to diagnose dead-JS / hydration
- * failures: console errors, pageerrors, failed requests, /_next and /api
- * response statuses, the served CSP header, a hydration probe, and a
- * fake-credentials submit probe (POST fetch vs native GET navigation).
+ *   # stop whatever is on :3000 first, then:
+ *   npm run dev &
+ *   node e2e/diagnose-hydration.mjs
  *
- * Redaction contract: only methods, origin+path (query strings stripped) and
- * status codes are reported. Never bodies, cookies, headers, tokens or
- * passwords. The optional login probe uses the E2E test account and reports
- * ONLY the HTTP status code.
+ * v2 fixes two v1 probe flaws: all listeners now register BEFORE navigation
+ * (v1 could miss the post-hydration fetch fired during `load`), and the
+ * submit probe distinguishes a native POST fallback (method="post" now makes
+ * dead-JS submissions POST back to the page, which answers 405) from a GET
+ * with credentials in the query string (the original incident signature).
+ *
+ * What it measures, per scenario:
+ *   - DOMContentLoaded / load / document.readyState progression
+ *   - per-script load/error events (a load event fires only after a script
+ *     has been DOWNLOADED AND EXECUTED — this separates "blocked" from
+ *     "downloaded but never ran")
+ *   - securitypolicyviolation events (page-level, catches CSP blocks that
+ *     never reach the console)
+ *   - window.onerror + unhandledrejection
+ *   - inline-script execution probe: self.__next_f is created by the page's
+ *     own inline bootstrap scripts (permitted only when CSP inline rules are)
+ *   - external-runtime execution probe: globalThis.TURBOPACK is assigned at
+ *     the END of the dev runtime chunk — defined means the runtime executed
+ *   - hydration probe: /login mounts ResumeSession, whose useEffect fetches
+ *     /api/auth/session only after React hydrates
+ *   - submit probe with FAKE credentials: POST /api/auth/login (hydrated),
+ *     POST /login (dead-JS native POST fallback -> 405), GET-with-query
+ *     (dead-JS native GET — the incident), or nothing
+ *
+ * Scenarios:
+ *   A: /login as served.
+ *   B: /login with the Content-Security-Policy response header STRIPPED by
+ *      interception — if A is dead and B hydrates, the CSP is implicated
+ *      despite no visible violation; if both are dead, the CSP is cleared.
+ *   C: / (marketing) as a minimal same-server comparison page.
+ *
+ * Redaction contract: methods, origin+path (queries stripped) and status
+ * codes only. Never bodies, cookies, auth headers, tokens or passwords.
  */
-import { chromium, request } from "@playwright/test";
+import { chromium } from "@playwright/test";
 
 const base = (process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000").replace(/\/+$/, "");
 
@@ -31,88 +55,141 @@ const stripQuery = (u) => {
   }
 };
 
-const report = {
-  base,
-  servedCsp: null,
-  pageStatus: 0,
-  console: [],
-  pageErrors: [],
-  failedRequests: [],
-  responses: [],
-  hydrationProbe: "unknown",
-  submitProbe: "unknown",
-  loginApiStatus: "skipped (no E2E creds in env)",
-};
-
-const browser = await chromium.launch();
-try {
-  const page = await browser.newPage();
-
-  page.on("console", (m) => {
-    if (m.type() === "error" || m.type() === "warning") {
-      report.console.push(`${m.type()}: ${m.text().slice(0, 300)}`);
+const INIT = `
+(() => {
+  const rec = (window.__rec = { scriptEvents: [], csp: [], errors: [], rejections: [], dcl: 0, load: 0 });
+  document.addEventListener("DOMContentLoaded", () => { rec.dcl = performance.now(); });
+  window.addEventListener("load", () => { rec.load = performance.now(); });
+  window.addEventListener("error", (e) => rec.errors.push(String(e.message || e).slice(0, 200)));
+  window.addEventListener("unhandledrejection", (e) => rec.rejections.push(String(e.reason).slice(0, 200)));
+  document.addEventListener("securitypolicyviolation", (e) =>
+    rec.csp.push((e.effectiveDirective + " blocked " + (e.blockedURI || "").split("?")[0]).slice(0, 200)));
+  const mo = new MutationObserver((muts) => {
+    for (const m of muts) for (const n of m.addedNodes) {
+      if (n && n.tagName === "SCRIPT") {
+        const src = n.src ? new URL(n.src).pathname : "(inline)";
+        n.addEventListener("load", () => rec.scriptEvents.push("load " + src));
+        n.addEventListener("error", () => rec.scriptEvents.push("ERROR " + src));
+      }
     }
   });
-  page.on("pageerror", (e) => report.pageErrors.push(String(e).slice(0, 300)));
-  page.on("requestfailed", (r) =>
-    report.failedRequests.push(`${r.method()} ${stripQuery(r.url())} -> ${r.failure()?.errorText ?? "failed"}`),
-  );
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+})();
+`;
+
+async function probePage(browser, path, { stripCsp = false } = {}) {
+  const out = {
+    scenario: `${stripCsp ? "CSP-STRIPPED " : ""}${path}`,
+    pageStatus: 0,
+    servedCspPresent: null,
+    console: [],
+    pageErrors: [],
+    failedRequests: [],
+    nextResponses: [],
+    inlineScriptsExecuted: null,
+    runtimeChunkExecuted: null,
+    hydrationProbe: "unknown",
+    submitProbe: path === "/login" ? "unknown" : "n/a",
+    timing: {},
+  };
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  if (stripCsp) {
+    await page.route("**/*", async (route) => {
+      const res = await route.fetch();
+      const headers = { ...res.headers() };
+      delete headers["content-security-policy"];
+      await route.fulfill({ response: res, headers });
+    });
+  }
+
+  await page.addInitScript(INIT);
+
+  // ALL listeners registered before navigation (v1 raced here).
+  let sessionFetchSeen = false;
+  let loginApiPostSeen = false;
+  let nativePostToLogin = false;
+  let navigations = 0;
+  page.on("console", (m) => reportable(m) && out.console.push(`${m.type()}: ${m.text().slice(0, 250)}`));
+  page.on("pageerror", (e) => out.pageErrors.push(String(e).slice(0, 250)));
+  page.on("requestfailed", (r) => out.failedRequests.push(`${r.method()} ${stripQuery(r.url())} -> ${r.failure()?.errorText ?? "failed"}`));
+  page.on("request", (r) => {
+    const p = stripQuery(r.url());
+    if (p === `${base}/api/auth/session`) sessionFetchSeen = true;
+    if (p === `${base}/api/auth/login` && r.method() === "POST") loginApiPostSeen = true;
+    if (p === `${base}/login` && r.method() === "POST") nativePostToLogin = true;
+  });
   page.on("response", (r) => {
     const u = r.url();
-    if (u.includes("/_next/") || u.includes("/api/") || u.includes(".supabase.")) {
-      report.responses.push(`${r.status()} ${r.request().method()} ${stripQuery(u)}`);
+    if (u.includes("/_next/") || u.includes("/api/")) {
+      out.nextResponses.push(`${r.status()} ${r.request().method()} ${stripQuery(u)}`);
     }
   });
+  page.on("framenavigated", (f) => { if (f === page.mainFrame()) navigations++; });
 
-  // Hydration probe: ResumeSession fetches /api/auth/session ONLY after
-  // hydration, from a useEffect. If it fires, React is alive.
-  let sessionFetchSeen = false;
-  page.on("request", (r) => {
-    if (stripQuery(r.url()) === `${base}/api/auth/session`) sessionFetchSeen = true;
-  });
-
-  const resp = await page.goto(`${base}/login`, { waitUntil: "load" });
-  report.pageStatus = resp?.status() ?? 0;
-  report.servedCsp = resp?.headers()["content-security-policy"] ?? null;
+  const t0 = Date.now();
+  const resp = await page.goto(`${base}${path}`, { waitUntil: "load" });
+  out.pageStatus = resp?.status() ?? 0;
+  out.servedCspPresent = stripCsp ? "stripped by route interception" : Boolean(resp?.headers()["content-security-policy"]);
 
   await page.waitForTimeout(6000);
-  report.hydrationProbe = sessionFetchSeen
+
+  const state = await page.evaluate(() => ({
+    readyState: document.readyState,
+    nextF: typeof self.__next_f !== "undefined",
+    turbopack: typeof globalThis.TURBOPACK !== "undefined",
+    scriptCount: document.scripts.length,
+    rec: window.__rec,
+  }));
+  out.timing = { dclMs: Math.round(state.rec.dcl), loadMs: Math.round(state.rec.load), wallMs: Date.now() - t0 };
+  out.inlineScriptsExecuted = state.nextF;
+  out.runtimeChunkExecuted = state.turbopack;
+  out.scriptTagsInDom = state.scriptCount;
+  out.scriptEvents = state.rec.scriptEvents;
+  out.cspViolations = state.rec.csp;
+  out.windowErrors = state.rec.errors;
+  out.unhandledRejections = state.rec.rejections;
+
+  out.hydrationProbe = sessionFetchSeen
     ? "HYDRATED (post-hydration /api/auth/session fetch observed)"
     : "NOT HYDRATED (no post-hydration fetch; client JS is not executing)";
 
-  // Submit probe with FAKE credentials: hydrated React prevents the native
-  // navigation and POSTs /api/auth/login; dead JS performs a native GET and
-  // the field values land in the URL (the incident signature).
-  let loginPostSeen = false;
-  page.on("request", (r) => {
-    if (stripQuery(r.url()) === `${base}/api/auth/login` && r.method() === "POST") loginPostSeen = true;
-  });
-  await page.getByLabel("Email").fill("probe@invalid.test");
-  await page.getByLabel("Password").fill("probe-not-a-real-password");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForTimeout(4000);
-
-  const urlAfter = page.url();
-  const leakedIntoUrl = urlAfter.includes("?") || urlAfter.includes("password") || urlAfter.includes("probe%40");
-  report.submitProbe = loginPostSeen
-    ? "OK (React handler intercepted submit; POST /api/auth/login fired)"
-    : leakedIntoUrl
-      ? "NATIVE GET SUBMISSION (values serialized into the URL — client JS dead)"
-      : "NO REQUEST AT ALL (submit produced neither a POST fetch nor a navigation)";
-
-  // Optional account probe: does the E2E login API accept the test account?
-  // Reports ONLY the status code (200 = exists+confirmed+password matches,
-  // 401 = wrong credentials / unconfirmed / missing, 429 = rate limited).
-  const email = process.env.E2E_PROBE_EMAIL;
-  const password = process.env.E2E_USER_PASSWORD;
-  if (email && password) {
-    const ctx = await request.newContext({ baseURL: base });
-    const res = await ctx.post("/api/auth/login", { data: { email, password } });
-    report.loginApiStatus = res.status();
-    await ctx.dispose();
+  if (path === "/login") {
+    await page.getByLabel("Email").fill("probe@invalid.test");
+    await page.getByLabel("Password").fill("probe-not-a-real-password");
+    const urlBefore = page.url();
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.waitForTimeout(4000);
+    const urlAfter = page.url();
+    const gotQueryLeak = urlAfter.includes("password") || urlAfter.includes("probe%40") || urlAfter.includes("email=");
+    out.submitProbe = loginApiPostSeen
+      ? "REACT HANDLER RAN (POST /api/auth/login)"
+      : nativePostToLogin
+        ? "NATIVE POST fallback to /login (dead JS; no URL leak — method=post worked)"
+        : gotQueryLeak
+          ? "NATIVE GET fallback (dead JS; CREDENTIALS IN URL — the incident)"
+          : navigations > 1 || urlAfter !== urlBefore
+            ? `NAVIGATED without a detectable request (to ${stripQuery(urlAfter)})`
+            : "NOTHING (click produced neither request nor navigation)";
   }
+
+  await context.close();
+  return out;
+}
+
+function reportable(m) {
+  return true; // capture every console level this run — silence is evidence too
+}
+
+const browser = await chromium.launch();
+try {
+  const results = [];
+  results.push(await probePage(browser, "/login"));
+  results.push(await probePage(browser, "/login", { stripCsp: true }));
+  results.push(await probePage(browser, "/"));
+  console.log(JSON.stringify(results, null, 2));
 } finally {
   await browser.close();
 }
-
-console.log(JSON.stringify(report, null, 2));
