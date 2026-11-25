@@ -24,18 +24,30 @@ function pastKickoffLocal(): string {
  * Save a starting XI for one team on the match's Line-ups tab. The only
  * formation rule that matters for the six-player pool J14 registers (GK,
  * DEF, MID, FWD + two more) is exactly five starters with one goalkeeper,
- * so five clicks on the first available player always satisfy it. Each
- * click re-renders the roster list, so a static nth() handle goes stale —
- * always pick the first player that is not already a starter.
+ * so five clicks on the first five players always satisfy it. Each click
+ * re-renders the roster list, so locate every target by its row position
+ * and the unpressed XI button inside it instead of a static handle.
  */
 async function setLineup(page: Page, team: string) {
   const panel = page.locator("section").filter({ has: page.getByRole("heading", { name: team, exact: true }) });
-  for (let i = 0; i < 5; i++) {
-    await panel.locator("ul li").filter({ hasNot: page.getByRole("button", { name: "XI", exact: true, pressed: true }) })
-      .first().getByRole("button", { name: "XI", exact: true }).click();
+  try {
+    for (let i = 0; i < 5; i++) {
+      // Rows already in the XI are marked aria-pressed="true"; pick the first
+      // row whose XI button is still unpressed, every time the list re-renders.
+      await panel.locator("ul li").filter({ has: page.locator('button[aria-pressed="false"]', { hasText: "XI" }) })
+        .first().locator('button[aria-pressed="false"]', { hasText: "XI" }).click();
+    }
+    await panel.getByRole("button", { name: "Save line-up" }).click();
+    await expect(panel.getByRole("button", { name: "Save line-up" })).toBeEnabled();
+  } catch (err) {
+    const rows = await panel.locator("ul li").allTextContents().catch(() => [] as string[]);
+    const xiCount = await panel.locator('button[aria-pressed="false"]', { hasText: "XI" }).count().catch(() => -1);
+    const disabled = await panel.locator('button[aria-pressed="false"][disabled]', { hasText: "XI" }).count().catch(() => -1);
+    throw new Error(
+      `setLineup(${team}) failed: ${xiCount} unpressed XI buttons, ${disabled} disabled. Rows: ${JSON.stringify(rows)}.`,
+      { cause: err },
+    );
   }
-  await panel.getByRole("button", { name: "Save line-up" }).click();
-  await expect(panel.getByRole("button", { name: "Save line-up" })).toBeEnabled();
 }
 
 async function createMatch(page: Page) {
