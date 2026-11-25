@@ -33,10 +33,11 @@ test.describe("journeys J09–J11 — leagues and membership", () => {
     try {
       await joinLeague(member.page, code);
       await member.page.goto("/members");
-      // Scope to the member roster <li> rows: a bare getByText(displayName)
-      // also matches the sidebar profile link and the "@username · …" subtext
-      // on the same page (run 45657284354 J11 strict-mode violation).
-      const roster = member.page.locator("ul li");
+      // The members page has TWO divide-y lists: the roster first, then the
+      // league-activity feed. Scope strictly to the roster — a bare
+      // getByText(displayName) also matches the sidebar profile link and the
+      // "@username · …" subtext (run 45657284354 J11 strict-mode violation).
+      const roster = member.page.locator("ul.divide-y").first().locator("li");
       try {
         await expect(roster.filter({ hasText: E2E_USERS.leader.displayName })).toHaveCount(1);
         await expect(roster.filter({ hasText: E2E_USERS.manager.displayName })).toHaveCount(1);

@@ -20,6 +20,21 @@ function pastKickoffLocal(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/**
+ * Save a starting XI for one team on the match's Line-ups tab: the first
+ * player of every required position, which satisfies the default 1-2-1
+ * formation for the six-player pools the journeys register. J15's event
+ * roster and J16's result both require persisted lineups.
+ */
+async function setLineup(page: Page, team: string) {
+  const panel = page.locator("section").filter({ has: page.getByRole("heading", { name: team, exact: true }) });
+  for (const position of ["GK", "DEF", "MID", "FWD"]) {
+    await panel.locator("li").filter({ hasText: position }).first().getByRole("button", { name: "XI", exact: true }).click();
+  }
+  await panel.getByRole("button", { name: "Save line-up" }).click();
+  await expect(panel.getByRole("button", { name: "Save line-up" })).toBeEnabled();
+}
+
 async function createMatch(page: Page) {
   await page.goto("/matches/new");
   await page.getByLabel("Match title").fill(nameOf(matchTitle));
@@ -46,6 +61,10 @@ test.describe("journeys J14–J16 — match lifecycle", () => {
     }
     await createMatch(page);
     await expect(page.getByText(nameOf(matchTitle)).first()).toBeVisible();
+    // J15's event roster and J16's result both need persisted lineups, so
+    // save the starting XIs for both teams before leaving the match page.
+    await setLineup(page, nameOf(teamA));
+    await setLineup(page, nameOf(teamB));
     await page.goto("/matches");
     await expect(page.getByText(nameOf(matchTitle)).first()).toBeVisible();
     // Result submission is blocked until the leader approves the league's

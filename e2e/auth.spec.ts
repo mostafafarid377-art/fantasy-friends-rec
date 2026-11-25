@@ -41,13 +41,22 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     // The disposable project keeps email confirmations ON (see E2E_TESTING.md).
     // GoTrue also caps SMTP sends per project, and repeated runs can exhaust
     // it: the app then surfaces the API's error (e.g. "email rate limit
-    // exceeded") instead of the confirmation step. Skipping here would
-    // misreport the journey, so fail with the visible feedback attached.
+    // exceeded") inline instead of the confirmation step. Skipping here
+    // would misreport the journey, so fail with the page's own feedback.
     try {
       await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible({ timeout: 15_000 });
     } catch (err) {
+      // The signup form renders the API error in a plain div (not role=alert),
+      // so capture the whole form body text and let it carry the message.
+      const formText = ((await page.locator("form, main").first().textContent().catch(() => "")) ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
       const alerts = await page.getByRole("alert").allTextContents().catch(() => [] as string[]);
-      throw new Error(`J03: confirmation step not shown. Visible alerts: ${JSON.stringify(alerts)}.`, { cause: err });
+      throw new Error(
+        `J03: confirmation step not shown at ${page.url()}. Form: ${JSON.stringify(formText)}. Alerts: ${JSON.stringify(alerts)}.`,
+        { cause: err },
+      );
     }
   });
 
