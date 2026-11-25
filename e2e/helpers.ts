@@ -154,16 +154,31 @@ export async function selectLeague(page: Page, name: string) {
 export async function approveScoringRules(page: Page, leagueName: string) {
   await selectLeague(page, leagueName);
   await page.goto("/rules");
+  // J16 fails here when the flow breaks — assert what the page actually
+  // shows (a button that never appears, an error toast, a redirect) instead
+  // of leaving the next run with only the match page's stale "not approved"
+  // alert.
   const initialize = page.getByRole("button", { name: "Initialize draft rules" });
-  if (await initialize.isVisible().catch(() => false)) {
-    await initialize.click();
-    await expect(initialize).not.toBeVisible();
-  }
   const approve = page.getByRole("button", { name: "Approve set" });
-  await approve.waitFor({ state: "visible" });
-  if (await approve.isEnabled()) {
-    await approve.click();
-    await expect(page.getByText("Approved")).toBeVisible();
+  try {
+    if (await initialize.isVisible().catch(() => false)) {
+      await initialize.click();
+      await expect(initialize).not.toBeVisible();
+    }
+    await approve.waitFor({ state: "visible", timeout: 15_000 });
+    if (await approve.isEnabled()) {
+      await approve.click();
+      await expect(page.getByText("Approved", { exact: true })).toBeVisible();
+    }
+  } catch (err) {
+    const badge = await page.getByText(/Draft configuration|Approved/).first().textContent().catch(() => "(no badge)");
+    const toasts = await page.getByRole("status").allTextContents().catch(() => [] as string[]);
+    const alerts = await page.getByRole("alert").allTextContents().catch(() => [] as string[]);
+    throw new Error(
+      `approveScoringRules(${leagueName}) failed at ${page.url()}. Badge: ${JSON.stringify(badge)}. ` +
+        `Toasts: ${JSON.stringify(toasts)}. Alerts: ${JSON.stringify(alerts)}.`,
+      { cause: err },
+    );
   }
 }
 

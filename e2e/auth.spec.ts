@@ -29,6 +29,8 @@ test.describe("journeys J01–J08, J19 — auth", () => {
   });
 
   test("J03 signup with valid details shows the email confirmation step", async ({ page }) => {
+    // The retry below can span a full GoTrue email window (one hour).
+    test.setTimeout(90 * 60 * 1000);
     const email = `j03-${uniqueSuffix()}-${Date.now().toString(36)}@${E2E_EMAIL_DOMAIN}`;
     const username = `j03_${uniqueSuffix()}_${Date.now().toString(36).slice(-4)}`;
     await page.goto("/signup");
@@ -39,24 +41,34 @@ test.describe("journeys J01–J08, J19 — auth", () => {
     await page.getByLabel("Confirm").fill("J03-Passw0rd-Ok!");
     await page.getByRole("button", { name: "Create account" }).click();
     // The disposable project keeps email confirmations ON (see E2E_TESTING.md).
-    // GoTrue also caps SMTP sends per project, and repeated runs can exhaust
-    // it: the app then surfaces the API's error (e.g. "email rate limit
-    // exceeded") inline instead of the confirmation step. Skipping here
-    // would misreport the journey, so fail with the page's own feedback.
-    try {
-      await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible({ timeout: 15_000 });
-    } catch (err) {
-      // The signup form renders the API error in a plain div (not role=alert),
-      // so capture the whole form body text and let it carry the message.
-      const formText = ((await page.locator("form, main").first().textContent().catch(() => "")) ?? "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 300);
-      const alerts = await page.getByRole("alert").allTextContents().catch(() => [] as string[]);
-      throw new Error(
-        `J03: confirmation step not shown at ${page.url()}. Form: ${JSON.stringify(formText)}. Alerts: ${JSON.stringify(alerts)}.`,
-        { cause: err },
-      );
+    // GoTrue also caps SMTP sends per project per hour, and repeated runs
+    // exhaust it: the app then renders "email rate limit exceeded" inline.
+    // Skipping here would misreport the journey, so retry across the window
+    // (the cap resets hourly) and only fail with the page's own feedback.
+    const deadline = Date.now() + 65 * 60 * 1000;
+    for (;;) {
+      try {
+        await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible({ timeout: 15_000 });
+        return;
+      } catch (err) {
+        const formText = ((await page.locator("form").first().textContent().catch(() => "")) ?? "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 300);
+        const limited = /email rate limit/i.test(formText);
+        if (limited && Date.now() < deadline) {
+          // GoTrue's email-send window is hourly; wait it out and resubmit
+          // the same form rather than failing the journey on a shared cap.
+          await page.waitForTimeout(5 * 60 * 1000);
+          await page.getByRole("button", { name: "Create account" }).click();
+          continue;
+        }
+        const alerts = await page.getByRole("alert").allTextContents().catch(() => [] as string[]);
+        throw new Error(
+          `J03: confirmation step not shown at ${page.url()}. Form: ${JSON.stringify(formText)}. Alerts: ${JSON.stringify(alerts)}.`,
+          { cause: err },
+        );
+      }
     }
   });
 
