@@ -310,5 +310,33 @@ assert.doesNotMatch(attach, /fantasy_match_lineup_history/i,
 assert.doesNotMatch(attach, /create\s+trigger/i,
   'the trigger already exists from 0022: replacing the function body is the whole change');
 
+// Migration 0038: the Man of the Match. One curated record per match, readable
+// by every member, writable only through the guarded API. The card's numbers
+// come from the scoring record, so the migration stores only the choice and an
+// optional photo — never points, goals or assists.
+const motm = read('./supabase/migrations/0038_man_of_the_match.sql');
+assert.match(motm, /create table if not exists "match_motm"/i,
+  'migration 0038 must create the match_motm table');
+assert.match(motm, /create unique index if not exists "match_motm_match_uq"[\s\S]*?"match_id"/i,
+  'migration 0038 must allow exactly one man of the match per match');
+assert.match(motm, /foreign key \("player_id"\) references "public"\."players"/i,
+  'the man of the match must be a real player');
+assert.match(motm, /create policy match_motm_select[\s\S]*?public\.is_member\(league_id\)/i,
+  'every league member must be able to read the man of the match');
+assert.doesNotMatch(motm, /grant (insert|update|delete) on (table )?"?public"?\."?match_motm"?/i,
+  'clients must not write the man of the match directly — only the guarded API may');
+assert.match(motm, /grant select on table "public"\."match_motm" to authenticated/i,
+  'authenticated members must keep read access to the man of the match');
+assert.doesNotMatch(motm, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\./i,
+  'migration 0038 must not drop, truncate or delete application data');
+// The photo bucket is private, keyed <league>/<match>/<uuid>.jpg, and a member
+// only ever sees the photo currently linked on the MOTM row.
+assert.match(motm, /insert into storage\.buckets[\s\S]*?'motm-images'[\s\S]*?false/i,
+  'the motm-images bucket must be private');
+assert.match(motm, /create policy ff_motm_photo_read[\s\S]*?public\.is_member\(mm\.league_id\)[\s\S]*?mm\.photo_url = 'motm-images\/'/i,
+  'a member may only read the photo linked on the man of the match');
+assert.match(motm, /create policy ff_motm_photo_insert[\s\S]*?public\.is_leader\(m\.league_id\) or public\.is_match_organizer\(m\.id\)/i,
+  'only the leader or match organizer may upload a man-of-the-match photo');
+
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');
