@@ -190,6 +190,17 @@ assert.match(retiredLineup, /jsonb_array_length\(p_entries\) > l\.starters \+ l\
 assert.doesNotMatch(noReserves, /\b(drop|truncate)\s+table\b|\balter\s+table\b|\bupdate\s+public\.leagues\b|\bdelete\s+from\s+public\.fantasy_match_lineup/i,
   'migration 0036 must not touch tables, league rows or historical lineups — only replace the two functions');
 
+// Migration 0037 changes only the default substitutes count for new leagues:
+// four, not five. The creation function is replaced, never duplicated, and no
+// existing league row is touched.
+const defaultFour = read('./supabase/migrations/0037_default_four_substitutes.sql');
+assert.match(defaultFour, /create or replace function public\.create_league\(/i,
+  'migration 0037 must replace the league creation function, not create a second write path');
+assert.match(defaultFour, /p_subs_count integer default 4/i,
+  'migration 0037 must default new leagues to four substitutes');
+assert.doesNotMatch(defaultFour, /\b(drop|truncate)\s+table\b|\balter\s+table\b|\bupdate\s+public\.leagues\b|\bdelete\s+from\s+public\./i,
+  'migration 0037 must not touch tables or existing league rows — only the function default');
+
 // A lineup that is locked in, and a lineup that is captured while scoring,
 // have to carry a captaincy that can be used. A lineup without one is kept
 // exactly as it is; a lineup with a broken one is not an official lineup.

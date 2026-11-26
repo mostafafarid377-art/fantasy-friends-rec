@@ -49,7 +49,7 @@ export default function LeaguesPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [format, setFormat] = useState<"5v5" | "7v7">("5v5");
-  const [subs, setSubs] = useState("5");
+  const [subs, setSubs] = useState("4");
   const [teamName, setTeamName] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,7 +66,7 @@ export default function LeaguesPage() {
           name: name.trim(),
           description: description.trim() || undefined,
           format,
-          subsCount: Number(subs) || 5,
+          subsCount: Number(subs) || 4,
           teamName: teamName.trim() || undefined,
         },
         idempotent: true,

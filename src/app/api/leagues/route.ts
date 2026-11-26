@@ -13,7 +13,7 @@ const createSchema = z.object({
   name: z.string().min(3).max(60),
   description: z.string().max(280).optional(),
   format: z.enum(FORMATS),
-  subsCount: z.number().int().min(1).max(10).default(5),
+  subsCount: z.number().int().min(1).max(10).default(4),
   teamName: z.string().min(2).max(40).optional(),
 });
 
