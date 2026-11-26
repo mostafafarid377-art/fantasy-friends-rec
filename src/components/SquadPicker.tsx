@@ -17,7 +17,7 @@ export function SquadPicker({ title, allowed, selected, pool, error, reload, onP
   const [search, setSearch] = useState("");
   const [position, setPosition] = useState<Position | "all">("all");
   const [team, setTeam] = useState("all");
-  const [sort, setSort] = useState<"name" | "reverse" | "team">("name");
+  const [sort, setSort] = useState<"name" | "team">("name");
   const [limit, setLimit] = useState(PAGE);
   const teams = useMemo(() => new Map(pool?.teams.map((t) => [t.id, t.name])), [pool]);
   const eligible = useMemo(() => (pool?.players ?? []).filter((p) => allowed.includes(p.position) && (!replacement || (!selected.has(p.id) && canSelectPlayer(p)))), [pool, allowed, replacement, selected]);
@@ -36,7 +36,7 @@ export function SquadPicker({ title, allowed, selected, pool, error, reload, onP
           {pool?.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
         <select aria-label="Sort players" className={`${fieldClass} col-span-2 sm:col-span-1`} value={sort} onChange={(e) => { setSort(e.target.value as typeof sort); setLimit(PAGE); }}>
-          <option value="name">Name: A–Z</option><option value="reverse">Name: Z–A</option><option value="team">Team then name</option>
+          <option value="name">Name: A–Z</option><option value="team">Team then name</option>
         </select>
       </div>
       {error ? <ErrorNote message={error} onRetry={reload} /> : !pool ? <Skeleton className="h-40" /> : (

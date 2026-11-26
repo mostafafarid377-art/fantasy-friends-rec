@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { filterSquadPool } from "@/lib/squad";
 import {
   FORMATIONS,
   moveSquadPlayer,
@@ -322,5 +323,34 @@ describe("squadCompositionErrors", () => {
     expect(error).toContain("Midfielder");
     expect(error).toContain("Defender");
     expect(error).toContain("starting lineup");
+  });
+});
+
+describe("filterSquadPool", () => {
+  const teams = new Map([["reds", "Reds"], ["blues", "Blues"]]);
+  const poolPlayers = [
+    { fullName: "Ada Keeper", position: "GK" as const, teamId: "reds" },
+    { fullName: "Zed Keeper", position: "GK" as const, teamId: "reds" },
+    { fullName: "Bert Keeper", position: "GK" as const, teamId: "blues" },
+    { fullName: "Dana Defender", position: "DEF" as const, teamId: null },
+  ];
+
+  it("sorts by name A–Z by default", () => {
+    expect(filterSquadPool(poolPlayers, teams, "", "all", "all", "name").map((p) => p.fullName))
+      .toEqual(["Ada Keeper", "Bert Keeper", "Dana Defender", "Zed Keeper"]);
+  });
+
+  it("sorts by team then name", () => {
+    expect(filterSquadPool(poolPlayers, teams, "", "all", "all", "team").map((p) => p.fullName))
+      .toEqual(["Bert Keeper", "Dana Defender", "Ada Keeper", "Zed Keeper"]);
+  });
+
+  it("filters by position, team, and search text across names and teams", () => {
+    expect(filterSquadPool(poolPlayers, teams, "", "GK", "all", "name").map((p) => p.fullName))
+      .toEqual(["Ada Keeper", "Bert Keeper", "Zed Keeper"]);
+    expect(filterSquadPool(poolPlayers, teams, "", "all", "blues", "name").map((p) => p.fullName)).toEqual(["Bert Keeper"]);
+    expect(filterSquadPool(poolPlayers, teams, "", "all", "free", "name").map((p) => p.fullName)).toEqual(["Dana Defender"]);
+    expect(filterSquadPool(poolPlayers, teams, "reds", "all", "all", "name").map((p) => p.fullName))
+      .toEqual(["Ada Keeper", "Zed Keeper"]);
   });
 });

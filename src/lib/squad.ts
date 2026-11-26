@@ -23,7 +23,7 @@ export type SquadResponse = {
 
 export function filterSquadPool<T extends Pick<PoolPlayer, "fullName" | "position" | "teamId">>(
   players: T[], teams: ReadonlyMap<string, string>, query: string,
-  position: Position | "all", team: string, sort: "name" | "reverse" | "team",
+  position: Position | "all", team: string, sort: "name" | "team",
 ) {
   const nameOf = (id: string | null) => (id && teams.get(id)) || "Free agent";
   const text = query.trim().toLocaleLowerCase();
@@ -31,5 +31,5 @@ export function filterSquadPool<T extends Pick<PoolPlayer, "fullName" | "positio
     && (team === "all" || (p.teamId ?? "free") === team)
     && `${p.fullName} ${nameOf(p.teamId)}`.toLocaleLowerCase().includes(text))
     .sort((a,b) => (sort === "team" ? nameOf(a.teamId).localeCompare(nameOf(b.teamId)) : 0)
-      || (sort === "reverse" ? -1 : 1) * a.fullName.localeCompare(b.fullName));
+      || a.fullName.localeCompare(b.fullName));
 }
