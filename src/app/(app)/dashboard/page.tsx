@@ -30,6 +30,8 @@ import type { LatestPlayerGames } from "@/lib/player-performance";
 import type { SquadEntry } from "@/lib/squad";
 import { useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { useApi } from "@/lib/client/api";
+import { MotmCard } from "@/components/MotmCard";
+import type { Motm } from "@/lib/motm";
 
 type DashboardData = {
   league: { id: string; name: string; format: LeagueFormat; starters: number; subsCount: number; squadSize: number; inviteCode: string; role: string };
@@ -74,6 +76,7 @@ type DashboardData = {
   rulesApproved: boolean;
   memberCount: number;
   emailVerified: boolean;
+  motm: Motm | null;
 };
 
 export default function DashboardPage() {
@@ -159,6 +162,13 @@ export default function DashboardPage() {
         <Stat label="Managers" value={String(data.memberCount)} />
         <Stat label="Squad" value={`${data.squad?.size ?? 0}/${data.league.squadSize}`} />
       </div>
+
+      {/* ---- Man of the Match: latest pick for the league, between the stats and the table ---- */}
+      {data.motm && (
+        <section aria-label="Man of the match" className="mb-6">
+          <MotmCard motm={data.motm} href={`/matches/${data.motm.matchId}`} />
+        </section>
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         {/* ---- league table (hero) ---- */}

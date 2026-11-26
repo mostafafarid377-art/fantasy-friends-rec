@@ -14,6 +14,7 @@ import { RealTeamName } from "@/components/TeamLogo";
 import { useKickoffClock } from "@/lib/match-deadline";
 import { MatchStatistics, type MatchStat, type MatchBonusAward } from "@/components/MatchStatistics";
 import { MatchResult, type MatchScore } from "@/components/MatchResult";
+import { MotmPanel } from "@/components/MotmPanel";
 import { PageHeader } from "@/components/AppShell";
 import {
   Avatar,
@@ -533,6 +534,16 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             </div>
           )}
         </div>
+      )}
+
+      {/* Man of the match: leader/organizer picks after the match is approved */}
+      {m.status === "approved" && data.canOrganize && (
+        <MotmPanel
+          leagueId={m.leagueId}
+          matchId={m.id}
+          candidates={participants.map((p) => ({ id: p.id, name: p.name }))}
+          onSaved={() => void reload()}
+        />
       )}
 
       {/* tabs */}

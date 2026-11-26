@@ -8,6 +8,8 @@ import { decorateLineupPlayers } from "@/lib/lineup-decorate";
 import type { SquadEntry } from "@/lib/squad";
 import type { NextMatchLineup } from "@/lib/next-match-lineup";
 import { deriveFormation, validateSquad, type Position, type SquadPlayer } from "@/lib/domain";
+import { motmStats, type Motm } from "@/lib/motm";
+import { motmPhotoUrl } from "@/lib/motm-photo";
 
 export const dynamic = "force-dynamic";
 export const GET = handler(async (req: NextRequest) => {
@@ -16,7 +18,7 @@ export const GET = handler(async (req: NextRequest) => {
   const sb = await getSupabase();
   const membership = await requireMember(leagueId, sb);
   const user = membership.profileId;
-  const [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames, nextLineup] = await Promise.all([
+  const [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames, nextLineup, motmRes] = await Promise.all([
     sb.from("fantasy_squads").select(
       "id,formation,captain_id,vice_captain_id,completed_at,fantasy_squad_players(player_id,slot,order,players(full_name,position,status,photo_url,team_id,shirt_number,availability,league_id))",
     ).eq("league_id", leagueId).eq("profile_id", user).maybeSingle(),
@@ -39,8 +41,14 @@ export const GET = handler(async (req: NextRequest) => {
     // exist (it becomes next-match-only editable), so reading it here would
     // drift away from what My Team shows.
     sb.rpc("ff_next_match_lineup", { p_league: leagueId }),
+    // The latest Man of the Match for the league, with everything the card
+    // needs. Stats come from the scoring record, not the MOTM row, so the card
+    // can never disagree with the match breakdown.
+    sb.from("match_motm")
+      .select("match_id,player_id,photo_url,created_at,real_matches!inner(title,kick_off),players!inner(full_name,team_id,teams(name))")
+      .eq("league_id", leagueId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
-  for (const result of [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames, nextLineup]) {
+  for (const result of [squad, standings, fixtures, matches, notes, rules, members, lastGame, liveGames, playerGames, nextLineup, motmRes]) {
     checkDb(result.error, "Could not load dashboard");
   }
   const names = new Map((members.data ?? []).map((m) => [m.profile_id, m.team_name]));
@@ -72,6 +80,26 @@ export const GET = handler(async (req: NextRequest) => {
     lineup = { matchId: relevant.matchId, title: relevant.title, kickOff: relevant.kickOff, inPlay: Boolean(next?.inPlay),
       formation: snapshot.formation, captainId: snapshot.captainId, viceCaptainId: snapshot.viceId, players: snapshot.players };
   }
+  let motm: Motm | null = null;
+  const motmRow = motmRes.data as {
+    match_id: string; player_id: string; photo_url: string | null; created_at: string;
+    real_matches: { title: string; kick_off: string | null } | { title: string; kick_off: string | null }[];
+    players: { full_name: string; team_id: string | null; teams: { name: string } | { name: string }[] | null } | null;
+  } | null;
+  if (motmRow?.players) {
+    const { data: scored, error: sErr } = await sb.from("player_match_points")
+      .select("points,breakdown").eq("league_id", leagueId).eq("match_id", motmRow.match_id).eq("player_id", motmRow.player_id).maybeSingle();
+    checkDb(sErr, "Could not load dashboard");
+    const matchRow = Array.isArray(motmRow.real_matches) ? motmRow.real_matches[0] : motmRow.real_matches;
+    const team = Array.isArray(motmRow.players.teams) ? motmRow.players.teams[0] : motmRow.players.teams;
+    const stats = motmStats(scored?.points ?? null, scored?.breakdown as never);
+    motm = {
+      matchId: motmRow.match_id, matchTitle: matchRow?.title ?? "Match", kickOff: matchRow?.kick_off ?? null,
+      playerId: motmRow.player_id, playerName: motmRow.players.full_name, club: team?.name ?? null,
+      photoUrl: motmPhotoUrl(motmRow.photo_url, leagueId, motmRow.match_id),
+      points: stats.points, goals: stats.goals, assists: stats.assists, createdAt: motmRow.created_at,
+    };
+  }
   return Response.json({
     league: { id: league.id, name: league.name, format: league.format, starters: league.starters, subsCount: league.subs_count, squadSize: settings.squadSize, inviteCode: league.invite_code, role: membership.role },
     squad: squad.data && players.length > 0 ? { id: squad.data.id, formation: shape?.label ?? "—", captainId: squad.data.captain_id, viceCaptainId: squad.data.vice_captain_id,
@@ -93,5 +121,6 @@ export const GET = handler(async (req: NextRequest) => {
     notifications: (notes.data ?? []).map((r) => ({ id: r.id, title: r.title, body: r.body, readAt: r.read_at, createdAt: r.created_at })),
     rulesApproved: Boolean(rules.data?.length && rules.data.every((r) => r.status === "approved")),
     memberCount: members.count ?? 0, emailVerified: membership.emailVerified,
+    motm,
   });
 });
