@@ -39,13 +39,6 @@ async function currentMotm(sb: SupabaseClient, leagueId: string, matchId: string
   return (data as MotmRow | null) ?? null;
 }
 
-/** The players who took part in the match, for validating the choice. */
-async function participantIds(sb: SupabaseClient, matchId: string): Promise<Set<string>> {
-  const { data, error } = await sb.from("match_scoring_lineups").select("player_id").eq("match_id", matchId);
-  checkDb(error, "Could not load the match lineup");
-  return new Set((data ?? []).map((r: { player_id: string }) => r.player_id));
-}
-
 async function card(sb: SupabaseClient, match: MatchRow, row: MotmRow): Promise<Motm> {
   const [{ data: player, error: pErr }, { data: scored, error: sErr }] = await Promise.all([
     sb.from("players").select("id,full_name,team_id,teams(name)").eq("league_id", match.league_id).eq("id", row.player_id).maybeSingle(),
@@ -75,28 +68,18 @@ export const GET = handler(async (_req: NextRequest, ctx: Context) => {
 
 const chooseSchema = z.object({ playerId: z.string().trim().min(1).max(80) });
 
-/** Leader/organizer chooses (or changes) the MOTM after the match is approved. */
+/** Leader/organizer chooses (or changes) the MOTM after the match is approved.
+ * The write goes through the guarded choose_motm RPC — clients have no direct
+ * INSERT on match_motm. */
 export const PUT = handler(async (req: NextRequest, ctx: Context) => {
   const { id, matchId } = await ctx.params;
   const parsed = chooseSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) throw new ApiError("Choose a player for the man of the match", 422);
   const sb = await getSupabase();
   const match = await loadLeagueMatch(sb, id, matchId);
-  if (match.status !== "approved") throw new ApiError("The man of the match can be chosen once the match is approved", 409);
-  const membership = await requireMotmManager(sb, match);
-  const participants = await participantIds(sb, matchId);
-  if (!participants.has(parsed.data.playerId)) throw new ApiError("Choose a player who took part in this match", 422);
+  await requireMotmManager(sb, match);
 
-  const existing = await currentMotm(sb, id, matchId);
-  const now = new Date().toISOString();
-  const row = {
-    league_id: id, match_id: matchId, player_id: parsed.data.playerId,
-    chosen_by: membership.profileId, updated_at: now,
-  };
-  const query = existing
-    ? sb.from("match_motm").update(row).eq("id", existing.id).eq("match_id", matchId)
-    : sb.from("match_motm").insert({ ...row, id: randomUUID(), created_at: now });
-  const { data, error } = await query.select(MOTM_FIELDS).maybeSingle();
+  const { data, error } = await sb.rpc("choose_motm", { p_match: matchId, p_player: parsed.data.playerId });
   const saved = confirmedRow(data as MotmRow | null, error, "Could not confirm the man of the match", id);
   if (saved.player_id !== parsed.data.playerId || saved.match_id !== matchId) {
     throw new ApiError("The man of the match could not be confirmed. Reload before retrying.", 409);
@@ -165,10 +148,7 @@ export const POST = handler(async (req: NextRequest, ctx: Context) => {
   if (upload.error || upload.data?.path !== key) throw new ApiError("Storage did not confirm the upload. Your existing photo was not changed.", 502);
 
   const photo = `${MOTM_PHOTO_BUCKET}/${key}`;
-  const { data, error } = await sb.from("match_motm")
-    .update({ photo_url: photo, updated_at: new Date().toISOString() })
-    .eq("id", existing.id).eq("match_id", matchId)
-    .select(MOTM_FIELDS).maybeSingle();
+  const { data, error } = await sb.rpc("set_motm_photo", { p_match: matchId, p_photo: photo });
   const saved = confirmedRow(data as MotmRow | null, error, "Could not confirm the saved photo", id);
   if (saved.photo_url !== photo) throw new ApiError("The photo could not be confirmed. Reload before retrying.", 409);
   await removeUnlinkedMotmPhoto(sb, managedMotmPhotoKey(existing.photo_url, id, matchId));
@@ -183,10 +163,7 @@ export const DELETE = handler(async (_req: NextRequest, ctx: Context) => {
   await requireMotmManager(sb, match);
   const existing = await currentMotm(sb, id, matchId);
   if (!existing) throw new ApiError("There is no man of the match to update", 404);
-  const { data, error } = await sb.from("match_motm")
-    .update({ photo_url: null, updated_at: new Date().toISOString() })
-    .eq("id", existing.id).eq("match_id", matchId)
-    .select(MOTM_FIELDS).maybeSingle();
+  const { data, error } = await sb.rpc("set_motm_photo", { p_match: matchId, p_photo: null });
   const saved = confirmedRow(data as MotmRow | null, error, "Could not confirm the photo removal", id);
   if (saved.photo_url !== null) throw new ApiError("The photo removal could not be confirmed. Reload before retrying.", 409);
   await removeUnlinkedMotmPhoto(sb, managedMotmPhotoKey(existing.photo_url, id, matchId));
