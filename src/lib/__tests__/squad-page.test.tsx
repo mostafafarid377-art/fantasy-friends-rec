@@ -112,8 +112,19 @@ describe("squad screen HTTP contract", () => {
     await dialog().findByRole("button", { name: /Ada Keeper/ });
     expect(dialog().queryByRole("button", { name: /Dana Defender/ })).toBeNull();
     const sort = dialog().getByRole("combobox", { name: "Sort players" });
-    fireEvent.change(sort, { target: { value: "reverse" } });
-    expect(dialog().getAllByRole("button", { name: /Keeper/ })[0].textContent).toContain("Zed");
+    // The Reverse (Z–A) sort option is gone; A–Z is the default ordering.
+    expect(within(sort).getByRole("option", { name: "Name: A–Z" })).toBeTruthy();
+    expect(within(sort).getByRole("option", { name: "Team then name" })).toBeTruthy();
+    expect(within(sort).queryByRole("option", { name: /Z–A/ })).toBeNull();
+    expect(dialog().getAllByRole("button", { name: /Keeper/ }).map((btn) => btn.textContent ?? "")).toEqual([
+      expect.stringContaining("Ada Keeper"), expect.stringContaining("Archived Keeper"),
+      expect.stringContaining("Bert Keeper"), expect.stringContaining("Zed Keeper"),
+    ]);
+    fireEvent.change(sort, { target: { value: "team" } });
+    expect(dialog().getAllByRole("button", { name: /Keeper/ }).map((btn) => btn.textContent ?? "")).toEqual([
+      expect.stringContaining("Archived Keeper"), expect.stringContaining("Bert Keeper"),
+      expect.stringContaining("Ada Keeper"), expect.stringContaining("Zed Keeper"),
+    ]);
     fireEvent.change(dialog().getByRole("combobox", { name: "Real team" }), { target: { value: blue.id } });
     expect(dialog().queryByText("Ada Keeper")).toBeNull();
     expect((dialog().getByRole("button", { name: /Archived Keeper/ }) as HTMLButtonElement).disabled).toBe(true);
