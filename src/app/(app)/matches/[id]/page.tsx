@@ -32,7 +32,7 @@ import { useActiveLeague } from "@/components/LeagueContext";
 import { notifyLeagueContentChanged, useLiveLeaguePoints } from "@/lib/client/league-updates";
 import { useAppRefresh } from "@/lib/client/refresh";
 import { api, assertConfirmed, useApi } from "@/lib/client/api";
-import { lineupPayload, lineupSelection, type SavedLineupEntry, type LineupSelection } from "@/lib/match-lineup";
+import { lineupEquals, lineupPayload, lineupSelection, type SavedLineupEntry, type LineupSelection } from "@/lib/match-lineup";
 import { canSelectPlayer, validateLineup, EVENT_TYPES, type LeagueRules, type Position } from "@/lib/domain";
 
 type Player = {
@@ -200,9 +200,15 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
 
   const notify = (message: string, tone: "ok" | "error" = "ok") => setToast({ message, tone });
 
+  const EMPTY_SELECTION: LineupSelection = { starters: [], subs: [] };
+  const lineupDirty = (teamId: string) =>
+    !lineupEquals(sel[teamId] ?? EMPTY_SELECTION, savedSelections[teamId] ?? EMPTY_SELECTION);
+
   const lineupSaving = useRef(false);
   const saveLineup = async (teamId: string) => {
     if (!matchId || !data?.canOrganize || busy || statisticsDirty || lineupSaving.current) return;
+    // Nothing to submit when the selection already matches the persisted lineup.
+    if (!lineupDirty(teamId)) return;
     lineupSaving.current = true;
     setBusy(true);
     setFormError(null);
@@ -565,6 +571,13 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
             const keeperIn = state.starters.some(
               (id) => data.roster.find((p) => p.id === id)?.position === "GK",
             );
+            // Change detection against the persisted lineup (normalized value
+            // comparison): the button turns into a green "saved" state only
+            // when the editor matches what the server has confirmed.
+            const savedSel = savedSelections[teamId] ?? EMPTY_SELECTION;
+            const hasSavedLineup = savedSel.starters.length > 0 || savedSel.subs.length > 0;
+            const dirty = lineupDirty(teamId);
+            const savedGreen = !locked && hasSavedLineup && !dirty;
 
             return (
               <Panel key={teamId} className="p-4">
@@ -583,15 +596,26 @@ export default function MatchDetailPage({ params }: { params: Promise<{ id: stri
                       </span>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => saveLineup(teamId)}
-                    loading={busy}
-                    disabled={locked || busy || statisticsDirty || !lineupRules.ok || !eligible}
-                  >
-                    <Save className="h-3.5 w-3.5" /> Save line-up
-                  </Button>
+                  {savedGreen ? (
+                    <Button
+                      size="sm"
+                      disabled
+                      title="This line-up is saved"
+                      className="border border-[#34e07f] bg-[#34e07f] text-[#04120a] shadow-[0_0_0_1px_rgba(52,224,127,0.4),0_8px_24px_-12px_rgba(52,224,127,0.75)] disabled:opacity-100"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Lineup Saved
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => saveLineup(teamId)}
+                      loading={busy}
+                      disabled={locked || busy || statisticsDirty || !dirty || !lineupRules.ok || !eligible}
+                    >
+                      <Save className="h-3.5 w-3.5" /> Save line-up
+                    </Button>
+                  )}
                 </div>
 
                 {roster.length === 0 ? (
