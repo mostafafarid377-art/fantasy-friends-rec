@@ -153,6 +153,43 @@ assert.match(coverage, /if is_complete and \(forwards = 0 or mids = 0 or defende
 assert.match(coverage, /starting lineup must contain at least 1 Forward, 1 Midfielder, and 1 Defender/i,
   'migration 0035 must name the required positions in its error');
 
+// Migration 0036 retires the fantasy reserve slot: a squad is starters plus
+// substitutes. Both write functions are replaced — never a second write
+// path — and every rule they already enforced has to survive the edit.
+const noReserves = read('./supabase/migrations/0036_retire_squad_reserves.sql');
+assert.match(noReserves, /create or replace function public\.ff_save_validated_squad/i,
+  'migration 0036 must replace the squad save function, not create a second write path');
+assert.match(noReserves, /create or replace function public\.ff_save_next_match_lineup/i,
+  'migration 0036 must replace the match lineup save function, not create a second write path');
+const retiredSquad = noReserves.slice(
+  noReserves.indexOf('create or replace function public.ff_save_validated_squad'),
+  noReserves.indexOf('$$;', noReserves.indexOf('create or replace function public.ff_save_validated_squad')),
+);
+assert.match(retiredSquad, /e\.slot not in \('starter','sub'\)/i,
+  'the squad function must reject the reserve slot');
+assert.doesNotMatch(retiredSquad, /'reserve'/i,
+  'the squad function must not accept or count a reserve group');
+assert.match(retiredSquad, /is_complete := total = settings\.starters \+ settings\.subs_count and starters = settings\.starters and subs = settings\.subs_count and keepers = 1;/i,
+  'a complete squad is exactly starters plus substitutes');
+assert.match(retiredSquad, benchRule,
+  'migration 0036 must keep the bench rule of the live squad function');
+assert.match(retiredSquad, /if is_complete and \(forwards = 0 or mids = 0 or defenders = 0\) then/i,
+  'migration 0036 must keep the starting-lineup coverage rule of migration 0035');
+assert.match(retiredSquad, /not exists \(select 1 from jsonb_to_recordset\(p_entries\) e\(player_id text,slot text\) where e\.player_id=p_captain and e\.slot='starter'\)/i,
+  'migration 0036 must keep the captain and vice-captain checks of the live function');
+const retiredLineup = noReserves.slice(
+  noReserves.indexOf('create or replace function public.ff_save_next_match_lineup'),
+  noReserves.indexOf('end $$;', noReserves.indexOf('create or replace function public.ff_save_next_match_lineup')),
+);
+assert.match(retiredLineup, /e\.slot not in \('starter','sub'\)/i,
+  'the match lineup function must reject the reserve slot');
+assert.doesNotMatch(retiredLineup, /slot='reserve'/i,
+  'the match lineup function must not count a reserve group');
+assert.match(retiredLineup, /jsonb_array_length\(p_entries\) > l\.starters \+ l\.subs_count/i,
+  'a match lineup is capped at starters plus substitutes');
+assert.doesNotMatch(noReserves, /\b(drop|truncate)\s+table\b|\balter\s+table\b|\bupdate\s+public\.leagues\b|\bdelete\s+from\s+public\.fantasy_match_lineup/i,
+  'migration 0036 must not touch tables, league rows or historical lineups — only replace the two functions');
+
 // A lineup that is locked in, and a lineup that is captured while scoring,
 // have to carry a captaincy that can be used. A lineup without one is kept
 // exactly as it is; a lineup with a broken one is not an official lineup.

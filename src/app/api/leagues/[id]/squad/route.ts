@@ -47,11 +47,16 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   checkDb(liveGames.error, "Could not load live match points");
   checkDb(error, "Could not load your squad");
   const row = data as unknown as (SavedSquad & { fantasy_squad_players: {
-    player_id: string; slot: Entry["slot"]; order: number; players: PlayerRow | null }[] }) | null;
-  const players = (row?.fantasy_squad_players ?? []).map((e) => {
-    if (!e.players || e.players.id !== e.player_id) throw new ApiError("A saved squad player could not be loaded", 409);
-    return entryDto(e.players, { playerId: e.player_id, slot: e.slot, order: e.order }, id);
-  });
+    player_id: string; slot: string; order: number; players: PlayerRow | null }[] }) | null;
+  const players = (row?.fantasy_squad_players ?? [])
+    // Rows saved before the reserve tier was removed keep their historical
+    // slot; they stay in the table untouched, but the live squad reads only
+    // starters and subs. The next save drops them for good.
+    .filter((e) => e.slot === "starter" || e.slot === "sub")
+    .map((e) => {
+      if (!e.players || e.players.id !== e.player_id) throw new ApiError("A saved squad player could not be loaded", 409);
+      return entryDto(e.players, { playerId: e.player_id, slot: e.slot as Entry["slot"], order: e.order }, id);
+    });
   // The score, the title and the kickoff come from the same official ledger
   // snapshot, so the match never has to be looked up again afterwards.
   const game = lastGame.data?.[0] as { matchId: string; title: string; kickOff: string | null; points: number | string | null } | undefined;
@@ -67,7 +72,7 @@ const putSchema = z.object({
   captainId: z.string().min(1).nullable(),
   viceCaptainId: z.string().min(1).nullable(),
   expectedUpdatedAt: z.iso.datetime({ offset: true }).nullable(),
-  entries: z.array(z.object({ playerId: z.string().min(1), slot: z.enum(["starter", "sub", "reserve"]),
+  entries: z.array(z.object({ playerId: z.string().min(1), slot: z.enum(["starter", "sub"]),
     order: z.number().int().min(0).max(2147483647) })),
 });
 

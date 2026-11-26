@@ -96,7 +96,8 @@ export function isFormationForFormat(label: string, format: LeagueFormat) {
 export type SquadPlayer = {
   id: string;
   position: Position;
-  slot: "starter" | "sub" | "reserve";
+  // The reserve tier was removed: a squad is starters plus substitutes.
+  slot: "starter" | "sub";
   order: number;
   name: string;
 };
@@ -108,8 +109,9 @@ export type LeagueRules = {
   subsCount: number;
 };
 
+/** Squad capacity per slot. There is no reserve tier: starters plus subs is the whole squad. */
 export function squadCaps(rules: LeagueRules): Record<SquadPlayer["slot"], number> {
-  return { starter: rules.starters, sub: rules.subsCount, reserve: rules.squadSize - rules.starters - rules.subsCount };
+  return { starter: rules.starters, sub: rules.subsCount };
 }
 
 export type ValidationResult = { ok: true } | { ok: false; errors: string[] };
@@ -123,7 +125,7 @@ export const POSITION_NAME: Record<Position, string> = {
 
 /**
  * Outfield positions the starting lineup still lacks. Only starters count:
- * a Forward who sits on the bench or in the reserves does not satisfy the
+ * a Forward who sits on the bench does not satisfy the
  * rule. Enforced on complete squad saves (client, API and database); partial
  * drafts may legitimately be missing a line while they are built.
  */
@@ -154,7 +156,7 @@ export function deriveFormation(rules: LeagueRules, players: Pick<SquadPlayer, "
   return allowed.find((f) => f.label === current) ?? allowed[0];
 }
 
-/** Keeper first; outfield priority is independent of starter/reserve order. */
+/** Keeper first; outfield priority is independent of starter order. */
 export function orderedBench<T extends SquadPlayer>(players: T[]): T[] {
   return players.filter((p) => p.slot === "sub").sort((a,b) =>
     Number(b.position === "GK") - Number(a.position === "GK") || a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -171,10 +173,10 @@ export function validateSquadDraft(rules: LeagueRules, players: SquadPlayer[], o
   const caps = squadCaps(rules);
   const starters = players.filter((p) => p.slot === "starter");
   const ids = new Set(players.map((p) => p.id));
-  if (caps.reserve < 0 || rules.starters !== STARTERS_BY_FORMAT[rules.format]) errors.push("Invalid league squad settings.");
+  if (rules.squadSize !== rules.starters + rules.subsCount || rules.starters !== STARTERS_BY_FORMAT[rules.format]) errors.push("Invalid league squad settings.");
   if (players.length > rules.squadSize) errors.push(`A squad cannot exceed ${rules.squadSize} players.`);
   if (ids.size !== players.length) errors.push("Duplicate players in squad.");
-  for (const slot of ["starter", "sub", "reserve"] as const) {
+  for (const slot of ["starter", "sub"] as const) {
     if (players.filter((p) => p.slot === slot).length > caps[slot]) {
       errors.push(`At most ${caps[slot]} ${slot === "sub" ? "substitutes" : `${slot}s`} are allowed.`);
     }
@@ -223,7 +225,7 @@ function captaincyErrors(opts: SquadOptions): string[] {
 
 /**
  * The lineup of a single match. It is always played, so it always names its
- * captaincy, and it never carries a full squad of reserves.
+ * captaincy, and it never carries a reserve group.
  */
 export function validateMatchLineup(rules: LeagueRules, players: SquadPlayer[], opts: SquadOptions): ValidationResult {
   const draft = validateSquadDraft(rules, players, opts);

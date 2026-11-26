@@ -17,6 +17,15 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
   checkDb(error, "Could not load the next match lineup");
   if (!data?.serverNow) throw new ApiError("Could not confirm the next match lineup", 503);
   const result = data as NextMatchLineup;
+  // Drafts saved before the reserve tier was removed can still hold reserve
+  // players. The editor only renders starters and subs, so strip the legacy
+  // entries here: the manager's next save then rewrites the draft without
+  // them instead of failing validation on players it cannot show. Historical
+  // lineups (previous, inPlay) pass through untouched.
+  for (const key of ["saved", "preparation"] as const) {
+    const block = result[key];
+    if (block?.lineup) block.lineup.players = block.lineup.players.filter((p) => p.slot === "starter" || p.slot === "sub");
+  }
   await decorateLineupPlayers(sb, id, [result.previous?.lineup, result.inPlay?.lineup, result.saved?.lineup, result.preparation?.lineup].filter((l): l is MatchLineup => Boolean(l)));
   return Response.json(result, noStore);
 });
@@ -26,7 +35,7 @@ const input = z.object({
   // A lineup that is played always names its captaincy.
   captainId: z.string().min(1), viceId: z.string().min(1),
   expectedUpdatedAt: z.iso.datetime({ offset: true }).nullable(),
-  entries: z.array(z.object({ id: z.string().min(1), slot: z.enum(["starter", "sub", "reserve"]), order: z.number().int().min(0).max(2147483647) })).max(15),
+  entries: z.array(z.object({ id: z.string().min(1), slot: z.enum(["starter", "sub"]), order: z.number().int().min(0).max(2147483647) })).max(12),
 }).strict();
 
 export const PUT = handler(async (req: NextRequest, ctx: Ctx) => {

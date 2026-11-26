@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 function leagueDto(l: any) {
   return { id: l.id, name: l.name, description: l.description, format: l.format, starters: l.starters,
-    subsCount: l.subs_count, squadSize: l.squad_size, inviteCode: l.invite_code, vicePolicy: l.vice_policy };
+    subsCount: l.subs_count, squadSize: l.starters + l.subs_count, inviteCode: l.invite_code, vicePolicy: l.vice_policy };
 }
 
 export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
@@ -69,7 +69,6 @@ export const GET = handler(async (_req: NextRequest, ctx: Ctx) => {
 const patchSchema = z.object({
   name: z.string().min(3).max(60).optional(),
   description: z.string().max(280).nullable().optional(),
-  squadSize: z.number().int().min(1).max(15).optional(),
   subsCount: z.number().int().min(1).max(10).optional(),
   vicePolicy: z.enum(["auto_captain", "none"]).optional(),
 });
@@ -85,8 +84,9 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
     throw new ApiError("Invalid league settings", 422, parsed.error.flatten().fieldErrors);
   }
   const input = parsed.data;
-  if ((input.subsCount ?? membership.league.subs_count) + membership.league.starters > (input.squadSize ?? membership.league.squad_size)) {
-    throw new ApiError("Starters and substitutes cannot exceed the league squad size", 422);
+  // A squad is exactly starters plus substitutes; league creation caps that total at 15.
+  if ((input.subsCount ?? membership.league.subs_count) + membership.league.starters > 15) {
+    throw new ApiError("Starters and substitutes cannot exceed 15 players", 422);
   }
   const supabase = await getSupabase();
 
@@ -95,7 +95,6 @@ export const PATCH = handler(async (req: NextRequest, ctx: Ctx) => {
     .update({
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
-      ...(input.squadSize !== undefined ? { squad_size: input.squadSize } : {}),
       ...(input.subsCount !== undefined ? { subs_count: input.subsCount } : {}),
       ...(input.vicePolicy !== undefined ? { vice_policy: input.vicePolicy } : {}),
     })

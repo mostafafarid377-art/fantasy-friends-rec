@@ -134,7 +134,10 @@ function profileVerifiedAt(embedded: unknown): string | null {
 export function leagueRules(league: any) {
   return {
     format: league.format,
-    squadSize: league.squad_size,
+    // A squad is exactly starters plus substitutes; the reserve tier is gone.
+    // The stored squad_size is a legacy column (it included reserve headroom),
+    // so the rules derive the size instead of trusting the stored value.
+    squadSize: league.starters + league.subs_count,
     starters: league.starters,
     subsCount: league.subs_count,
   };

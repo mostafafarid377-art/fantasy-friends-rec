@@ -18,7 +18,7 @@ type Edits = { draft: SampleDraft; saved: SampleDraft };
 type Notice = { area: "pitch" | "bench" | "save"; message: string };
 const DEMO_SECONDS = 109448; // 1 day, 6 hours, 24 minutes and 8 seconds in the sample scenario.
 const DEMO_KICKOFF = "2026-11-21T20:00:00+02:00";
-const SLOT_LABEL = { starter: "Starting lineup", sub: "Bench", reserve: "Reserve" };
+const SLOT_LABEL: Record<SquadEntry["slot"], string> = { starter: "Starting lineup", sub: "Bench" };
 const segment = "inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-center font-display text-sm font-bold uppercase leading-tight tracking-wide transition sm:px-3";
 const segmentTone = (active: boolean) => active ? "bg-green text-pitch-950" : "text-chalk hover:bg-pitch-800 hover:text-green";
 const priorityButton = "grid size-11 shrink-0 place-items-center rounded border border-line text-chalk hover:border-green disabled:opacity-35";
@@ -50,7 +50,7 @@ function DemoCountdown({ locked }: { locked: boolean }) {
 function PlayerPicker({ player, players, onPick, onClose }: { player: SquadEntry; players: SquadEntry[]; onPick: (p: SquadEntry) => void; onClose: () => void }) {
   const [search, setSearch] = useState("");
   const candidates = players.filter((p) => p.position === player.position && p.id !== player.id && p.slot !== player.slot && p.name.toLowerCase().includes(search.trim().toLowerCase()))
-    .sort((a, b) => Number(a.slot === "reserve") - Number(b.slot === "reserve") || a.name.localeCompare(b.name));
+    .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <Modal open manageFocus title={`Replace ${player.name}`} onClose={onClose} width="max-w-md">
       <p className="mb-4 text-sm text-sage">Swap with another sample {POSITION_LABEL[player.position].toLowerCase()} to keep this formation.</p>

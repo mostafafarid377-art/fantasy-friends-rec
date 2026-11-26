@@ -29,10 +29,6 @@ const SAMPLE_PLAYERS = [
   samplePlayer("youssef", "Youssef Ali", "MID", "sub", 1),
   samplePlayer("hamza", "Hamza Samir", "FWD", "sub", 2),
   samplePlayer("nour", "Nour Khaled", "DEF", "sub", 3),
-  samplePlayer("anas", "Anas Farouk", "GK", "reserve", 0),
-  samplePlayer("walid", "Walid Ashraf", "DEF", "reserve", 1),
-  samplePlayer("bilal", "Bilal Sherif", "MID", "reserve", 2),
-  samplePlayer("ziad", "Ziad Maher", "FWD", "reserve", 3),
 ];
 
 export const PREVIOUS_SAVED_LINEUP: SampleDraft = {
