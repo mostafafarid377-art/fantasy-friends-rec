@@ -20,7 +20,10 @@ export const GET = handler(async (req: NextRequest, ctx: Context) => {
   const { data, error } = await sb.from("match_motm").select("photo_url").eq("league_id", id).eq("match_id", matchId).maybeSingle();
   checkDb(error, "Could not load the man of the match");
   const key = managedMotmPhotoKey(data?.photo_url ?? null, id, matchId);
-  if (!key || new URL(req.url).searchParams.get("v") !== key.split("/")[2]) {
+  // The version token is the photo id without its extension — match the URL
+  // builder in motm-photo.ts, which strips ".jpg" from the key's last segment.
+  const version = key?.split("/")[2].replace(/\.jpg$/, "");
+  if (!key || new URL(req.url).searchParams.get("v") !== version) {
     return new Response(null, { status: 404, headers: PRIVATE });
   }
   const { data: blob, error: dlError } = await sb.storage.from(MOTM_PHOTO_BUCKET).download(key);

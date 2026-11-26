@@ -63,3 +63,18 @@ describe("managedMotmPhotoKey", () => {
     expect(managedMotmPhotoKey(`${MOTM_PHOTO_BUCKET}/${league}/${match}/not-a-uuid.jpg`, league, match)).toBeNull();
   });
 });
+
+describe("photo URL round-trip", () => {
+  it("the v token the builder emits matches the token the photo route derives from the key", () => {
+    const league = "c79f1a21-ea9e-4b6e-9465-03848d58f20b";
+    const match = "3bd5d07a03c354218e6f2ac08140a01d3d9d0564e80c10eddbc96e8bafc85330";
+    const file = "cc979fd9-9778-4465-bb53-d33e6683a349.jpg";
+    const key = `${league}/${match}/${file}`;
+    const url = motmPhotoUrl(`${MOTM_PHOTO_BUCKET}/${key}`, league, match)!;
+    const tokenInUrl = new URL(url, "http://x").searchParams.get("v");
+    // The photo route (motm/photo/route.ts) derives the expected token the same way.
+    const tokenExpected = managedMotmPhotoKey(`${MOTM_PHOTO_BUCKET}/${key}`, league, match)!.split("/")[2].replace(/\.jpg$/, "");
+    expect(tokenInUrl).toBe(tokenExpected);
+    expect(tokenInUrl).toBe("cc979fd9-9778-4465-bb53-d33e6683a349");
+  });
+});
