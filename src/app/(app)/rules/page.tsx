@@ -248,6 +248,41 @@ export default function ScoringRulesPage() {
         </Panel>
       </div>
 
+      {/* Fixed scoring additions — these are automatic and not part of the
+          configurable rules grid above, so they are reference-only. */}
+      <div className="mt-5">
+        <Panel className="p-4">
+          <div className="flex items-center justify-between gap-2">
+            <Slate>Automatic match additions</Slate>
+            <Badge tone="neutral">Fixed</Badge>
+          </div>
+          <p className="mt-1 text-[13px] leading-relaxed text-sage">
+            Awarded automatically from the recorded match statistics. They are the same for every
+            league and can&rsquo;t be edited here.
+          </p>
+          <ul className="mt-3 space-y-2.5">
+            <li className="flex items-baseline justify-between gap-3">
+              <span className="text-[14px] text-chalk">Goalkeeper saves</span>
+              <span className="num text-right text-[13px] text-sage">
+                <span className="text-green">+1</span> per 3 saves · GK only
+              </span>
+            </li>
+            <li className="flex items-baseline justify-between gap-3 border-t border-line-soft pt-2.5">
+              <span className="text-[14px] text-chalk">Defensive contributions</span>
+              <span className="num text-right text-[13px] text-sage">
+                <span className="text-green">+1</span> per 10 (DEF) · per 12 (MID/FWD)
+              </span>
+            </li>
+            <li className="flex items-baseline justify-between gap-3 border-t border-line-soft pt-2.5">
+              <span className="text-[14px] text-chalk">Match bonus</span>
+              <span className="num text-right text-[13px] text-sage">
+                <span className="text-green">+3</span> / <span className="text-green">+2</span> / <span className="text-green">+1</span> for 1st / 2nd / 3rd
+              </span>
+            </li>
+          </ul>
+        </Panel>
+      </div>
+
       <Slate className="mt-6 block">
         {data.rules.length} rules · {POSITIONS.length} positions ·{" "}
         {data.approved ? "approved" : "draft"}
