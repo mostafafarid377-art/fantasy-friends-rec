@@ -338,5 +338,31 @@ assert.match(motm, /create policy ff_motm_photo_read[\s\S]*?public\.is_member\(m
 assert.match(motm, /create policy ff_motm_photo_insert[\s\S]*?public\.is_leader\(m\.league_id\) or public\.is_match_organizer\(m\.id\)/i,
   'only the leader or match organizer may upload a man-of-the-match photo');
 
+// Migration 0039 moves the man-of-the-match write behind guarded functions.
+// 0038 granted only SELECT on the table, so a direct client insert was blocked
+// by row level security. The functions own the write and verify authorization,
+// the approved status, and the player's participation themselves.
+const chooseMotm = read('./supabase/migrations/0039_choose_motm_rpc.sql');
+assert.match(chooseMotm, /create or replace function public\.choose_motm\(p_match text, p_player text\)[\s\S]*?security definer/i,
+  'the man of the match must be chosen through a guarded security definer function');
+assert.match(chooseMotm, /public\.is_leader\(v_match\.league_id\) or public\.is_match_organizer\(p_match\)/i,
+  'choosing the man of the match must verify leader or match organizer authority');
+assert.match(chooseMotm, /v_match\.status <> 'approved'/i,
+  'the man of the match can only be chosen for an approved match');
+assert.match(chooseMotm, /not exists \(select 1 from public\.match_scoring_lineups/i,
+  'the man of the match must be a player who took part in the match');
+assert.match(chooseMotm, /on conflict \(match_id\) do update/i,
+  'choosing again must replace the existing pick, not error or duplicate');
+assert.match(chooseMotm, /revoke all on function public\.choose_motm\(text, text\) from public, anon/i,
+  'the choose function must not be callable by anonymous clients');
+assert.match(chooseMotm, /grant execute on function public\.choose_motm\(text, text\) to authenticated/i,
+  'the choose function must stay callable by authenticated members');
+assert.match(chooseMotm, /create or replace function public\.set_motm_photo\(p_match text, p_photo text\)[\s\S]*?security definer/i,
+  'the man-of-the-match photo must be linked through a guarded function');
+assert.doesNotMatch(chooseMotm, /grant (insert|update|delete) on (table )?"?public"?\."?match_motm"?/i,
+  'migration 0039 must not open direct client writes to match_motm');
+assert.doesNotMatch(chooseMotm, /\b(drop|truncate)\s+table\b|\bdelete\s+from\s+public\./i,
+  'migration 0039 must not drop, truncate or delete application data');
+
 console.log('Phase 2 SQL static checks passed.');
 console.log('NOTE: This is a source-level audit only; it does not parse or execute PostgreSQL migrations.');
