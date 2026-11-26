@@ -17,8 +17,9 @@ import {
   type SquadPlayer,
 } from "@/lib/domain";
 
-const rules5: LeagueRules = { format: "5v5", squadSize: 15, starters: 5, subsCount: 5 };
-const rules7: LeagueRules = { format: "7v7", squadSize: 15, starters: 7, subsCount: 5 };
+// A squad is exactly starters plus substitutes: 10 in a 5v5 league, 12 in a 7v7 league.
+const rules5: LeagueRules = { format: "5v5", squadSize: 10, starters: 5, subsCount: 5 };
+const rules7: LeagueRules = { format: "7v7", squadSize: 12, starters: 7, subsCount: 5 };
 // A squad that is played always names a captain and a vice-captain.
 const captaincy5 = { captainId: "def1", viceId: "mid1" };
 const captaincy7 = { captainId: "def1", viceId: "mid1" };
@@ -27,7 +28,7 @@ function player(id: string, position: Position, slot: SquadPlayer["slot"], order
   return { id, position, slot, order, name: id };
 }
 
-/** A legal 5v5 squad: 15 players, 5 starters (1 GK), 5 subs, 5 reserves. */
+/** A legal 5v5 squad: 10 players, 5 starters (1 GK) and 5 subs. */
 function squad5(): SquadPlayer[] {
   return [
     player("gk1", "GK", "starter", 0),
@@ -40,11 +41,6 @@ function squad5(): SquadPlayer[] {
     player("sub3", "MID", "sub", 2),
     player("sub4", "FWD", "sub", 3),
     player("sub5", "FWD", "sub", 4),
-    player("res1", "DEF", "reserve"),
-    player("res2", "MID", "reserve"),
-    player("res3", "FWD", "reserve"),
-    player("res4", "FWD", "reserve"),
-    player("res5", "MID", "reserve"),
   ];
 }
 
@@ -59,7 +55,6 @@ function squad7(): SquadPlayer[] {
     player("mid2", "MID", "starter", 5),
     player("fwd1", "FWD", "starter", 6),
     ...["s1", "s2", "s3", "s4", "s5"].map((id, i) => player(id, i === 0 ? "GK" : "MID", "sub", i)),
-    ...["r1", "r2", "r3"].map((id) => player(id, "DEF", "reserve")),
   ];
 }
 
@@ -67,7 +62,7 @@ describe("league format rules", () => {
   it("requires exactly 5 starters in a 5v5 league", () => {
     expect(validateSquad(rules5, squad5(), { formation: "2-2-0", ...captaincy5 }).ok).toBe(true);
     const withExtra = squad5().map((p) =>
-      p.slot === "reserve" && p.id === "res1" ? { ...p, slot: "starter" as const, order: 5 } : p,
+      p.slot === "sub" && p.id === "sub2" ? { ...p, slot: "starter" as const, order: 5 } : p,
     );
     const result = validateSquad(rules5, withExtra, { formation: "1-2-1" });
     expect(result.ok).toBe(false);
@@ -178,7 +173,7 @@ describe("match lineup validation", () => {
     expect(tooFew.ok).toBe(false);
     expect(tooFew.ok === false && tooFew.errors.join(" ")).toMatch(/Exactly 5 starters/);
 
-    // A match lineup never needs the reserves of a full squad.
+    // A match lineup needs only its starters.
     expect(validateMatchLineup(rules5, starters, { formation: "2-2-0", ...captaincy5 }).ok).toBe(true);
   });
 });
@@ -230,8 +225,8 @@ describe("strict position layouts and editing", () => {
   });
 
   it("uses the actual squad and sub limits, not the format to size the bench", () => {
-    const rules = { ...rules5, squadSize: 7, subsCount: 1 };
-    const players = squad5().filter((p) => p.slot === "starter" || ["sub1", "res1"].includes(p.id));
+    const rules = { ...rules5, squadSize: 6, subsCount: 1 };
+    const players = squad5().filter((p) => p.slot === "starter" || p.id === "sub1");
     expect(validateSquad(rules, players, { formation: "2-2-0", captainId: "def1", viceId: "mid1" }).ok).toBe(true);
     expect(validateSquadDraft(rules, [...players, player("extra", "DEF", "sub")], { formation: "2-2-0" }).ok).toBe(false);
   });
@@ -293,7 +288,7 @@ describe("squadCompositionErrors", () => {
 
   it("rejects a starting lineup with no Midfielder", () => {
     const [error] = squadCompositionErrors(entries([
-      ["gk", "GK", "starter"], ["d", "DEF", "starter"], ["f", "FWD", "starter"], ["m", "MID", "reserve"],
+      ["gk", "GK", "starter"], ["d", "DEF", "starter"], ["f", "FWD", "starter"], ["m", "MID", "sub"],
     ]));
     expect(error).toContain("Missing: Midfielder");
   });
@@ -317,7 +312,7 @@ describe("squadCompositionErrors", () => {
   it("ignores non-starters entirely", () => {
     // Full coverage on the bench alone does not help.
     const [error] = squadCompositionErrors(entries([
-      ["d", "DEF", "sub"], ["m", "MID", "sub"], ["f", "FWD", "reserve"],
+      ["d", "DEF", "sub"], ["m", "MID", "sub"], ["f", "FWD", "sub"],
     ]));
     expect(error).toContain("Forward");
     expect(error).toContain("Midfielder");

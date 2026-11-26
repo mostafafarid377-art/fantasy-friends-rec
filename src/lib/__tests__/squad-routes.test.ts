@@ -38,7 +38,7 @@ beforeEach(() => {
 describe("league squad route", () => {
   it("reads only this member's squad and never creates one on an empty GET", async () => {
     const res = await GET(request(), ctx);
-    expect(await res.json()).toMatchObject({ squad: null, players: [], lastMatch: null, rules: { squadSize: 8, subsCount: 2 } });
+    expect(await res.json()).toMatchObject({ squad: null, players: [], lastMatch: null, rules: { squadSize: 7, subsCount: 2 } });
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "league_id", "league-a");
     expect(filters).toHaveBeenCalledWith("fantasy_squads", "profile_id", "me");
     expect(db.rpc).toHaveBeenCalledWith("recent_fantasy_substitutions", { p_league: "league-a" });
@@ -72,9 +72,10 @@ describe("league squad route", () => {
   });
 
   it("rejects a complete squad that is missing an outfield position and names them together", async () => {
-    // The mock league is 5v5 with squad_size 8 (5 starters, 2 subs, 1 reserve).
-    // Each scenario builds a full 8-player squad whose starting lineup lacks
-    // one line; the first scenario keeps a Forward on the bench to prove only
+    // The mock league is 5v5 with 2 substitutes: a complete squad is exactly
+    // 7 players (5 starters + 2 subs) — there is no reserve tier. Each
+    // scenario builds a full 7-player squad whose starting lineup lacks one
+    // line; the first scenario keeps a Forward on the bench to prove only
     // starters count.
     const full_name = "Player";
     const fill = (position: string, prefix: string, n: number) =>
@@ -82,28 +83,26 @@ describe("league squad route", () => {
     const scenarios: { rows: { id: string; position: string; full_name: string; status: string }[]; missing: string; formation: string; starterIds: string[]; benchOutfield?: string }[] = [
       // No Forward in the starting XI — but one sits on the bench. Only
       // starters count, so this must still be rejected. Formation 1-3-0.
-      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("DEF", "d", 2), ...fill("MID", "m", 3), ...fill("FWD", "f", 1)],
+      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("DEF", "d", 1), ...fill("MID", "m", 3), ...fill("FWD", "f", 1)],
         missing: "Forward", formation: "1-3-0", starterIds: ["keeper", "d-0", "m-0", "m-1", "m-2"], benchOutfield: "f-0" },
-      // 2 GK + 2 DEF + 4 FWD, no Midfielder anywhere; formation 2-0-2.
-      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("DEF", "d", 2), ...fill("FWD", "f", 4)],
+      // 2 GK + 2 DEF + 3 FWD, no Midfielder anywhere; formation 2-0-2.
+      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("DEF", "d", 2), ...fill("FWD", "f", 3)],
         missing: "Midfielder", formation: "2-0-2", starterIds: ["keeper", "d-0", "d-1", "f-0", "f-1"] },
-      // 2 GK + 4 MID + 2 FWD, no Defender anywhere; formation 0-2-2.
-      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("MID", "m", 4), ...fill("FWD", "f", 2)],
+      // 2 GK + 3 MID + 2 FWD, no Defender anywhere; formation 0-2-2.
+      { rows: [keeper, { id: "keeper-2", position: "GK", full_name, status: "active" }, ...fill("MID", "m", 3), ...fill("FWD", "f", 2)],
         missing: "Defender", formation: "0-2-2", starterIds: ["keeper", "m-0", "m-1", "f-0", "f-1"] },
     ];
     for (const { rows, missing, formation, starterIds, benchOutfield } of scenarios) {
       players = rows;
-      expect(rows).toHaveLength(8);
+      expect(rows).toHaveLength(7);
       const byId = new Map(rows.map((p) => [p.id, p]));
       const starters = starterIds.map((id) => byId.get(id)!);
       const benched = [byId.get("keeper-2")!, byId.get(benchOutfield ?? rows.find((p) => p.position !== "GK" && !starterIds.includes(p.id))!.id)!];
-      const reserves = rows.filter((p) => !starters.includes(p) && !benched.includes(p));
       const res = await PUT(request("PUT", {
         formation, captainId: keeper.id, viceCaptainId: starters[1].id, expectedUpdatedAt: null,
         entries: [
           ...starters.map((p, i) => ({ playerId: p.id, slot: "starter", order: i })),
           ...benched.map((p, i) => ({ playerId: p.id, slot: "sub", order: i })),
-          ...reserves.map((p, i) => ({ playerId: p.id, slot: "reserve", order: i })),
         ],
       }), ctx);
       const body = await res.json();
@@ -112,6 +111,13 @@ describe("league squad route", () => {
       expect(body.details?.[0]).toContain(`Missing: ${missing}`);
     }
     // Nothing was written: the save RPC was never reached.
+    expect(db.rpc).not.toHaveBeenCalledWith("save_fantasy_squad_v2", expect.anything());
+  });
+
+  it("rejects the retired reserve slot before any squad write", async () => {
+    const res = await PUT(request("PUT", { ...input,
+      entries: [{ playerId: keeper.id, slot: "reserve", order: 0 }] }), ctx);
+    expect(res.status).toBe(422);
     expect(db.rpc).not.toHaveBeenCalledWith("save_fantasy_squad_v2", expect.anything());
   });
 

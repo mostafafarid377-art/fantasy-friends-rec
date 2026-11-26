@@ -14,7 +14,6 @@ type LeagueData = {
     name: string;
     description: string | null;
     subsCount: number;
-    squadSize: number;
     starters: number;
     vicePolicy: string;
     format: string;
@@ -31,7 +30,6 @@ export default function SettingsPage() {
 
   const [name, setName] = useState<string | null>(null);
   const [description, setDescription] = useState<string | null>(null);
-  const [squadSize, setSquadSize] = useState<string | null>(null);
   const [subs, setSubs] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,7 +39,6 @@ export default function SettingsPage() {
     name: name ?? data?.league.name ?? "",
     description: description ?? data?.league.description ?? "",
     subs: subs ?? String(data?.league.subsCount ?? ""),
-    squadSize: squadSize ?? String(data?.league.squadSize ?? ""),
   };
 
   const save = async () => {
@@ -54,12 +51,11 @@ export default function SettingsPage() {
           name: value.name.trim(),
           description: value.description.trim() || null,
           subsCount: Number(value.subs),
-          squadSize: Number(value.squadSize),
         },
       });
       if (saved?.league?.id !== league.id) throw new Error("League settings update could not be confirmed");
       setData((old) => old ? { ...old, league: saved.league } : old);
-      setName(null); setDescription(null); setSubs(null); setSquadSize(null);
+      setName(null); setDescription(null); setSubs(null);
       setToast({ message: "League settings saved", tone: "ok" });
       void refresh().catch((error) => console.warn("[session refresh]", error));
     } catch (err) {
@@ -119,11 +115,7 @@ export default function SettingsPage() {
               />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Fantasy squad size" hint={`${data?.league.starters ?? 0} starters plus substitutes; max 15. Existing squads may need rebalancing.`}>
-                <TextInput type="number" min={(data?.league.starters ?? 0) + 1} max={15} value={value.squadSize}
-                  onChange={(e) => setSquadSize(e.target.value)} />
-              </Field>
-              <Field label="Substitutes per team" hint="Must fit alongside starters within the squad size.">
+              <Field label="Substitutes per team" hint={`A squad is ${data?.league.starters ?? 0} starters plus this many substitutes. Existing squads may need rebalancing.`}>
                 <TextInput
                   type="number"
                   min={1}

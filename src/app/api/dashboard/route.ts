@@ -73,7 +73,7 @@ export const GET = handler(async (req: NextRequest) => {
       formation: snapshot.formation, captainId: snapshot.captainId, viceCaptainId: snapshot.viceId, players: snapshot.players };
   }
   return Response.json({
-    league: { id: league.id, name: league.name, format: league.format, starters: league.starters, subsCount: league.subs_count, squadSize: league.squad_size, inviteCode: league.invite_code, role: membership.role },
+    league: { id: league.id, name: league.name, format: league.format, starters: league.starters, subsCount: league.subs_count, squadSize: settings.squadSize, inviteCode: league.invite_code, role: membership.role },
     squad: squad.data && players.length > 0 ? { id: squad.data.id, formation: shape?.label ?? "—", captainId: squad.data.captain_id, viceCaptainId: squad.data.vice_captain_id,
       players, size: players.length, starters: players.filter((p) => p.slot === "starter").length,
       subs: players.filter((p) => p.slot === "sub").length,

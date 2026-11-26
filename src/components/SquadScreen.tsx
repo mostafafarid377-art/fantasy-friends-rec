@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowLeftRight, ArrowUp, CalendarDays, Ellipsis, FlaskConical, Plus, Save } from "lucide-react";
+import { ArrowDown, ArrowLeftRight, ArrowUp, CalendarDays, FlaskConical, Plus, Save } from "lucide-react";
 import { useActiveLeague, useLeague } from "./LeagueContext";
 import { PageHeader } from "./AppShell";
 import { Pitch } from "./Pitch";
@@ -26,8 +26,8 @@ import type { PlayerPool, PoolPlayer, SquadEntry, SquadResponse } from "@/lib/sq
 const MATCH_DATE = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
 type Slot = SquadPlayer["slot"];
-const LABEL: Record<Slot, string> = { starter: "Starters", sub: "Substitutes", reserve: "Reserves" };
-const SLOTS = ["starter", "sub", "reserve"] as const;
+const LABEL: Record<Slot, string> = { starter: "Starters", sub: "Substitutes" };
+const SLOTS = ["starter", "sub"] as const;
 type Draft = { players: SquadEntry[]; formation: string; captainId: string | null; viceId: string | null; revision: string | null; matchId?: string | null };
 type PickTarget = { slot: Slot; position?: Position; replace?: SquadEntry };
 
@@ -118,9 +118,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
   const readOnlyLineup = !editing && Boolean(historical);
   const activePlayers = (editing ? (edit ?? nextSeed)?.players : historical?.lineup.players) ?? squad.data?.players ?? [];
   const displayMatch = historical?.matchId ?? (editing && editingNext ? scheduled?.id : undefined);
-  const lineupScores = useLatestPlayerGames(leagueId, activePlayers.filter((player) => player.slot !== "reserve"), displayMatch);
-  const inspectedPlayer = activePlayers.find((player) => player.id === playerId && player.slot === "reserve");
-  const inspectedScores = useLatestPlayerGames(leagueId, inspectedPlayer && !moving ? [inspectedPlayer] : []);
+  const lineupScores = useLatestPlayerGames(leagueId, activePlayers, displayMatch);
   useLiveLeaguePoints(leagueId, squad.reload, false);
   useLeagueContentUpdates(leagueId, pool.reload, false);
 
@@ -297,7 +295,7 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
           : "Tap a pitch slot to pick, or tap a player for their performance and squad actions. Changes only count after saving.")
           : showingInPlay ? "This is the lineup in play for the locked match. Edit Squad only changes your next lineup."
           : historical ? "View the lineup saved for your previous match. Edit Squad only changes the next match."
-          : players.length ? "View your saved lineup, substitutes and reserves." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
+          : players.length ? "View your saved lineup and substitutes." : "You haven’t picked a squad in this league. Start with any plus on the pitch."}
         actions={<>{pickActions}{canPrepareNext && <Button variant="outline" onClick={() => { setHasOpenedNext(true); setViewNext(true); setPlayerId(null); setPick(null); setMoving(null); }}><CalendarDays aria-hidden="true" className="size-4" />Next Match</Button>}<Button href="/players" variant="outline">{isLeader ? "Manage players & teams" : "Player pool"}</Button></>} />
       {enableNextMatch && nextLineup.error && <div className="mb-4"><ErrorNote message={nextLineup.error} onRetry={() => void nextLineup.reload()} /></div>}
       {showLineupPreview && <Button className="mb-4" href="/team/next-match-preview?from=squad" variant="ghost"><FlaskConical aria-hidden="true" className="size-4" />Lineup design preview</Button>}
@@ -385,21 +383,6 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
             {!historical && archived.length > 0 && <p className="mt-2 text-sm text-card-y">Replace or remove archived players before saving: {archived.map((p) => p.name).join(", ")}.</p>}
             {!historical && blocked && <ul className="mt-2 space-y-1 text-sm text-card-y">{[...(!validation.ok ? validation.errors : []), ...composition].map((e) => <li key={e}>{e}</li>)}</ul>}
           </Panel>
-          {(["reserve"] as const).filter((slot) => caps[slot] > 0 || players.some((p) => p.slot === slot)).map((slot) => {
-            const group = players.filter((p) => p.slot === slot).sort((a,b) => a.order-b.order || a.id.localeCompare(b.id));
-            return <Panel key={slot} className="p-4">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <h2 className="text-xl text-chalk">{LABEL[slot]} <span className="num text-sm text-sage">{group.length}/{caps[slot]}</span></h2>
-                {!readOnlyLineup && group.length < caps[slot] && players.length < rules.squadSize && <Button size="sm" variant="outline" disabled={editingBlocked || saving}
-                  onClick={() => openPicker({ slot })}><Plus className="h-4 w-4" /> Add reserve</Button>}
-              </div>
-              {group.length ? <ul className="space-y-1">{group.map((p) => <li key={p.id}><button type="button" onClick={() => setPlayerId(p.id)} disabled={saving}
-                className="flex w-full items-center gap-3 rounded border border-line px-2 py-2 text-left text-chalk hover:border-green">
-                <Avatar name={p.name} url={p.photoUrl} size={28} /><span className="min-w-0 flex-1 break-words text-sm">{p.name}</span>
-                <span className="text-xs text-sage">{p.position}</span><Ellipsis className="h-4 w-4" />
-              </button></li>)}</ul> : <p className="text-sm text-sage">No {LABEL[slot].toLowerCase()} picked yet.</p>}
-            </Panel>;
-          })}
           {!!stored.recentSubs?.length && <Panel className="space-y-3 p-4">
             <h2 className="text-xl text-chalk">Recent automatic substitutions</h2>
             {stored.recentSubs.map((report) => <div key={report.matchId}>
@@ -410,19 +393,19 @@ function LeagueSquad({ leagueId, leagueName, editInitially, showLineupPreview, e
           {editing && <div className="flex flex-wrap gap-2 lg:hidden">{pickActions}</div>}
         </div>
       </div>
-      {editing && !editingBlocked && pick && <SquadPicker title={pick.replace ? `Replace ${pick.replace.name}` : pick.position ? `Pick a ${pick.position}` : pick.slot === "sub" ? "Pick a substitute" : "Pick a reserve"}
+      {editing && !editingBlocked && pick && <SquadPicker title={pick.replace ? `Replace ${pick.replace.name}` : pick.position ? `Pick a ${pick.position}` : "Pick a substitute"}
         replacement={Boolean(pick.replace)} allowed={eligiblePositions(pick)} selected={new Set(players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()}
         onPick={pickPlayer} onClose={() => setPick(null)} />}
       {selected && !moving && <PlayerPerformanceDialog key={selected.id} leagueId={leagueId} entry={selected}
-        latest={lineupScores.data?.[selected.id] ?? inspectedScores.data?.[selected.id]} onClose={() => setPlayerId(null)} actions={<>
+        latest={lineupScores.data?.[selected.id]} onClose={() => setPlayerId(null)} actions={<>
         <p className="mb-2 text-xs text-sage">{LABEL[selected.slot]} · {selected.status !== "active" ? "Archived" : selected.availability}</p>
         {editing && !editingBlocked ? <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
           {selected.slot === "starter" && selected.status === "active" && <>
             <Button variant="outline" onClick={() => assign("captain", selected)}>{captainId === selected.id ? "Clear captain" : "Make captain"}</Button>
             <Button variant="outline" onClick={() => assign("vice", selected)}>{viceId === selected.id ? "Clear vice" : "Make vice"}</Button>
           </>}
-          {SLOTS.filter((slot) => slot !== selected.slot && caps[slot] > 0).map((slot) => <Button key={slot} variant="outline" onClick={() => setMoving(slot)}>
-            <ArrowLeftRight className="h-4 w-4" /> {slot === "starter" ? "Move to pitch" : slot === "sub" ? "Move to bench" : "Move to reserves"}
+          {SLOTS.filter((slot) => slot !== selected.slot).map((slot) => <Button key={slot} variant="outline" onClick={() => setMoving(slot)}>
+            <ArrowLeftRight className="h-4 w-4" /> {slot === "starter" ? "Move to pitch" : "Move to bench"}
           </Button>)}
           <Button variant="outline" onClick={() => openPicker({ slot: selected.slot, replace: selected })}>Replace player</Button>
           <Button variant="danger" onClick={() => changePlayers(players.filter((p) => p.id !== selected.id))}>Remove player</Button>

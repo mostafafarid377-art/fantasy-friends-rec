@@ -205,7 +205,7 @@ function LineupEditor({ leagueId, leagueName, rules, data, fallback, onBack, ref
       </div>
       {target && !poolOpen && <Modal open manageFocus title={`Replace ${target.name}`} onClose={closePicker}>
         <p className="mb-3 text-sm text-sage">Choose a player of the same position to keep the formation.</p>
-        <ul className="mb-3 space-y-2">{availableSwaps.map((p) => <li key={p.id}><Button variant="outline" className="w-full justify-start" onClick={() => { update(swapLineupPlayers(lineup, target, p)); closePicker(); }}>{p.name} · {p.slot === "sub" ? "Bench" : p.slot === "starter" ? "Starter" : "Reserve"}</Button></li>)}</ul>
+        <ul className="mb-3 space-y-2">{availableSwaps.map((p) => <li key={p.id}><Button variant="outline" className="w-full justify-start" onClick={() => { update(swapLineupPlayers(lineup, target, p)); closePicker(); }}>{p.name} · {p.slot === "sub" ? "Bench" : "Starter"}</Button></li>)}</ul>
         <Button variant="outline" onClick={() => setPoolOpen(true)}>Choose from player pool</Button>
       </Modal>}
       {adding && <SquadPicker title={adding === "GK" ? "Pick a bench goalkeeper" : "Pick an outfield substitute"} replacement allowed={adding === "GK" ? ["GK"] : OUTFIELD} selected={new Set(lineup.players.map((p) => p.id))} pool={pool.data} error={pool.error} reload={() => void pool.reload()} onClose={closePicker} onPick={addSubstitute} />}

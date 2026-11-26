@@ -744,18 +744,19 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       const other = (await sql(c, "SELECT public.create_league('Seven-side test',null,'7v7',7,2,null) AS id")).rows[0].id;
       await sql(c, "UPDATE leagues SET squad_size=10 WHERE id=$1", [other]);
       await expect(sql(c, "UPDATE leagues SET squad_size=8 WHERE id=$1", [other])).rejects.toMatchObject({ code: "23514" });
-      const positions = ["GK", "DEF", "DEF", "DEF", "MID", "MID", "FWD", "GK", "MID", "FWD"];
+      const positions = ["GK", "DEF", "DEF", "DEF", "MID", "MID", "FWD", "GK", "MID"];
       const entries: { player_id: string; slot: string; order: number }[] = [];
       for (const [order, position] of positions.entries()) {
         const player_id = randomUUID();
         await sql(c, "INSERT INTO players(id,league_id,full_name,position,created_by) VALUES($1,$2,$3,$4,$5)", [player_id, other, `Seven ${order}`, position, userAId]);
-        entries.push({ player_id, slot: order < 7 ? "starter" : order < 9 ? "sub" : "reserve", order: order === 7 ? 0 : order === 8 ? 1 : order });
+        entries.push({ player_id, slot: order < 7 ? "starter" : "sub", order: order === 7 ? 0 : order === 8 ? 1 : order });
       }
       const save = (formation: string, picks: typeof entries, revision: string | null, captain = entries[0].player_id) =>
         sql(c, "SELECT public.save_fantasy_squad_v2($1,$2,$3,$4,$5,$6) AS result",
           [other, formation, captain, entries[1].player_id, revision, JSON.stringify(picks)]);
       await expect(save("2-2-2", entries, null)).rejects.toMatchObject({ code: "22023" });
-      await expect(save("3-2-1", entries.map((e,i) => i === 9 ? { ...e, slot: "sub" } : e), null)).rejects.toMatchObject({ code: "22023" });
+      await expect(save("3-2-1", entries.map((e,i) => i === 6 ? { ...e, slot: "sub", order: 2 } : e), null)).rejects.toMatchObject({ code: "22023" });
+      // The retired reserve slot is rejected like any other invalid slot.
       await expect(save("3-2-1", entries.map((e,i) => i === 8 ? { ...e, slot: "reserve" } : e), null)).rejects.toMatchObject({ code: "22023" });
       await expect(save("3-2-1", entries.map((e,i) => i === 6 ? { ...entries[7], slot: "starter" } : i === 7 ? { ...entries[6], slot: "sub" } : e), null)).rejects.toMatchObject({ code: "22023" });
       const first = (await save("3-2-1", entries, null)).rows[0].result;
@@ -763,7 +764,8 @@ describe("Confirmed writes: persistence, retry, and isolation (real PostgreSQL)"
       const swapped = entries.map((e,i) => i === 2 ? { ...e, slot: "sub", order: 1 } : i === 8 ? { ...e, slot: "starter", order: 2 } : e);
       const edit = (await save("2-3-1", swapped, first.squad.updated_at)).rows[0].result;
       expect(edit.squad).toMatchObject({ id: first.squad.id, formation: "2-3-1", completed_at: first.squad.completed_at });
-      expect(edit.entries.find((e: {player_id: string}) => e.player_id === entries[9].player_id)).toEqual(first.entries[9]);
+      expect(edit.entries.find((e: {player_id: string}) => e.player_id === entries[5].player_id))
+        .toEqual(first.entries.find((e: {player_id: string}) => e.player_id === entries[5].player_id));
       expect((await sql(c, "SELECT league_id FROM fantasy_squads WHERE profile_id=$1 AND league_id IN ($2,$3)", [userAId, leagueAId, other])).rowCount).toBe(2);
       await setAuthUid(c, userCId);
       expect((await sql(c, "SELECT id FROM fantasy_squads WHERE league_id=$1", [other])).rowCount).toBe(0);
@@ -2357,7 +2359,7 @@ it("shares one live projection between the player rows and the manager breakdown
   } finally { c.release(); owner.release(); }
 });
 
-/** A league with a full squad of fifteen: five starters, three substitutes and seven reserves. */
+/** A league with a full squad of eight: five starters and three substitutes. */
 async function lifecycleFixture(c: PoolClient) {
   const league = await releaseLeague(c, 5);
   const positions = ["GK", "DEF", "MID", "MID", "FWD", "GK", "DEF", "MID",
@@ -2370,7 +2372,6 @@ async function lifecycleFixture(c: PoolClient) {
   const squad = [
     ...home.slice(0, 5).map((player_id, order) => ({ player_id, order, slot: "starter" })),
     ...home.slice(5, 8).map((player_id, order) => ({ player_id, order, slot: "sub" })),
-    ...home.slice(8).map((player_id, order) => ({ player_id, order, slot: "reserve" })),
   ];
   const saveSquad = async (captain: string, vice: string) => {
     await setAuthUid(c, userAId);
@@ -2642,7 +2643,7 @@ describe("fantasy lineup lifecycle (real PostgreSQL)", () => {
       const first = await league.makeMatch();
       await start(first);
       await sql(admin, "UPDATE fantasy_squads SET captain_id=$3 WHERE league_id=$1 AND profile_id=$2",
-        [league.id, userAId, home[8]]);
+        [league.id, userAId, home[5]]);
       expect((await sql(admin, "SELECT public.ff_promote_match_lineup($1) AS promoted", [first])).rows[0].promoted).toBe(0);
       expect(await history(first)).toBeUndefined();
 
@@ -2669,7 +2670,7 @@ describe("fantasy lineup lifecycle (real PostgreSQL)", () => {
       // Neither the captain nor the vice-captain of the default squad is one
       // of its starters.
       await sql(admin, "UPDATE fantasy_squads SET captain_id=$3,vice_captain_id=$4 WHERE league_id=$1 AND profile_id=$2",
-        [league.id, userAId, home[8], home[9]]);
+        [league.id, userAId, home[5], home[6]]);
       const match = await league.makeMatch();
       await play(match);
 
@@ -2882,7 +2883,7 @@ describe("the lineup deadline runner (real PostgreSQL)", () => {
       // The captain of the squad is not one of its starters, so the lineup
       // cannot be used as an official lineup.
       await sql(admin, "UPDATE fantasy_squads SET captain_id=$3 WHERE league_id=$1 AND profile_id=$2",
-        [league.id, userAId, home[8]]);
+        [league.id, userAId, home[5]]);
       const match = await league.makeMatch();
       await reachFixtureKickoff(match);
 

@@ -34,7 +34,7 @@ const pool = [player("gk-a", "Ada Keeper", "GK", red.id), player("gk-b", "Zed Ke
   player("def-b", "Dee Defender", "DEF"), player("mid-b", "Max Midfielder", "MID"), player("fwd-b", "Fay Forward", "FWD"),
   { ...player("def-x", "Injured Defender", "DEF"), availability: "injured" }];
 const empty = (l: SessionLeague): SquadResponse => ({ squad: null, players: [], vicePolicy: "auto_captain",
-  rules: { format: l.format, starters: l.starters, subsCount: l.subsCount, squadSize: l.starters + 2 } });
+  rules: { format: l.format, starters: l.starters, subsCount: l.subsCount, squadSize: l.starters + l.subsCount } });
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
 const dialog = () => within(screen.getByRole("dialog"));
 function renderInShell(child: React.ReactNode = <SquadScreen />) {
@@ -181,7 +181,7 @@ describe("squad screen HTTP contract", () => {
     const { saved, put } = fixture();
     const players = [0,1,5,6].map((index, i) => ({ ...pool[index], name: pool[index].fullName,
       slot: (i ? "sub" : "starter") as "sub" | "starter", order: i ? i - 1 : 0 }));
-    const data = { ...empty(a), rules: { ...empty(a).rules, subsCount: 3, squadSize: 10 }, players,
+    const data = { ...empty(a), rules: { ...empty(a).rules, subsCount: 3, squadSize: 8 }, players,
       squad: { id: "saved", formation: "1-2-1", captainId: null, viceCaptainId: null, updatedAt: "2026-11-19T01:02:03Z", completedAt: null },
       recentSubs: [{ matchId: "m1", title: "Previous match", substitutions: [{ outId: "gk-a", inId: "gk-b", outName: "Ada Keeper", inName: "Zed Keeper", position: "GK" as const, priority: 0 }] }] };
     saved.set(a.id, data);
@@ -243,7 +243,7 @@ it("refreshes the dashboard's selected-league Last Game Points without replacing
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url === "/api/auth/session") return Response.json(session);
     const l = url.endsWith(b.id) ? b : a;
-    return Response.json({ league: { ...l, squadSize: 9 }, squad: null,
+    return Response.json({ league: { ...l, squadSize: l.starters + l.subsCount }, squad: null,
       standings: [{ profileId: "me", rank: 1, totalPoints: "45", matchesPlayed: 3, displayName: "Test user" }],
       myRank: 1, lastGame: l === a ? { matchId: "match-a", title: "Morning final", points: aScore } : null,
       fixtures: [], matches: [], notifications: [], rulesApproved: true, emailVerified: true, memberCount: 2 });
@@ -269,7 +269,7 @@ it("previews real starters, captaincy and substitutes, refreshes an edited squad
     if (url === "/api/auth/session") return Response.json(session);
     if (url.includes("/player-performance?")) return Response.json({ "gk-a": { matchId: "game-a", points: 8 } });
     const l = url.endsWith(b.id) ? b : a;
-    return Response.json({ league: { ...l, squadSize: 9 }, squad: l === a ? { formation: "1-2-1", captainId: "gk-a", viceCaptainId: "def-a", players } : null,
+    return Response.json({ league: { ...l, squadSize: l.starters + l.subsCount }, squad: l === a ? { formation: "1-2-1", captainId: "gk-a", viceCaptainId: "def-a", players } : null,
       standings: [], myRank: null, lastGame: null, fixtures: [], matches: [], notifications: [], rulesApproved: true, emailVerified: true, memberCount: 1,
       latestPlayerGames: l === a ? { "gk-a": { matchId: "game-a", points: 8 } } : {} });
   }));
@@ -305,7 +305,7 @@ it("shows the previous match lineup on the dashboard once one exists, not the fr
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url === "/api/auth/session") return Response.json(session);
     const l = url.endsWith(b.id) ? b : a;
-    return Response.json({ league: { ...l, squadSize: 9 },
+    return Response.json({ league: { ...l, squadSize: l.starters + l.subsCount },
       squad: l === a ? staleSquad : null, lineup: l === a ? previousLineup : null,
       standings: [], myRank: null, lastGame: null, fixtures: [], matches: [], notifications: [],
       rulesApproved: true, emailVerified: true, memberCount: 1, latestPlayerGames: {} });
