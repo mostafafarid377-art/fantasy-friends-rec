@@ -38,8 +38,25 @@ describe("request identity", () => {
       email: "manager@example.test",
       metadata: { username: "manager" },
       source: "claims",
+      aal: null,
+      mfaEnrolled: false,
     });
     expect(getUser).not.toHaveBeenCalled();
+  });
+
+  it("treats a password-only session as signed out once two-step verification is on", async () => {
+    const aal1 = makeClient({ claims: { sub: "user-1", aal: "aal1", app_metadata: { mfa_enrolled: true } } });
+    expect(await resolveIdentity(aal1.client)).toBeNull();
+  });
+
+  it("accepts a session that has passed the second step", async () => {
+    const aal2 = makeClient({ claims: { sub: "user-1", aal: "aal2", app_metadata: { mfa_enrolled: true } } });
+    expect(await resolveIdentity(aal2.client)).toMatchObject({ id: "user-1", aal: "aal2", mfaEnrolled: true });
+  });
+
+  it("does not require a second step for accounts that never turned it on", async () => {
+    const plain = makeClient({ claims: { sub: "user-1", aal: "aal1" } });
+    expect(await resolveIdentity(plain.client)).toMatchObject({ id: "user-1", mfaEnrolled: false });
   });
 
   it("confirms the session with the Auth server when the token cannot be verified locally", async () => {

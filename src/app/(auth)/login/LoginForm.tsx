@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -20,7 +20,7 @@ const schema = z.object({
 
 type Values = z.infer<typeof schema>;
 
-export default function LoginForm({ next, googleStartToken, authError }: { next: string; googleStartToken: string | null; authError?: string }) {
+export default function LoginForm({ next, googleStartToken, authError, mfa = false }: { next: string; googleStartToken: string | null; authError?: string; mfa?: boolean }) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const [showAuthError, setShowAuthError] = useState(true);
@@ -28,6 +28,16 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
   const [captchaReset, setCaptchaReset] = useState(0);
   const captchaRequired = Boolean(turnstileSiteKey());
   const message = serverError ?? (showAuthError ? authError : null);
+  const [needsCode, setNeedsCode] = useState(mfa);
+  const [factorId, setFactorId] = useState<string | null>(null);
+
+  // After Google or an email link, the session is waiting for its second step.
+  useEffect(() => {
+    if (!mfa) return;
+    api<{ factorId: string }>("/api/auth/mfa/verify")
+      .then((r) => setFactorId(r.factorId))
+      .catch(() => { setNeedsCode(false); setServerError("Your sign-in expired. Please sign in again."); });
+  }, [mfa]);
 
   const {
     register,
@@ -40,7 +50,12 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
     setShowAuthError(false);
     if (captchaRequired && !captchaToken) return; // button is disabled until verified
     try {
-      await api("/api/auth/login", { method: "POST", body: { ...values, ...(captchaToken ? { captchaToken } : {}) } });
+      const res = await api<{ mfaRequired?: boolean; factorId?: string }>("/api/auth/login", { method: "POST", body: { ...values, ...(captchaToken ? { captchaToken } : {}) } });
+      if (res?.mfaRequired && res.factorId) {
+        setFactorId(res.factorId);
+        setNeedsCode(true);
+        return;
+      }
       router.push(next);
       router.refresh();
     } catch (err) {
@@ -51,6 +66,23 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
       else setServerError("Could not sign you in");
     }
   };
+
+  if (needsCode) {
+    return (
+      <div className="animate-fade">
+        <div className="slate mb-3">One more step</div>
+        <h1 className="text-[clamp(2.2rem,5vw,3rem)] text-chalk">Two-step verification</h1>
+        <p className="mt-3 text-[14.5px] text-sage">Enter the 6-digit code from your authenticator app.</p>
+        {message && (
+          <div role="alert" className="mt-5 flex items-start gap-2.5 rounded-lg border border-card-r/40 bg-card-r/10 px-4 py-3 text-sm text-chalk">
+            <MailWarning aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-card-r" />
+            <span>{message}</span>
+          </div>
+        )}
+        <MfaStep factorId={factorId} next={next} />
+      </div>
+    );
+  }
 
   return (
     <div className="animate-fade">
@@ -94,5 +126,45 @@ export default function LoginForm({ next, googleStartToken, authError }: { next:
 
       </form>
     </div>
+  );
+}
+
+function MfaStep({ factorId, next }: { factorId: string | null; next: string }) {
+  const router = useRouter();
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!factorId || code.length !== 6) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/api/auth/mfa/verify", { method: "POST", body: { factorId, code } });
+      router.push(next);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : "Could not verify the code");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-8 space-y-5" noValidate>
+      <Field label="Authentication code" error={error ?? undefined}>
+        <TextInput
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={6}
+          placeholder="123456"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+        />
+      </Field>
+      <Button type="submit" size="lg" loading={busy} disabled={busy || !factorId || code.length !== 6} className="w-full">
+        Verify <ArrowRight className="h-4 w-4" />
+      </Button>
+    </form>
   );
 }

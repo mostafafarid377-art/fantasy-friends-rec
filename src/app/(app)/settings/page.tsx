@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { RefreshCw, ShieldCheck, Trash2, Wifi } from "lucide-react";
 import { DeleteLeague } from "@/components/DeleteLeague";
+import { MfaSettings } from "@/components/MfaSettings";
 import { PageHeader } from "@/components/AppShell";
 import { Badge, Button, ErrorNote, Field, Panel, Select, Skeleton, Slate, TextInput, Toast } from "@/components/ui";
 import { useActiveLeague, useLeague } from "@/components/LeagueContext";
@@ -168,6 +169,8 @@ export default function SettingsPage() {
           </div>
         </div>
       </Panel>
+
+      <MfaSettings />
 
       <Panel className="p-5">
         <div className="mb-4 flex items-center gap-2">

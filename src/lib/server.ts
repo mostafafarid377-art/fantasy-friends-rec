@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "crypto";
+import { guardWrite, limitWrites } from "@/lib/request-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase, SupabaseClient } from "@/db";
 import { loadMatch } from "@/lib/matches";
@@ -22,6 +23,11 @@ export function handler<F extends (req: NextRequest, ctx: any) => Promise<Respon
 ) {
   return async (req: NextRequest, ctx?: unknown): Promise<Response> => {
     try {
+      // Cross-site writes and write floods are refused before any work is done.
+      if (req?.method) {
+        const blocked = guardWrite(req) ?? limitWrites(req);
+        if (blocked) return blocked;
+      }
       const recoveryActor = req?.headers.get("x-ff-recovery-actor");
       if (recoveryActor && (await requireIdentity()).id !== recoveryActor) {
         throw new ApiError("This pending request belongs to another session", 403);

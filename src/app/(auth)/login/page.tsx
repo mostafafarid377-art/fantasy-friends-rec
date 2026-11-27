@@ -14,13 +14,14 @@ const messages = new Map([
   ["email_invalid_link", "The email link is invalid or expired. Request a new one and open it in the same browser."],
 ]);
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string | string[]; auth_error?: string | string[] }> }) {
-  const { next, auth_error } = await searchParams;
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string | string[]; auth_error?: string | string[]; mfa?: string | string[] }> }) {
+  const { next, auth_error, mfa } = await searchParams;
+  const needsCode = mfa === "1";
   const destination = safeAuthPath(typeof next === "string" ? next : null);
   const resumeTo = /^\/login\/?(?:[?#]|$)/.test(destination) ? "/dashboard" : destination;
   return <>
-    {!auth_error && <ResumeSession destination={resumeTo} />}
-    <LoginForm next={resumeTo} googleStartToken={await readGoogleStartToken()}
+    {!auth_error && !needsCode && <ResumeSession destination={resumeTo} />}
+    <LoginForm next={resumeTo} mfa={needsCode} googleStartToken={await readGoogleStartToken()}
       authError={typeof auth_error === "string" ? messages.get(auth_error) : undefined} />
   </>;
 }

@@ -20,6 +20,10 @@ export type Identity = {
   metadata: Record<string, unknown>;
   /** Where the identity came from: local claim verification or the Auth server. */
   source: IdentitySource;
+  /** Authenticator assurance level of the session ("aal1" = password only, "aal2" = second step done). */
+  aal: string | null;
+  /** True once the account has turned on two-step verification. */
+  mfaEnrolled: boolean;
 };
 
 /** Minimal structural view of the Supabase client used for identity checks. */
@@ -27,7 +31,7 @@ export type IdentityClient = {
   auth: {
     getClaims?: () => Promise<{ data?: { claims?: unknown } | null; error?: unknown }>;
     getUser: () => Promise<{
-      data?: { user?: { id?: unknown; email?: unknown; user_metadata?: unknown } | null } | null;
+      data?: { user?: { id?: unknown; email?: unknown; user_metadata?: unknown; app_metadata?: unknown } | null } | null;
       error?: unknown;
     }>;
   };
@@ -47,9 +51,11 @@ function asRecord(value: unknown): Record<string, unknown> {
  * Auth server confirms the session instead.
  */
 export async function resolveIdentity(client: IdentityClient): Promise<Identity | null> {
-  const fromClaims = await identityFromClaims(client);
-  if (fromClaims) return fromClaims;
-  return identityFromAuth(client);
+  const identity = (await identityFromClaims(client)) ?? (await identityFromAuth(client));
+  // An account with two-step verification is not signed in until the second
+  // step is done. A password-only (aal1) session is treated as no session.
+  if (identity && identity.mfaEnrolled && identity.aal !== "aal2") return null;
+  return identity;
 }
 
 /**
@@ -70,6 +76,8 @@ async function identityFromClaims(client: IdentityClient): Promise<Identity | nu
       email: typeof claims.email === "string" ? claims.email : null,
       metadata: asRecord(claims.user_metadata),
       source: "claims",
+      aal: typeof claims.aal === "string" ? claims.aal : null,
+      mfaEnrolled: asRecord(claims.app_metadata).mfa_enrolled === true,
     };
   } catch {
     return null;
@@ -93,6 +101,8 @@ async function identityFromAuth(client: IdentityClient): Promise<Identity | null
       email: typeof user.email === "string" ? user.email : null,
       metadata: asRecord(user.user_metadata),
       source: "auth",
+      aal: null,
+      mfaEnrolled: asRecord(user.app_metadata).mfa_enrolled === true,
     };
   } catch {
     return null;
