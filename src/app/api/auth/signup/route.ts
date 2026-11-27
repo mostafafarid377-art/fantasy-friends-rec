@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { captchaMissing, enforceLimits, guardWrite } from "@/lib/request-guard";
+import { siteOrigin } from "@/lib/site-origin";
 
 const schema = z.object({
   email: z.string().email(),
@@ -11,6 +13,9 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const blocked = guardWrite(req);
+  if (blocked) return blocked;
+
   const body = await req.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -21,8 +26,17 @@ export async function POST(req: NextRequest) {
   }
 
   const { email, username, displayName, password, captchaToken } = parsed.data;
+  if (captchaMissing(captchaToken)) {
+    return NextResponse.json({ error: "Complete the verification challenge" }, { status: 422 });
+  }
+  const limited = await enforceLimits(req, [
+    { name: "signup-ip", limit: 10, windowSeconds: 3600 },
+    { name: "signup-email", limit: 3, windowSeconds: 3600, subject: email.trim().toLowerCase() },
+  ]);
+  if (limited) return limited;
+
   const supabase = await createClient();
-  const origin = req.headers.get("origin") ?? new URL(req.url).origin;
+  const origin = siteOrigin(req);
 
   const { data, error } = await supabase.auth.signUp({
     email: email.trim().toLowerCase(),
@@ -35,10 +49,14 @@ export async function POST(req: NextRequest) {
   });
 
   if (error) {
+    // An existing email must look exactly like a new signup, so this form
+    // cannot be used to find out who has an account.
     const duplicate = /already registered|already exists|user already/i.test(error.message);
+    if (duplicate) return NextResponse.json({ requiresEmailVerification: true }, { status: 202 });
+    const weak = error.code === "weak_password" || /password/i.test(error.message);
     return NextResponse.json(
-      { error: duplicate ? "An account with that email already exists" : error.message },
-      { status: duplicate ? 409 : 400 },
+      { error: weak ? "Choose a stronger password" : "Could not create your account. Try again later." },
+      { status: weak ? 422 : 400 },
     );
   }
 
